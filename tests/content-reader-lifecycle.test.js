@@ -41,7 +41,7 @@ test('a late initial state cannot reopen a reader after an explicit exit',async(
     const count=await send({type:'SS_EMERGENCY_COUNT'});expect(count.data.chars).toBeGreaterThan(200);
     const toolbar=document.querySelector('[data-shisui-ui="reader"] .reader-toolbar'),button=[...toolbar.querySelectorAll('button')].find(item=>item.textContent==='翻译本页');
     button.click();await new Promise(resolve=>setTimeout(resolve,0));expect(button.textContent).toBe('确认并翻译');expect(messages).not.toContain('EMERGENCY_TRANSLATE');
-    button.click();await waitFor(()=>document.querySelector('[data-shisui-ui="reader"] [data-shisui-ui="emergency-translation"]')?.textContent.includes('中文译文'));expect(button.textContent).toBe('停止翻译');expect(messages).toContain('READER_TRANSLATION_BEGIN');
+    button.click();try{await waitFor(()=>document.querySelector('[data-shisui-ui="reader"] [data-shisui-ui="emergency-translation"]')?.textContent.includes('中文译文'));}catch(error){throw new Error(JSON.stringify({cause:error.message,visibility:document.visibilityState,button:button.textContent,messages,status:(await send({type:'SS_STATUS'})).data}));}expect(button.textContent).toBe('停止翻译');expect(messages).toContain('READER_TRANSLATION_BEGIN');
     expect(document.querySelector('[data-shisui-ui="emergency-translation"]')?.textContent).toContain('中文译文');
     await send({type:'SS_READER_SET',enabled:false,pageUrl:location.href});
     expect(document.querySelector('main').inert).toBe(false);
