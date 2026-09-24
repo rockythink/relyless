@@ -26,7 +26,7 @@ test('a late initial state cannot reopen a reader after an explicit exit',async(
     window.HTMLElement.prototype.showPopover=function(){};
     window.HTMLElement.prototype.hidePopover=function(){};
     document.body.innerHTML='<main><article><h1>Original article</h1><p>'+('The original prose remains on the page. ').repeat(30)+'</p><p>'+('A second paragraph preserves the author’s words. ').repeat(30)+'</p></article></main>';
-    for(const name of ['content/kernel.js','content/reader.js','content.js'])new Function(source(name))();
+    delete globalThis.ShisuiContent;delete globalThis.ShisuiReader;for(const name of ['content/kernel.js','content/reader.js','content.js'])new Function(source(name))();
     const send=(message,sender={id:'abc',url:'chrome-extension://abc/ui/popup.html'})=>new Promise(resolve=>listener(message,sender,resolve));
     const enter=send({type:'SS_READER_SET',enabled:true,pageUrl:location.href});
     const exit=await send({type:'SS_READER_SET',enabled:false,pageUrl:location.href});
@@ -37,11 +37,11 @@ test('a late initial state cannot reopen a reader after an explicit exit',async(
     expect(ShisuiReader.active()).toBe(false);
     const active=await send({type:'SS_READER_SET',enabled:true,pageUrl:location.href});
     expect(active.data.reader.active).toBe(true);
-    expect(document.querySelector('main').inert).toBe(true);let removeStack,removePage;const host=document.querySelector('[data-shisui-ui="reader"]'),remove=host.remove;host.remove=function(){removeStack=new Error('reader host removed').stack;removePage={state:ShisuiContent.state.page,location:location.href,window:window.location.href};return remove.call(this);};
+    expect(document.querySelector('main').inert).toBe(true);
     const count=await send({type:'SS_EMERGENCY_COUNT'});expect(count.data.chars).toBeGreaterThan(200);
     const toolbar=document.querySelector('[data-shisui-ui="reader"] .reader-toolbar'),button=[...toolbar.querySelectorAll('button')].find(item=>item.textContent==='翻译本页');
     button.click();await new Promise(resolve=>setTimeout(resolve,0));expect(button.textContent).toBe('确认并翻译');expect(messages).not.toContain('EMERGENCY_TRANSLATE');
-    button.click();try{await waitFor(()=>document.querySelector('[data-shisui-ui="reader"] [data-shisui-ui="emergency-translation"]')?.textContent.includes('中文译文'));}catch(error){throw new Error(JSON.stringify({cause:error.message,visibility:document.visibilityState,button:button.textContent,hostConnected:host.isConnected,removePage,removeStack,messages,status:(await send({type:'SS_STATUS'})).data}));}expect(button.textContent).toBe('停止翻译');expect(messages).toContain('READER_TRANSLATION_BEGIN');
+    button.click();await waitFor(()=>document.querySelector('[data-shisui-ui="reader"] [data-shisui-ui="emergency-translation"]')?.textContent.includes('中文译文'));expect(button.textContent).toBe('停止翻译');expect(messages).toContain('READER_TRANSLATION_BEGIN');
     expect(document.querySelector('[data-shisui-ui="emergency-translation"]')?.textContent).toContain('中文译文');
     await send({type:'SS_READER_SET',enabled:false,pageUrl:location.href});
     expect(document.querySelector('main').inert).toBe(false);

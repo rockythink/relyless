@@ -141,7 +141,6 @@
       for(const child of doc.body.children)inertSibling(child);
       observer=new MutationObserver(mutations=>{for(const mutation of mutations)for(const node of mutation.addedNodes)if(node.parentElement===doc.body)inertSibling(node);});observer.observe(doc.body,{childList:true});
       doc.body.style.setProperty('overflow','hidden','important');doc.documentElement.style.setProperty('overflow','hidden','important');
-      view={host,article,sourceRoot,sourceMap,scroll,overlay,previous,observer};exit.focus();
       view={host,article,sourceRoot,sourceMap,scroll,overlay,previous,observer};exit.focus();host.addEventListener('toggle',event=>{if(event.newState==='closed'&&view?.host===host)onExit();});
       host.addEventListener('keydown',event=>{if(event.key==='Escape'){if(event.target.closest('['+OWN+'="task-status"]'))return;event.preventDefault();event.stopPropagation();onEscape();}else if(event.key==='Tab'){const items=[...host.querySelectorAll('button:not([disabled]),select:not([disabled]),a[href]')].filter(item=>item.getClientRects().length);const index=items.indexOf(doc.activeElement);if(event.shiftKey&&index<=0){event.preventDefault();items.at(-1)?.focus();}else if(!event.shiftKey&&index===items.length-1){event.preventDefault();items[0]?.focus();}}},true);
       return host;
@@ -156,6 +155,5 @@
     document.getSelection()?.removeAllRanges();
     if(restorePosition){window.scrollTo(previous.x,previous.y);if(previous.focus?.isConnected)previous.focus.focus({preventScroll:true});else previous.body.focus?.({preventScroll:true});}
   }
-  globalThis.ShisuiReader=Object.freeze({extract,mount,unmount,contains:node=>Boolean(view?.host.contains(node)),contentRoot:()=>view?.article||null,overlayRoot:()=>view?.overlay||null,scrollRoot:()=>view?.scroll||null,active:()=>Boolean(view)});
   globalThis.ShisuiReader=Object.freeze({extract,mount,unmount,contains:node=>Boolean(view?.host.contains(node)),contentRoot:()=>view?.article||null,overlayRoot:()=>view?.overlay||null,scrollRoot:()=>view?.scroll||null,active:()=>Boolean(view?.host.isConnected)});
 })();
