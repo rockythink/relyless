@@ -1,6 +1,6 @@
 import {request, errorText, upsertSiteEntry} from '../shared.js';
 
-const popupEls={status:document.querySelector('#page-status'),hostname:document.querySelector('#site-hostname'),siteAuto:document.querySelector('#site-auto'),siteAutoNote:document.querySelector('#site-auto-note'),siteAutoError:document.querySelector('#site-auto-error'),toggle:document.querySelector('#toggle-page'),toggleLabel:document.querySelector('#toggle-label'),pageNote:document.querySelector('#page-note'),actionError:document.querySelector('#action-error'),sentenceGroups:document.querySelector('#sentence-groups'),sentenceGroupsNote:document.querySelector('#sentence-groups-note'),sentenceGroupsError:document.querySelector('#sentence-groups-error'),options:document.querySelector('#open-options'),serviceWarning:document.querySelector('#service-warning'),serviceWarningCopy:document.querySelector('#service-warning-copy'),repairService:document.querySelector('#repair-service'),emergencyEstimate:document.querySelector('#emergency-estimate'),emergencyBudget:document.querySelector('#emergency-budget')};
+const popupEls={status:document.querySelector('#page-status'),hostname:document.querySelector('#site-hostname'),siteAuto:document.querySelector('#site-auto'),siteAutoNote:document.querySelector('#site-auto-note'),siteAutoError:document.querySelector('#site-auto-error'),toggle:document.querySelector('#toggle-page'),toggleLabel:document.querySelector('#toggle-label'),pageNote:document.querySelector('#page-note'),actionError:document.querySelector('#action-error'),readerToggle:document.querySelector('#toggle-reader'),readerNote:document.querySelector('#reader-note'),readerError:document.querySelector('#reader-error'),sentenceGroups:document.querySelector('#sentence-groups'),sentenceGroupsNote:document.querySelector('#sentence-groups-note'),sentenceGroupsError:document.querySelector('#sentence-groups-error'),options:document.querySelector('#open-options'),serviceWarning:document.querySelector('#service-warning'),serviceWarningCopy:document.querySelector('#service-warning-copy'),repairService:document.querySelector('#repair-service'),emergencyEstimate:document.querySelector('#emergency-estimate'),emergencyBudget:document.querySelector('#emergency-budget')};
 const popupUnsupported=document.querySelector('#unsupported-page');
 const popupPageControls=document.querySelector('#page-controls');
 for(const name of ['panel','open','confirm','start','cancel','progress','progress-copy','counts','actions','stop','resume','retry','clear','result','status']){
@@ -13,6 +13,7 @@ let popupAutomation=null;
 let popupTab=null;
 let popupEnabled=false;
 let popupSentenceGroups={enabled:false,status:'off',error:'',processed:0};
+let popupReaderActive=false;
 let popupSentenceGroupsLoaded=false;
 let popupBusy=false;
 let popupEmergency={active:false,displayed:false,phase:'off',total:0,completed:0,failed:0,pending:0,skipped:0,error:''};
@@ -57,6 +58,7 @@ function popupRender(){
   else if(allSites)popupEls.siteAutoNote.textContent='全部网站已开启；关闭可排除当前网站。';
   else popupEls.siteAutoNote.textContent=configured?'下次打开此网站会自动辅助。':'授权后自动开始；有限上下文用于准备，支持记录只在本机。';
   popupEls.toggle.disabled=popupBusy||!supported;
+  popupEls.readerToggle.disabled=popupBusy||!supported;popupEls.readerToggle.textContent=popupReaderActive?'退出专注阅读':'进入专注阅读';popupEls.readerNote.textContent=popupReaderActive?'当前正文快照；退出后回到原网页。':'本地提取当前正文快照，不保存文章；退出返回原网页。';
   popupEls.status.classList.toggle('active',popupEnabled);
   if(popupEnabled){popupSetLive(popupEls.status,'本页已开启');popupEls.toggleLabel.textContent='暂停本页';popupEls.pageNote.textContent=popupState?.settings?.assistanceMode==='on-demand'?'当前为仅在需要时；保留主动求助。':'保留英文，只在当前位置提供少量支撑。';}
   else{popupSetLive(popupEls.status,popupAutomation?.paused?'本页已暂停':'等待开启');popupEls.toggleLabel.textContent=popupAutomation?.paused?'继续辅助':'开启本页';popupEls.pageNote.textContent='开启不会改变网站的长期授权规则。';}
@@ -75,9 +77,9 @@ function popupRender(){
   if(popupSentenceGroups.error){popupEls.sentenceGroupsError.textContent=popupSentenceGroups.error;popupEls.sentenceGroupsError.hidden=false;}else{popupEls.sentenceGroupsError.textContent='';popupEls.sentenceGroupsError.hidden=true;}
   const emergencyVisible=Boolean(popupEmergency.active||popupEmergency.displayed||popupEmergency.phase!=='off');
   const resumable=!popupEmergency.active&&popupEmergency.total>0&&['stopped','error'].includes(popupEmergency.phase);
-  popupSetLive(popupEls.emergencyStatus,popupEmergencyPhaseText());
+  popupSetLive(popupEls.emergencyStatus,popupReaderActive?'请先退出专注阅读，再使用本页双语翻译。':popupEmergencyPhaseText());
   popupEls.emergencyOpen.hidden=emergencyVisible||!popupEls.emergencyConfirm.hidden;
-  popupEls.emergencyOpen.disabled=popupBusy||!supported||!popupState?.providerConfigured;
+  popupEls.emergencyOpen.disabled=popupBusy||!supported||popupReaderActive||!popupState?.providerConfigured;
   popupEls.emergencyProgress.hidden=!emergencyVisible;
   popupEls.emergencyProgressCopy.textContent='已译 '+popupEmergency.completed+' / 已识别 '+popupEmergency.total+' 段';
   popupEls.emergencyCounts.textContent='待阅读 '+popupEmergency.pending+' · 失败 '+popupEmergency.failed+' · 跳过 '+popupEmergency.skipped;
@@ -85,15 +87,15 @@ function popupRender(){
   popupEls.emergencyStop.hidden=!popupEmergency.active;
   popupEls.emergencyStop.disabled=popupBusy||!popupEmergency.active;
   popupEls.emergencyResume.hidden=!resumable;
-  popupEls.emergencyResume.disabled=popupBusy||!resumable||!popupState?.providerConfigured;
+  popupEls.emergencyResume.disabled=popupBusy||popupReaderActive||!resumable||!popupState?.providerConfigured;
   popupEls.emergencyRetry.hidden=!(popupEmergency.active&&popupEmergency.failed>0);
   popupEls.emergencyRetry.disabled=popupBusy||!popupEmergency.active||popupEmergency.failed===0;
   popupEls.emergencyClear.disabled=popupBusy||!emergencyVisible;
   popupEls.emergencyStart.textContent=popupEmergencyResume?'确认并继续':'确认并翻译本页';
-  popupEls.emergencyStart.disabled=popupBusy||!supported||!popupState?.providerConfigured;
+  popupEls.emergencyStart.disabled=popupBusy||popupReaderActive||!supported||!popupState?.providerConfigured;
   popupEls.emergencyCancel.disabled=popupBusy;
 }
-async function popupGetPageStatus(){if(!popupSupported())return;const snapshot=popupSentenceGroups;const result=await chrome.tabs.sendMessage(popupTab.id,{type:'SS_STATUS'},{frameId:0}).catch(()=>null);if(snapshot!==popupSentenceGroups||!result?.ok)return;popupEnabled=Boolean(result.data?.enabled);if(result.data?.sentenceGroups)popupSentenceGroups={...popupSentenceGroups,...result.data.sentenceGroups};if(result.data?.emergency)popupEmergency=popupEmergencySnapshot(result.data.emergency);}
+async function popupGetPageStatus(){if(!popupSupported())return;const snapshot=popupSentenceGroups;const result=await chrome.tabs.sendMessage(popupTab.id,{type:'SS_STATUS'},{frameId:0}).catch(()=>null);if(snapshot!==popupSentenceGroups||!result?.ok)return;popupEnabled=Boolean(result.data?.enabled);popupReaderActive=Boolean(result.data?.reader?.active);if(result.data?.sentenceGroups)popupSentenceGroups={...popupSentenceGroups,...result.data.sentenceGroups};if(result.data?.emergency)popupEmergency=popupEmergencySnapshot(result.data.emergency);}
 async function popupGetSentenceGroups(){const result=await request('SENTENCE_GROUPS_GET',{tabId:popupTab?.id});popupSentenceGroups={enabled:Boolean(result?.enabled),status:result?.enabled?'idle':'off',error:'',processed:0};popupSentenceGroupsLoaded=true;}
 async function popupToggleSite(){
   if(!popupSupported()||popupBusy||!popupAutomation)return;
@@ -105,6 +107,20 @@ async function popupToggleSite(){
     popupAutomation=await request('AUTOMATION_PATCH',{patch:{sites},tabId:popupTab.id});
     await popupGetPageStatus();
   }catch(error){popupShowError(popupEls.siteAutoError,error);}
+  finally{popupBusy=false;popupRender();}
+}
+async function popupToggleReader(){
+  if(!popupSupported()||popupBusy)return;
+  popupBusy=true;popupClearError(popupEls.readerError);popupRender();
+  try{
+    const current=await chrome.tabs.get(popupTab.id);
+    if(current.url!==popupTab.url)throw new Error('页面已变化，请重新打开扩展。');
+    await request('PAGE_UI_INJECT',{tabId:popupTab.id});
+    const result=await chrome.tabs.sendMessage(popupTab.id,{type:'SS_READER_SET',enabled:!popupReaderActive,pageUrl:current.url},{frameId:0});
+    if(!result?.ok)throw new Error(result?.error||'请刷新网页后重试。');
+    popupReaderActive=Boolean(result.data?.reader?.active);
+    await popupGetPageStatus();
+  }catch(error){popupShowError(popupEls.readerError,error);popupEls.readerError.focus();}
   finally{popupBusy=false;popupRender();}
 }
 async function popupTogglePage(){if(!popupSupported()||popupBusy)return;popupBusy=true;popupClearError(popupEls.actionError);popupRender();try{await request('PAGE_UI_INJECT',{tabId:popupTab.id});const result=await chrome.tabs.sendMessage(popupTab.id,{type:'SS_SET_ENABLED',enabled:!popupEnabled});if(!result?.ok)throw new Error(result?.error||'请刷新网页后重试。');popupEnabled=Boolean(result.data?.enabled);popupAutomation=await request('AUTOMATION_GET',{tabId:popupTab.id});}catch(error){popupShowError(popupEls.actionError,new Error(`无法更新当前页：${errorText(error)}`));}finally{popupBusy=false;popupRender();}}
@@ -185,16 +201,14 @@ async function popupInit(){
     catch(error){popupSentenceGroupsLoaded=false;popupSentenceGroups.error='无法读取阅读解构设置：'+errorText(error);}
     await popupGetPageStatus();
     popupRender();
-    const intent=await request('POPUP_INTENT_TAKE',{tabId:popupTab.id,url:popupTab.url}).catch(()=>({focus:false}));
-    if(intent?.focus){if(popupEmergency.phase!=='off')popupEls.emergencyPanel.focus();else popupEmergencyPrompt(true);}
   }catch(error){if(popupSupported())popupShowError(popupEls.actionError,error);popupRender();}
 }
 async function popupWatchPage(){
-  try{if(!popupBusy&&(popupSentenceGroups.enabled||popupEmergency.phase!=='off')&&document.visibilityState==='visible'){await popupGetPageStatus();popupRender();}}
+  try{if(!popupBusy&&(popupSentenceGroups.enabled||popupReaderActive||popupEmergency.phase!=='off')&&document.visibilityState==='visible'){await popupGetPageStatus();popupRender();}}
   catch{/* 轮询为尽力而为，失败下一秒重试，不写入界面 */}
   finally{setTimeout(()=>void popupWatchPage(),1000);}
 }
-popupEls.toggle.addEventListener('click',()=>void popupTogglePage());popupEls.siteAuto.addEventListener('change',()=>void popupToggleSite());popupEls.sentenceGroups.addEventListener('change',()=>void popupToggleSentenceGroups());popupEls.options.addEventListener('click',()=>popupOpenOptions());popupEls.repairService.addEventListener('click',()=>popupOpenOptions('service'));popupEls.emergencyOpen.addEventListener('click',()=>popupEmergencyPrompt(true));popupEls.emergencyCancel.addEventListener('click',()=>popupEmergencyPrompt(false));popupEls.emergencyStart.addEventListener('click',()=>void popupEmergencyStart());popupEls.emergencyStop.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_STOP'));popupEls.emergencyResume.addEventListener('click',()=>popupEmergencyPrompt(true,{resume:true}));popupEls.emergencyRetry.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_RETRY'));popupEls.emergencyClear.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_END'));
+popupEls.toggle.addEventListener('click',()=>void popupTogglePage());popupEls.readerToggle.addEventListener('click',()=>void popupToggleReader());popupEls.siteAuto.addEventListener('change',()=>void popupToggleSite());popupEls.sentenceGroups.addEventListener('change',()=>void popupToggleSentenceGroups());popupEls.options.addEventListener('click',()=>popupOpenOptions());popupEls.repairService.addEventListener('click',()=>popupOpenOptions('service'));popupEls.emergencyOpen.addEventListener('click',()=>popupEmergencyPrompt(true));popupEls.emergencyCancel.addEventListener('click',()=>popupEmergencyPrompt(false));popupEls.emergencyStart.addEventListener('click',()=>void popupEmergencyStart());popupEls.emergencyStop.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_STOP'));popupEls.emergencyResume.addEventListener('click',()=>popupEmergencyPrompt(true,{resume:true}));popupEls.emergencyRetry.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_RETRY'));popupEls.emergencyClear.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_END'));
 popupEls.emergencyConfirm.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();popupEmergencyPrompt(false);}});
 chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local'||!changes.settings)return;void Promise.all([request('STATE_GET'),request('AUTOMATION_GET',{tabId:popupTab?.id}).catch(()=>null)]).then(([state,automation])=>{popupState=state;if(automation)popupAutomation=automation;popupRender();}).catch(()=>{});});
 void popupInit().then(()=>setTimeout(()=>void popupWatchPage(),1000));

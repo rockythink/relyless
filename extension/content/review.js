@@ -12,12 +12,14 @@
 
   function hide() {
     button?.remove(); button = null;
-    panel?.remove(); panel = null;
+    panel?.remove(); panel = null; panelShadow = null;
     due = [];
   }
 
   async function refresh() {
+    if (button && button.parentNode !== kernel.uiMountRoot() || panel && panel.parentNode !== kernel.uiMountRoot()) hide();
     if (!state.enabled || state.paused || document.visibilityState !== 'visible') { if (!panel) hide(); return; }
+    const scope = kernel.readingScope(), generation = state.generation;
     const entries = [];
     const seen = new Set();
     for (const record of state.records) {
@@ -33,7 +35,7 @@
     if (!entries.length) { if (!panel) hide(); return; }
     let result;
     try { result = await kernel.hooks.request('REVIEW_DUE', {entries}); } catch { return; }
-    if (!state.enabled || state.paused) return;
+    if (!state.enabled || state.paused || scope !== kernel.readingScope() || generation !== state.generation) return;
     due = Array.isArray(result?.due) ? result.due : [];
     if (!due.length && !panel) { button?.remove(); button = null; return; }
     if (!button && due.length) mountButton();
@@ -48,7 +50,7 @@
     button.textContent = '复习';
     button.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483646;min-height:36px;padding:8px 16px;border:1px solid var(--accent);border-radius:999px;background:var(--surface);color:var(--accent);font:var(--weight-medium) var(--type-control)/var(--leading-control) var(--sans);cursor:pointer;box-shadow:var(--shadow-high)';
     button.addEventListener('click', () => (panel ? closePanel() : openPanel()));
-    document.documentElement.append(button);
+    kernel.uiMountRoot().append(button);
   }
 
   function openPanel() {
@@ -63,7 +65,7 @@
     card.setAttribute('role', 'dialog');
     card.setAttribute('aria-label', 'RelyLess · 复习');
     shadow.append(style, card);
-    document.documentElement.append(host);
+    kernel.uiMountRoot().append(host);
     panel = host; panelShadow = shadow;
     renderPanel();
   }
@@ -105,7 +107,9 @@
   }
 
   async function answer(item, outcome) {
+    const scope = kernel.readingScope(), generation = state.generation, currentPanel = panel;
     try { await kernel.hooks.request('REVIEW_FEEDBACK', {wordId: item.wordId, senseKey: item.senseKey, outcome}); } catch {}
+    if (scope !== kernel.readingScope() || generation !== state.generation || currentPanel !== panel) return;
     due = due.filter(entry => entry.key !== item.key);
     if (!due.length) { closePanel(); return; }
     if (button) button.textContent = '复习 ' + due.length;
@@ -117,5 +121,9 @@
     if (!due.length) { button?.remove(); button = null; }
   }
 
-  globalThis.ShisuiReview = Object.freeze({refresh, hide, answer});
+  globalThis.ShisuiReview = Object.freeze({refresh, hide, answer, dismiss: () => {
+    if (!panel) return false;
+    closePanel();
+    return true;
+  }});
 })();

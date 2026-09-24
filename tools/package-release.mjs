@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const git = (...args) => execFileSync('git', args, {cwd: root, encoding: 'utf8'}).trim();
-const paths = ['extension', 'connector', 'README.md', 'LICENSE', 'NOTICE.txt'];
+const paths = ['extension', 'connector', 'README.md', 'PRIVACY.md', 'PRIVACY.en.md', 'LICENSE', 'NOTICE.txt'];
 
 if (git('status', '--porcelain', '--untracked-files=all')) {
   throw new Error('Commit all source changes before packaging. Ignored debug files and dist/ are never included.');

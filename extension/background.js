@@ -1,16 +1,7 @@
 import { DEFAULT_SETTINGS, DOMAINS, wordId, normalizeSettings, activeApiProvider } from './shared.js';
 import {apiServiceOrigins,apiServiceReady,getApiProvider,normalizeApiService} from './api-providers.mjs';
 import {listProviderModels,performProviderRequest,providerRequestTimeoutMs} from './api-transport.mjs';
-let lexiconModule=null,lexiconPromise=null;
-function lexiconReady(){return lexiconPromise??=import('./lexicon.js').then(module=>lexiconModule=module);}
-const analyze=(...args)=>lexiconModule.analyze(...args);
-const analyzeBatch=(...args)=>lexiconModule.analyzeBatch(...args);
-const englishTokenStats=(...args)=>lexiconModule.englishTokenStats(...args);
-const historyMatches=(...args)=>lexiconModule.historyMatches(...args);
-const identifyPageLanguage=(...args)=>lexiconModule.identifyPageLanguage(...args);
-const isKnownTerm=(...args)=>lexiconModule.isKnownTerm(...args);
-const localReferenceFor=(...args)=>lexiconModule.localReferenceFor(...args);
-const resolveCanonicalTerm=(...args)=>lexiconModule.resolveCanonicalTerm(...args);
+import {analyze,analyzeBatch,englishTokenStats,historyMatches,identifyPageLanguage,isKnownTerm,localReferenceFor,resolveCanonicalTerm} from './lexicon.js';
 import { encounter, interact, migrateSupportWord, normalizeKnownAt, normalizeSenseLabel, readingEvidence } from './reading.js';
 import {historyModelSubscription,subscriptionStatus,onNativeDiagnostic,syncNativeDiagnostics,onSubscriptionStatus,ensureSubscription,refreshSubscription,loginSubscription,cancelSubscription,logoutSubscription,listSubscriptionModels,classifySubscription,supportSubscription,assistSubscription,emergencyTranslateSubscription,sentenceGroupsSubscription,conversationTurnSubscription,isSubscriptionKind,nativeKind,SUBSCRIPTION_KINDS} from './subscription.js';
 import {ROUTE_VERSION,normalizeDomainRules,resolveRuleDomain} from './domain-routing.js';
@@ -128,12 +119,6 @@ const sentenceModeKey=tabId=>'sentenceGroupsMode:'+tabId;
 const emergencyKey=tabId=>'emergencySession:'+tabId;
 let emergencyWrites=Promise.resolve();
 function changeEmergency(operation){const work=emergencyWrites.then(operation);emergencyWrites=work.catch(()=>{});return work;}
-const POPUP_INTENT_KEY='bilingualPopupIntent';
-let popupIntentWrites=Promise.resolve();
-function changePopupIntent(operation){const work=popupIntentWrites.then(operation);popupIntentWrites=work.catch(()=>{});return work;}
-function setPopupIntent(intent){return changePopupIntent(()=>chrome.storage.session.set({[POPUP_INTENT_KEY]:intent}));}
-function clearPopupIntent(tabId,createdAt){return changePopupIntent(async()=>{const stored=(await chrome.storage.session.get(POPUP_INTENT_KEY))[POPUP_INTENT_KEY];if(stored?.tabId===tabId&&(createdAt===undefined||stored.createdAt===createdAt))await chrome.storage.session.remove(POPUP_INTENT_KEY);});}
-function takePopupIntent(message){return changePopupIntent(async()=>{const stored=(await chrome.storage.session.get(POPUP_INTENT_KEY))[POPUP_INTENT_KEY];await chrome.storage.session.remove(POPUP_INTENT_KEY);const age=Date.now()-stored?.createdAt;return{focus:Boolean(stored&&stored.tabId===message.tabId&&stored.url===message.url&&Number.isFinite(age)&&age>=0&&age<=30000)};});}
 async function emergencySession(tabId){await emergencyWrites;const key=emergencyKey(tabId);return (await chrome.storage.session.get(key))[key]||null;}
 function forgetEmergency(tabId){return changeEmergency(()=>chrome.storage.session.remove(emergencyKey(tabId)));}
 function clearEmergencySessions(){return changeEmergency(async()=>{const all=await chrome.storage.session.get(null),keys=Object.keys(all).filter(key=>key.startsWith('emergencySession:'));if(keys.length)await chrome.storage.session.remove(keys);});}
@@ -555,7 +540,7 @@ async function broadcastWordPreference(preference,words){
   await Promise.allSettled(tabs.map(tab=>chrome.tabs.sendMessage(tab.id,{type:'SS_WORD_PREFERENCE',wordIds,known:preference.known},{frameId:0})));
 }
 async function saveWordPreference(message,sender,trusted){
-  await lexiconReady();
+
   const requestedId=text(message.wordId,'词条编号',180);if(typeof message.known!=='boolean')throw new Error('词条偏好无效。');
   const before=await load(),existing=before.words.find(word=>word.id===requestedId);let offer=null,page=null;
   if(!trusted){page=await readingSource(sender);if(page.incognito)throw new Error('无痕窗口不保存词汇记录。');const map=await sessionMap(offeredKey(page.tabId),30*60000,256);offer=Object.values(map).find(value=>value.wordId===requestedId&&value.sourceHash===page.sourceHash)||null;if(!offer&&!(existing&&(existing.requestedAt>0||existing.helpCount>0)))throw new Error('只能修改当前页面提供或你主动查询过的词条。');}
@@ -567,7 +552,7 @@ async function saveWordPreference(message,sender,trusted){
 }
 async function refreshRequestedDefinitions(items,decisions,state,expectedProvider,source){
   if(source.incognito||!canRemember(state))return;
-  await lexiconReady();
+
   await mutate(async current=>{
     if(!canRemember(current)||current.supportDataGeneration!==state.supportDataGeneration||expectedProvider!==providerGeneration)return;
     for(const item of items){
@@ -586,7 +571,7 @@ async function refreshRequestedDefinitions(items,decisions,state,expectedProvide
   },false);
 }
 async function supportBatch(message,sender){
-  await lexiconReady();
+
   const source=await readingSource(sender);if(!source.active||await tabPaused(source.tabId))throw new Error('网页当前未活动，暂停自动提示。');const state=await load();if(state.settings.assistanceMode!=='ambient')throw new Error('当前为仅在需要时模式。');
   const article=normalizePreparationContext(message.article),supportGeneration=state.supportDataGeneration,generation=providerGeneration,base=normalizeSupportItems(message.items),history=!source.incognito&&canRemember(state)?state.words:[],readerByDomain=new Map(),requestPolicy=JSON.stringify(readingHistory.policy()),usedIds=new Set(base.map(item=>item.id)),owners=new Map(),tasks=[];
   const guard=async()=>{const [latest,page]=await Promise.all([load(),readingSource(sender)]);if(requestPolicy!==JSON.stringify(readingHistory.policy())||generation!==providerGeneration||supportGeneration!==latest.supportDataGeneration||source.sourceHash!==page.sourceHash||!page.active||await tabPaused(source.tabId)||latest.settings.assistanceMode!=='ambient')throw staleWork();return latest;};
@@ -726,10 +711,10 @@ function personalTargets(item,state,article) {
   }
   return targets;
 }
-async function preparedSupport(message,sender){await lexiconReady();const source=await readingSource(sender),state=await load(),items=normalizeSupportItems(message.items),article=normalizePreparationContext(message.article);if(!source.active||await tabPaused(source.tabId))throw new Error('网页当前未活动。');let output=items.map(item=>({id:item.id,targets:!source.incognito&&canRemember(state)?personalTargets(item,state,article):[]}));const offers=[];for(let i=0;i<items.length;i++)for(const target of output[i].targets)if(target.senseKey)offers.push({...target,canonicalTerm:state.words.find(v=>v.id===target.wordId)?.term,domain:items[i].domain,kind:target.text.trim().includes(' ')?'phrase':'word'});if(offers.length)await registerOffers(source,offers,providerGeneration,state.supportDataGeneration);const latest=await load();output=output.map(item=>({...item,targets:item.targets.filter(target=>source.incognito||!isKnownTerm(target.text,latest.words))}));return readingHistory.offer(sender,items,{items:output});}
-async function recordPreparedIntent(command,source,snapshot){await lexiconReady();if(source.incognito)return null;return mutate(async state=>{if(state.supportDataGeneration!==snapshot.supportDataGeneration)return null;if(!canRemember(state)||command.kind==='passage')return null;const canonical=resolveCanonicalTerm(command.text,command.domain,state.words),id=wordId(canonical,command.domain);let word=state.words.find(v=>v.id===id)||freshWord(canonical,command.domain,command.kind);word={...word,requestedAt:Date.now(),lastSeen:Date.now(),revision:(word.revision||0)+1};return await saveRecord(state,word)?word:null;},false).catch(()=>null);}
+async function preparedSupport(message,sender){const source=await readingSource(sender),state=await load(),items=normalizeSupportItems(message.items),article=normalizePreparationContext(message.article);if(!source.active||await tabPaused(source.tabId))throw new Error('网页当前未活动。');let output=items.map(item=>({id:item.id,targets:!source.incognito&&canRemember(state)?personalTargets(item,state,article):[]}));const offers=[];for(let i=0;i<items.length;i++)for(const target of output[i].targets)if(target.senseKey)offers.push({...target,canonicalTerm:state.words.find(v=>v.id===target.wordId)?.term,domain:items[i].domain,kind:target.text.trim().includes(' ')?'phrase':'word'});if(offers.length)await registerOffers(source,offers,providerGeneration,state.supportDataGeneration);const latest=await load();output=output.map(item=>({...item,targets:item.targets.filter(target=>source.incognito||!isKnownTerm(target.text,latest.words))}));return readingHistory.offer(sender,items,{items:output});}
+async function recordPreparedIntent(command,source,snapshot){if(source.incognito)return null;return mutate(async state=>{if(state.supportDataGeneration!==snapshot.supportDataGeneration)return null;if(!canRemember(state)||command.kind==='passage')return null;const canonical=resolveCanonicalTerm(command.text,command.domain,state.words),id=wordId(canonical,command.domain);let word=state.words.find(v=>v.id===id)||freshWord(canonical,command.domain,command.kind);word={...word,requestedAt:Date.now(),lastSeen:Date.now(),revision:(word.revision||0)+1};return await saveRecord(state,word)?word:null;},false).catch(()=>null);}
 async function preparedAssist(message,sender){
-  await lexiconReady();
+
   const source=await readingSource(sender),snapshot=await load(),generation=providerGeneration,article=normalizePreparationContext(message.article);
   await supportCacheReady;
   const {type:_type,article:_article,...payload}=message,command=normalizeAssistanceCommand(payload);
@@ -763,7 +748,7 @@ async function preparedAssist(message,sender){
 async function emergencyUsageEstimate(tabId,settings){
   settings=settings.providerKind==='local'?(localFallbackSettings(settings)||settings):settings;
   const probe=await chrome.tabs.sendMessage(tabId,{type:'SS_EMERGENCY_COUNT'},{frameId:0}).catch(()=>null);
-  const chars=Number.isSafeInteger(probe?.chars)?Math.min(probe.chars,2000000):0;
+  const chars=probe?.ok&&Number.isSafeInteger(probe.data?.chars)?Math.min(probe.data.chars,2000000):0;
   const api=provider=>provider==='api';
   const active=api(settings.providerKind)?activeApiProvider(settings):null;
   const service=api(settings.providerKind)?(active?.name||active?.model||''):settings.providerKind==='local'?'本机模型':'订阅服务',model=api(settings.providerKind)?(active?.model||''):settings.providerKind==='local'?'gemini-nano':(settings.subscriptionModel||'');
@@ -1122,7 +1107,7 @@ async function conversationList(message,sender){
   return {sessions:sessions.map(session=>({sessionId:session.sessionId,text:session.text,source:session.source,updatedAt:session.updatedAt,turns:session.turns.map(turn=>({id:turn.id,question:turn.question,answer:turn.answer,status:turn.status,createdAt:turn.createdAt}))}))};
 }
 async function assistPreview(message,sender) {
-  await lexiconReady();
+
   const source=await readingSource(sender);
   const request=normalizeAssistanceRequest(message);
   if(request.kind==='passage')return null;
@@ -1139,7 +1124,7 @@ async function assistPreview(message,sender) {
   const reference=request.level==='rescue'?localReferenceFor(request.text,request.domain,state.settings):null;
   return reference?{level:request.level,translation:reference.translation,source:'local-reference',referenceNotice:request.detail==='full'?'本地参考义，未经本句语境判定；正在获取完整解释。':'本地参考义，未经本句语境判定；正在获取当前语境简释。'}:null;
 }
-async function assist(message,sender,{recordIntent=true}={}) { await lexiconReady();const {type:_type,articleKey='',...payload}=message;if(typeof articleKey!=='string'||articleKey.length>128)throw new Error('文章准备标识无效。');const command=normalizeAssistanceCommand(payload),source=await readingSource(sender),state=await load(),providerVersion=providerGeneration,requestPolicy=JSON.stringify(readingHistory.policy()),key=pendingKey(source.tabId),requestHash=await hashValue(JSON.stringify([command,articleKey,requestPolicy,source.sourceHash,state.supportDataGeneration])),flightId=source.tabId+':'+command.requestId,previous=assistQueues.get(flightId)||Promise.resolve();
+async function assist(message,sender,{recordIntent=true}={}) { const {type:_type,articleKey='',...payload}=message;if(typeof articleKey!=='string'||articleKey.length>128)throw new Error('文章准备标识无效。');const command=normalizeAssistanceCommand(payload),source=await readingSource(sender),state=await load(),providerVersion=providerGeneration,requestPolicy=JSON.stringify(readingHistory.policy()),key=pendingKey(source.tabId),requestHash=await hashValue(JSON.stringify([command,articleKey,requestPolicy,source.sourceHash,state.supportDataGeneration])),flightId=source.tabId+':'+command.requestId,previous=assistQueues.get(flightId)||Promise.resolve();
 const operation=previous.catch(()=>{}).then(async()=>{
   const pending=await sessionMap(key,5*60000,128);let entry=pending[command.requestId];
   if(entry){if(entry.requestHash!==requestHash)throw new Error('同一请求编号不能用于不同内容。');if(entry.status==='complete')return entry.result;if(entry.status==='failed')throw new Error(entry.error);if(entry.status==='running')throw new Error('请求已中断，请重新求助');}
@@ -1391,7 +1376,7 @@ async function reconcileAutoScript(settings) {
   if (matches.length) await chrome.scripting.registerContentScripts([{id:AUTO_SCRIPT_ID,matches,js:['auto-start.js'],runAt:'document_start',allFrames:false,persistAcrossSessions:true}]);
 }
 
-const PAGE_UI_FILES=['design.js',...(VIDEO_SUPPORT_ENABLED?['vendor/youtube-caption-json3.js','video-subtitles.js']:[]),'content/kernel.js','content/paragraph-copy.js','content/conversation-card.js','content/review.js','reading-style.js','content.js'];
+const PAGE_UI_FILES=['design.js',...(VIDEO_SUPPORT_ENABLED?['vendor/youtube-caption-json3.js','video-subtitles.js']:[]),'content/kernel.js','content/reader.js','content/paragraph-copy.js','content/conversation-card.js','content/review.js','reading-style.js','content.js'];
 async function injectPageUI(tabId) {
   const probe = await chrome.scripting.executeScript({target:{tabId,frameIds:[0]},func:() => !globalThis.__SHISUI_CONTENT__?.isAlive?.()});
   if (probe[0]?.result === false) return;
@@ -1438,7 +1423,7 @@ async function handle(message,sender) {
   if(sender.id!==chrome.runtime.id)throw new Error('不受信任的请求。');
   await dataReady;if(!['MEMORY_CLEAR','HISTORY_CLEAR'].includes(message.type))assertDataAvailable();if(futureSchema&&HISTORY_MUTATIONS.has(message.type))throw new Error('不支持的数据版本，请更新扩展');
   const trusted=Boolean(sender.url?.startsWith(chrome.runtime.getURL('')));
-  const contentAllowed=['HISTORY_BEGIN','HISTORY_TICK','HISTORY_COMMIT','HISTORY_ANNOTATION','DIAGNOSTICS_RENDER','STATE_GET','RESOLVE_DOMAIN','ANALYZE','SUPPORT_BATCH','SENTENCE_GROUPS_GET','SENTENCE_GROUPS_SET','SENTENCE_GROUPS_BATCH','ASSIST','ASSIST_PREVIEW','ASSIST_COMMIT','ENCOUNTER','INTERACT','YOUTUBE_CAPTIONS_BRIDGE','OPEN_OPTIONS','AUTO_BOOTSTRAP_CHECK','PAGE_ACTIVITY_SET','VIDEO_SETTINGS_PATCH','PREPARED_SUPPORT','PREPARED_ASSIST','PASSAGE_TRANSLATE', 'EMERGENCY_TRANSLATE', 'EMERGENCY_CANCEL_REQUEST', 'EMERGENCY_END','LANGUAGE_PROFILE','CONVERSATION_ASK','CONVERSATION_STOP','CONVERSATION_HISTORY','CONVERSATION_DELETE','REVIEW_DUE','REVIEW_FEEDBACK','ROUTING_STATS']
+  const contentAllowed=['HISTORY_BEGIN','HISTORY_TICK','HISTORY_COMMIT','HISTORY_ANNOTATION','DIAGNOSTICS_RENDER','STATE_GET','RESOLVE_DOMAIN','ANALYZE','SUPPORT_BATCH','SENTENCE_GROUPS_GET','SENTENCE_GROUPS_SET','SENTENCE_GROUPS_BATCH','ASSIST','ASSIST_PREVIEW','ASSIST_COMMIT','ENCOUNTER','INTERACT','YOUTUBE_CAPTIONS_BRIDGE','OPEN_OPTIONS','AUTO_BOOTSTRAP_CHECK','PAGE_ACTIVITY_SET','VIDEO_SETTINGS_PATCH','PREPARED_SUPPORT','PREPARED_ASSIST','PASSAGE_TRANSLATE','READER_TRANSLATION_ESTIMATE','READER_TRANSLATION_BEGIN', 'EMERGENCY_TRANSLATE', 'EMERGENCY_CANCEL_REQUEST', 'EMERGENCY_END','LANGUAGE_PROFILE','CONVERSATION_ASK','CONVERSATION_STOP','CONVERSATION_HISTORY','CONVERSATION_DELETE','REVIEW_DUE','REVIEW_FEEDBACK','ROUTING_STATS']
   if(!trusted&&!contentAllowed.includes(message.type)&&message.type!=='WORD_PREFERENCE_SET')throw new Error('此操作不能从网页执行。');
   switch(message.type){
     case 'HISTORY_GET':return readingHistory.snapshot({days:message.days,search:message.search,domain:message.domain,type:message.eventType||'',cursor:message.cursor,limit:Number.isSafeInteger(message.limit)&&message.limit>0?message.limit:300});
@@ -1463,7 +1448,6 @@ async function handle(message,sender) {
     case 'DIAGNOSTICS_SET':return diagnostics.configure(message.enabled);
     case 'DIAGNOSTICS_CLEAR':return diagnostics.clear();
     case 'DIAGNOSTICS_RENDER':return diagnostics.render(message,sender);
-    case 'POPUP_INTENT_TAKE':if(!trusted)throw new Error('仅扩展界面可读取快捷键操作。');if(!Number.isInteger(message.tabId)||typeof message.url!=='string')throw new Error('快捷键操作无效。');return takePopupIntent(message);
     case 'PAGE_UI_INJECT':{const page=await tabPage(message.tabId);await injectPageUI(message.tabId);injectedEmergencyPages.set(message.tabId,page.url.href);return{};}
     case 'SENTENCE_GROUPS_GET':return sentenceGroupsMode(message,sender,trusted);
     case 'SENTENCE_GROUPS_SET':return setSentenceGroupsMode(message,sender,trusted);
@@ -1495,8 +1479,8 @@ async function handle(message,sender) {
       if(patch.readingStyle!==undefined&&JSON.stringify(patch.readingStyle)!==JSON.stringify(before.settings.readingStyle))await broadcastReadingStyle(patch.readingStyle);
       if(patch.helpLanguage!==undefined&&patch.helpLanguage!==before.settings.helpLanguage)await broadcastHelpLanguage(patch.helpLanguage);return result;
     }
-    case 'ANALYZE':{await lexiconReady();const source=text(message.text,'正文',200000,false),state=await load();if(state.settings.assistanceMode!=='ambient')throw new Error('当前为仅在需要时模式。');const page=await readingSource(sender),history=!page.incognito&&canRemember(state)?state.words:[],result=withoutKnownTerms(analyze(source,analysisSettings(state),history,message.domain?domain(message.domain):undefined),history);return{...result,languageStats:englishTokenStats(source)};}
-    case 'LANGUAGE_PROFILE':{await lexiconReady();return identifyPageLanguage(text(message.text,'正文',40000,false));}
+    case 'ANALYZE':{const source=text(message.text,'正文',200000,false),state=await load();if(state.settings.assistanceMode!=='ambient')throw new Error('当前为仅在需要时模式。');const page=await readingSource(sender),history=!page.incognito&&canRemember(state)?state.words:[],result=withoutKnownTerms(analyze(source,analysisSettings(state),history,message.domain?domain(message.domain):undefined),history);return{...result,languageStats:englishTokenStats(source)};}
+    case 'LANGUAGE_PROFILE':{return identifyPageLanguage(text(message.text,'正文',40000,false));}
     case 'REVIEW_DUE':return reviewDue(message,sender);
     case 'ROUTING_STATS':return {routing:routingStatsView(routingStats),settings:routingSettingsOf((await load(false)).settings)};
     case 'USAGE_STATS':{await modelUsageWrites.catch(() => {});const days=Number.isSafeInteger(message.days)?Math.min(Math.max(message.days,0),3650):7;return {usage:usageStatsView(await loadModelUsage(),{days})};}
@@ -1512,6 +1496,8 @@ async function handle(message,sender) {
     case 'PREPARED_SUPPORT':return preparedSupport(message,sender);
     case 'PREPARED_ASSIST':return preparedAssist(message,sender);
     case 'ASSIST_PREVIEW':return assistPreview(message,sender);
+    case 'READER_TRANSLATION_ESTIMATE':{const source=await readingSource(sender);if(!source.active)throw new Error('当前网页不可翻译。');return emergencyUsageEstimate(source.tabId,(await load(false)).settings);}
+    case 'READER_TRANSLATION_BEGIN':{const source=await readingSource(sender);if(!source.active||typeof message.confirmed!=='boolean')throw new Error('当前网页不可翻译。');injectedEmergencyPages.set(source.tabId,source.url);return emergencyBegin({tabId:source.tabId,url:source.url,confirmed:message.confirmed});}
     case 'EMERGENCY_BEGIN':if(!trusted)throw new Error('仅扩展界面可确认紧急翻译。');return emergencyBegin(message);
     case 'EMERGENCY_ESTIMATE':{if(!trusted)throw new Error('仅扩展界面可确认紧急翻译。');if(!Number.isInteger(message.tabId))throw new Error('无效的预估请求。');return emergencyUsageEstimate(message.tabId,(await load(false)).settings);}
     case 'PASSAGE_TRANSLATE':return passageTranslate(message,sender);
@@ -1543,6 +1529,7 @@ chrome.runtime.onMessage.addListener((message,sender,respond) => {
 const CONTEXT_EXPLAIN = 'ss-explain-selection';
 const CONTEXT_TOGGLE_READING = 'ss-toggle-reading';
 const CONTEXT_COPY_PARAGRAPH = 'ss-copy-paragraph';
+const CONTEXT_TRANSLATE_LINK = 'ss-translate-link';
 let menuRegistration = Promise.resolve();
 
 function contextMenuCreate(options) {
@@ -1561,6 +1548,7 @@ function registerContextMenus() {
     await contextMenuCreate({id:CONTEXT_EXPLAIN,title:'RelyLess：帮助理解选中内容',contexts:['selection'],documentUrlPatterns:['http://*/*','https://*/*']});
     await contextMenuCreate({id:CONTEXT_TOGGLE_READING,title:'RelyLess：开启/暂停阅读辅助',contexts:['page'],documentUrlPatterns:['http://*/*','https://*/*']});
     await contextMenuCreate({id:CONTEXT_COPY_PARAGRAPH,title:'RelyLess：复制选中段落的原文',contexts:['selection'],documentUrlPatterns:['http://*/*','https://*/*']});
+    await contextMenuCreate({id:CONTEXT_TRANSLATE_LINK,title:'RelyLess：翻译导航链接文字',contexts:['link'],documentUrlPatterns:['http://*/*','https://*/*']});
   });
   menuRegistration.catch(error => console.error('注册右键菜单失败',error));
   return menuRegistration;
@@ -1581,7 +1569,7 @@ chrome.permissions.onAdded.addListener(refreshAutomation);
 chrome.permissions.onRemoved.addListener(()=>{clearProviderState();refreshAutomation();});
 chrome.tabs.onActivated?.addListener(()=>{void pruneBackgroundQueue();});
 chrome.tabs.onUpdated.addListener((tabId,changeInfo,tab) => {
-  if(changeInfo.url!==undefined||changeInfo.status==='loading'){void pruneBackgroundQueue();void clearPopupIntent(tabId);void chrome.tabs.sendMessage(tabId,{type:'SS_EMERGENCY_END',navigation:true,url:changeInfo.url||tab?.url},{frameId:0}).catch(()=>{});}
+  if(changeInfo.url!==undefined||changeInfo.status==='loading'){void pruneBackgroundQueue();void chrome.tabs.sendMessage(tabId,{type:'SS_EMERGENCY_END',navigation:true,url:changeInfo.url||tab?.url},{frameId:0}).catch(()=>{});}
   if(changeInfo.url!==undefined||changeInfo.status==='loading'){void forgetEmergency(tabId);injectedEmergencyPages.delete(tabId);void chrome.storage.session.remove([offeredKey(tabId),pendingKey(tabId),assistCacheKey(tabId),'pageDomain:'+tabId]);}
   if((changeInfo.url!==undefined||changeInfo.status==='loading')&&!pageOrigin(tab?.url||''))void clearAutomaticSentenceModes(tabId);
   if (changeInfo.url === undefined && changeInfo.status !== 'complete') return;
@@ -1591,7 +1579,6 @@ chrome.tabs.onUpdated.addListener((tabId,changeInfo,tab) => {
 });
 chrome.tabs.onRemoved.addListener(tabId => {
   void pruneBackgroundQueue();
-  void clearPopupIntent(tabId);
   void forgetEmergency(tabId);injectedEmergencyPages.delete(tabId);sentenceModeGeneration.delete(tabId);void chrome.storage.session.remove(sentenceModeKey(tabId));
   tabActivationGeneration.delete(tabId);
   void forgetTabAutomation(tabId);
@@ -1630,35 +1617,10 @@ async function toggleReading(tab) {
   }
 }
 
-async function openBilingualPage(tab) {
-  if(!Number.isInteger(tab?.id)||typeof tab.url!=='string')return;
-  const intent={tabId:tab.id,url:tab.url,createdAt:Date.now()};
-  await setPopupIntent(intent);
-  try {
-    if(typeof chrome.action.openPopup!=='function')throw new Error('浏览器不支持打开扩展窗口。');
-    await chrome.action.openPopup({windowId:tab.windowId});
-    await clearTabStatus(tab.id);
-  } catch (error) {
-    await clearPopupIntent(tab.id,intent.createdAt);
-    const fallback=Object.assign(new Error('请点击工具栏 RelyLess 打开翻译'),{cause:error});
-    await showTabError(tab.id,fallback,fallback.message);
-  }
-}
 
 chrome.commands.onCommand.addListener((command,tab) => {
   if (command === 'toggle-reading') void toggleReading(tab);
-  if (command === 'open-bilingual-page') void openBilingualPage(tab);
-  if (command === 'passage-action') void translatePassageAction(tab);
 });
-async function translatePassageAction(tab) {
-  if (!tab?.id) return;
-  try {
-    await injectPageUI(tab.id);
-    const result = await chrome.tabs.sendMessage(tab.id,{type:'SS_PASSAGE_ACTION'},{frameId:0});
-    if (!result?.ok) throw new Error(result?.error || '无法翻译当前选区。');
-    await clearTabStatus(tab.id);
-  } catch (error) { await showTabError(tab.id,error,'此页面无法翻译选中段落。'); }
-}
 
 chrome.contextMenus.onClicked.addListener((info,tab) => {
   if (!tab?.id) return;
@@ -1666,12 +1628,24 @@ chrome.contextMenus.onClicked.addListener((info,tab) => {
     void toggleReading(tab);
     return;
   }
+  if (info.menuItemId === CONTEXT_TRANSLATE_LINK) {
+    void (async () => {
+      try {
+        if ((info.frameId ?? 0) !== 0) throw new Error('暂不支持翻译内嵌框架中的导航链接。');
+        await injectPageUI(tab.id);
+        const result = await chrome.tabs.sendMessage(tab.id,{type:'SS_NAV_LINK_TRANSLATE',linkUrl:info.linkUrl},{frameId:0});
+        if (!result?.ok) throw new Error(result?.error || '无法翻译导航链接文字。');
+        await clearTabStatus(tab.id);
+      } catch (error) { await showTabError(tab.id,error,'此页面无法翻译导航链接文字。'); }
+    })();
+    return;
+  }
   if (info.menuItemId === CONTEXT_COPY_PARAGRAPH) {
     void (async () => {
       try {
         if ((info.frameId ?? 0) !== 0) throw new Error('暂不支持复制内嵌框架中的段落，请在网页主区域重试。');
         await injectPageUI(tab.id);
-        const result = await chrome.tabs.sendMessage(tab.id,{type:'SS_COPY_PARAGRAPH',source:'selection'},{frameId:0});
+        const result = await chrome.tabs.sendMessage(tab.id,{type:'SS_COPY_PARAGRAPH'},{frameId:0});
         if (!result?.ok) throw new Error(result?.error || '无法复制段落原文。');
         await clearTabStatus(tab.id);
       } catch (error) { await showTabError(tab.id,error,'此页面无法复制段落原文。'); }

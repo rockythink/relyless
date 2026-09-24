@@ -52,7 +52,7 @@ test('the kernel reports stable selection signatures and dismisses matching ones
   expect(kernel().dismissedSignature()).toBe('');
 });
 
-test('copy falls back to the selection block and writes only original text', async () => {
+test('copy uses the selection block and writes only original text', async () => {
   document.body.innerHTML = '<p id="p">The client <span class="shisui-term-hint">客户端</span> retries with backoff.</p>';
   const paragraph = document.getElementById('p');
   const range = document.createRange();
@@ -61,34 +61,20 @@ test('copy falls back to the selection block and writes only original text', asy
   kernel().register({setPageStatus: (key, text) => messages.push([key, text])});
   const originalSelection = kernel().currentSelection;
   kernel().currentSelection = () => ({rangeCount: 1, isCollapsed: false, getRangeAt: () => range});
-  await copy().copyParagraph('selection');
+  await copy().copyParagraph();
   kernel().currentSelection = originalSelection;
   expect(globalThis.__clipboardWrites.at(-1)).toBe('The client retries with backoff.');
   expect(messages.at(-1)[0]).toBe('copy');
   expect(messages.at(-1)[1]).toContain('已复制');
 });
 
-test('copy reports a clear error when no paragraph is under the pointer or selection', async () => {
+test('copy reports a clear error without a paragraph selection', async () => {
   const messages = [];
   kernel().register({setPageStatus: (key, text) => messages.push([key, text])});
-  kernel().pointElement = () => null;
   kernel().currentSelection = () => ({rangeCount: 0, isCollapsed: true, getRangeAt: () => null});
-  await expect(copy().copyParagraph('pointer')).rejects.toThrow('把鼠标移到要复制的段落上再按快捷键。');
+  await expect(copy().copyParagraph()).rejects.toThrow('没有找到可复制的段落。');
 });
 
-test('the copy hotkey ignores wrong modifiers and edit targets', async () => {
-  const messages = [];
-  kernel().register({setPageStatus: (key, text) => messages.push([key, text])});
-  globalThis.__clipboardWrites.length = 0;
-  const event = {isTrusted: true, repeat: false, altKey: true, shiftKey: true, ctrlKey: false, metaKey: false, code: 'KeyC', isComposing: false, composedPath: () => []};
-  copy().onCopyHotkey({...event, code: 'KeyX'});
-  copy().onCopyHotkey({...event, altKey: false});
-  copy().onCopyHotkey({...event, isComposing: true});
-  copy().onCopyHotkey({...event, isTrusted: false});
-  await new Promise(resolve => setTimeout(resolve, 10));
-  expect(globalThis.__clipboardWrites).toHaveLength(0);
-  expect(messages).toHaveLength(0);
-});
 
 const makeView = () => {
   const card = document.createElement('section');

@@ -7,6 +7,7 @@
 <div id="page-controls" hidden>
 <section id="service-warning" class="notice" hidden><b>服务未就绪</b><p id="service-warning-copy">连接服务后才能生成英文线索和局部中文说明。</p><button id="repair-service" type="button">前往服务设置</button></section>
 <section class="activation-panel" aria-labelledby="activation-title"><div class="page-context"><span id="site-hostname">当前标签页</span><span id="page-status" class="status-chip" aria-live="polite">正在检查</span></div><h2 id="activation-title">当前页面</h2><button id="toggle-page" class="primary-action" type="button" disabled><span id="toggle-label">开启本页</span></button><p id="page-note" class="muted">保留英文，只在需要的位置提供帮助。</p><p id="action-error" class="inline-message error" role="alert" hidden></p></section>
+<section class="reader-panel" aria-labelledby="reader-title"><h2 id="reader-title">专注阅读</h2><button id="toggle-reader" type="button" disabled>进入专注阅读</button><p id="reader-note">本地提取当前正文快照，不保存文章；退出返回原网页。</p><p id="reader-error" class="inline-message error" role="alert" tabindex="-1" hidden></p></section>
 <section class="sentence-groups-panel" aria-labelledby="sentence-groups-title">
   <h2 id="sentence-groups-title">阅读解构</h2>
   <label class="switch"><input id="sentence-groups" type="checkbox" disabled aria-describedby="sentence-groups-note sentence-structure-key sentence-groups-error"><span aria-hidden="true"></span><span class="sr-only">阅读解构</span></label>
@@ -40,5 +41,5 @@
 </section>
 <section class="site-auto-panel" aria-labelledby="site-auto-title"><h2 id="site-auto-title">此网站以后自动开启</h2><label class="switch"><input id="site-auto" type="checkbox" disabled aria-describedby="site-auto-note site-auto-error"><span aria-hidden="true"></span><span class="sr-only">此网站以后自动开启</span></label><p id="site-auto-note">授权一次，以后打开此网站即可自动开始。</p><p id="site-auto-error" class="inline-message error" role="alert" hidden></p></section>
 </div>
-<footer class="popup-footer"><p>按住 <span data-lookup-key>D</span> + 单击查词 · <span>Alt+Shift+R</span> 译段</p></footer>
+<footer class="popup-footer"><p>按住 <span data-lookup-key>D</span> + 单击可见英文查词 · 选中正文后点浮条翻译</p></footer>
 </main><script type="module" src="popup.js"></script></body></html>

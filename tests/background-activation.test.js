@@ -9,12 +9,8 @@ const registrations = [];
 const tab = {id:11,windowId:7,url:'https://docs.example/article',title:'Fixture',active:true};
 let tabGetBarrier = null;
 const tabMessages = [];
-const popupOpens = [];
-const actionTitles = [];
-let popupFailure = null;
-let modelCalls = 0;
 const fetchBefore = globalThis.fetch;
-globalThis.fetch = async()=>{modelCalls++;throw new Error('unexpected model call');};
+globalThis.fetch = async()=>{throw new Error('unexpected model call');};
 const pick = (source,keys) => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).filter(key => Object.hasOwn(source,key)).map(key => [key,source[key]]));
 const covered = requested => [...granted].some(pattern => {
   if (pattern === requested) return true;
@@ -46,7 +42,7 @@ globalThis.chrome = {
     registerContentScripts:async scripts=>{registrations.push(...scripts);},
   },
   contextMenus:{onClicked:event(),removeAll:async()=>{},create:(_options,callback)=>callback()},
-  commands:{onCommand:event()},action:{openPopup:async options=>{popupOpens.push(options);if(popupFailure)throw popupFailure;},setBadgeText:async()=>{},setTitle:async options=>{actionTitles.push(options);},setBadgeBackgroundColor:async()=>{}},
+  commands:{onCommand:event()},action:{setBadgeText:async()=>{},setTitle:async()=>{},setBadgeBackgroundColor:async()=>{}},
 };
 
 await import(`../extension/background.js?activation=${Date.now()}`);
@@ -227,75 +223,13 @@ test('page request cancellation is restricted to the armed main frame',async()=>
   expect(session['emergencySession:'+tab.id]).toMatchObject({token,cancelledThrough:2});
   await send({type:'EMERGENCY_END',tabId:tab.id,token});
 });
-
-const settleCommand = async()=>{for(let i=0;i<4;i++)await new Promise(resolve=>setTimeout(resolve,0));};
-const runBilingualCommand = async()=>{chrome.commands.onCommand.listeners[0]('open-bilingual-page',tab);await settleCommand();};
-
-test('bilingual shortcut only opens the real action popup and exposes a one-shot matching intent',async()=>{
-  const messagesBefore=tabMessages.length,callsBefore=modelCalls;
-  await runBilingualCommand();
-  expect(popupOpens.at(-1)).toEqual({windowId:tab.windowId});
-  expect(tabMessages.length).toBe(messagesBefore);
-  expect(modelCalls).toBe(callsBefore);
-  expect(await send({type:'POPUP_INTENT_TAKE',tabId:tab.id,url:tab.url})).toEqual({focus:true});
-  expect(await send({type:'POPUP_INTENT_TAKE',tabId:tab.id,url:tab.url})).toEqual({focus:false});
-  await runBilingualCommand();
-  const concurrent=await Promise.all([
-    send({type:'POPUP_INTENT_TAKE',tabId:tab.id,url:tab.url}),
-    send({type:'POPUP_INTENT_TAKE',tabId:tab.id,url:tab.url}),
-  ]);
-  expect(concurrent.map(result=>result.focus).sort()).toEqual([false,true]);
-});
-
-test('popup intent rejects and consumes wrong, expired, and invalid values',async()=>{
-  await runBilingualCommand();
-  expect(await send({type:'POPUP_INTENT_TAKE',tabId:tab.id,url:tab.url+'?moved'})).toEqual({focus:false});
-  expect(await send({type:'POPUP_INTENT_TAKE',tabId:tab.id,url:tab.url})).toEqual({focus:false});
-  await runBilingualCommand();
-  expect(await send({type:'POPUP_INTENT_TAKE',tabId:tab.id+1,url:tab.url})).toEqual({focus:false});
-  expect(await send({type:'POPUP_INTENT_TAKE',tabId:tab.id,url:tab.url})).toEqual({focus:false});
-  await runBilingualCommand();
-  session.bilingualPopupIntent.createdAt=Date.now()-30001;
-  expect(await send({type:'POPUP_INTENT_TAKE',tabId:tab.id,url:tab.url})).toEqual({focus:false});
-  expect(session.bilingualPopupIntent).toBeUndefined();
-
-  session.bilingualPopupIntent={tabId:'11',url:tab.url,createdAt:Date.now()};
-  expect(await send({type:'POPUP_INTENT_TAKE',tabId:tab.id,url:tab.url})).toEqual({focus:false});
-  expect(session.bilingualPopupIntent).toBeUndefined();
-});
-
-test('content scripts cannot take popup intents',async()=>{
-  session.bilingualPopupIntent={tabId:tab.id,url:tab.url,createdAt:Date.now()};
-  await expect(send({type:'POPUP_INTENT_TAKE',tabId:tab.id,url:tab.url},pageSender)).rejects.toThrow('网页');
-  expect(await send({type:'POPUP_INTENT_TAKE',tabId:tab.id,url:tab.url})).toEqual({focus:true});
-});
-
-test('popup open rejection and missing API clear intent and show manual fallback',async()=>{
-  const messagesBefore=tabMessages.length,callsBefore=modelCalls;
-  popupFailure=new Error('popup rejected');
-  await runBilingualCommand();
-  popupFailure=null;
-  expect(session.bilingualPopupIntent).toBeUndefined();
-  expect(actionTitles.at(-1)).toEqual({tabId:tab.id,title:'RelyLess：请点击工具栏 RelyLess 打开翻译'});
-
-  const openPopup=chrome.action.openPopup;
-  chrome.action.openPopup=undefined;
-  await runBilingualCommand();
-  chrome.action.openPopup=openPopup;
-  expect(session.bilingualPopupIntent).toBeUndefined();
-  expect(tabMessages.length).toBe(messagesBefore);
-  expect(modelCalls).toBe(callsBefore);
-});
-
-test('navigation and tab close clear a pending popup intent',async()=>{
-  await runBilingualCommand();
-  chrome.tabs.onUpdated.listeners[0](tab.id,{status:'loading'},tab);
-  await settleCommand();
-  expect(session.bilingualPopupIntent).toBeUndefined();
-  expect(tabMessages.some(entry=>entry.tabId===tab.id&&entry.message.type==='SS_EMERGENCY_END')).toBe(true);
-
-  await runBilingualCommand();
-  for(const listener of chrome.tabs.onRemoved.listeners)listener(tab.id);
-  await settleCommand();
-  expect(session.bilingualPopupIntent).toBeUndefined();
+test('explicit reader translation remains available on a paused page',async()=>{
+  await send({type:'PAGE_UI_INJECT',tabId:tab.id});
+  await send({type:'PAGE_ACTIVITY_SET',enabled:false},pageSender);
+  try{
+    expect(await send({type:'READER_TRANSLATION_ESTIMATE'},pageSender)).toHaveProperty('estimate');
+    const started=await send({type:'READER_TRANSLATION_BEGIN',confirmed:false},pageSender);
+    expect(started.token).toBeTruthy();
+    await send({type:'EMERGENCY_END',token:started.token},pageSender);
+  }finally{await send({type:'PAGE_ACTIVITY_SET',enabled:true},pageSender);}
 });

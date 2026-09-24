@@ -58,5 +58,34 @@
       <p id="second-pane-repeat">The cache keeps a prepared result available while the original English remains intact. Another cache should retain its own contextual explanation when this pane becomes visible.</p>
     </article>
   </main>
+  <script>
+    const readerLanguage = new URLSearchParams(location.search).get('reader');
+    if (readerLanguage === 'en' || readerLanguage === 'zh') {
+      const chinese = readerLanguage === 'zh';
+      document.documentElement.lang = chinese ? 'zh-CN' : 'en';
+      document.title = chinese ? '专注阅读测试文章' : 'Focused reading fixture';
+      const main = document.querySelector('main');
+      main.replaceChildren();
+      const input = document.createElement('input');input.id='reader-focus-input';input.setAttribute('aria-label','Reader focus input');
+      const button = document.createElement('button');button.id='reader-source-button';button.textContent='Original action';button.onclick=()=>{window.readerSourceClicked=true;};
+      const article = document.createElement('article');article.id='reader-source';
+      const title=document.createElement('h1');title.textContent=document.title;article.append(title);
+      for (let i=0;i<8;i++) {
+        const paragraph=document.createElement('p');paragraph.textContent=(chinese
+          ? '阅读视图保留原文，帮助只在需要时出现。我们用连续的正文检验段落、标题与脚注的顺序。'
+          : 'The reading view preserves the original words while assistance remains secondary. This paragraph tests continuous prose and structure. ').repeat(5);
+        article.append(paragraph);
+      }
+      const list=document.createElement('ul');list.innerHTML='<li>First footnote reference</li><li>Second original item</li>';article.append(list);
+      const pre=document.createElement('pre');pre.textContent='const original = true;';article.append(pre);
+      const table=document.createElement('table');table.innerHTML='<tr><th>Column A</th><th>Column B</th></tr><tr><td>Long cell content stays readable</td><td>Another cell</td></tr>';article.append(table);
+      const anchor=document.createElement('a');anchor.href='#reader-footnote';anchor.textContent='Read the note';article.append(anchor);
+      const note=document.createElement('p');note.id='reader-footnote';note.textContent=chinese?'脚注仍然保留在正文内。':'This footnote remains in the extracted article.';article.append(note);
+      const unsafe=document.createElement('a');unsafe.href='javascript:window.readerUnsafe=true';unsafe.onclick=()=>{window.readerUnsafe=true;};unsafe.textContent='Unsafe link text';article.append(unsafe);
+      const figure=document.createElement('figure');figure.innerHTML='<img src="/missing-reader-image.jpg" alt="Unloaded figure"><figcaption>Figure caption stays visible.</figcaption>';article.append(figure);
+      main.append(input,button,article);
+      const hostile=document.createElement('style');hostile.textContent='body{max-width:760px!important}article p{font-size:32px!important;font-weight:900!important}article a{color:red!important}article button{display:none!important}nav{position:fixed!important;z-index:2147483647!important}';document.head.append(hostile);
+    }
+  </script>
 </body>
 </html>

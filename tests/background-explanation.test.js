@@ -900,7 +900,7 @@ test('emergency begin estimates tokens and enforces the monthly budget with expl
   const data={wordSchemaVersion:5,productSchemaVersion:1,words:[],settings:{providerKind:'api',provider:{baseUrl:'https://api.example/v1',model:'fixture',apiKey:'fixture-key'},usageBudget:{monthlyTokens:1000}},modelUsage:{rows:[{day:month,provider:'api',service:'svc',model:'fixture',operation:'EMERGENCY_TRANSLATE',requests:1,input:1500,output:600,estInput:0,estOutput:0,inputChars:0,outputChars:0}]}};
   const fixture=isolatedChrome(data,{id:'budget-check'});
   try{
-    globalThis.chrome=fixture.api;fixture.api.tabs.sendMessage=async()=>({chars:400});await import('../extension/background.js?budget='+Date.now());
+    globalThis.chrome=fixture.api;fixture.api.tabs.sendMessage=async()=>({ok:true,data:{chars:400}});await import('../extension/background.js?budget='+Date.now());
     await isolatedSend(fixture,{type:'PAGE_UI_INJECT',tabId:91});
     const blocked=await isolatedSend(fixture,{type:'EMERGENCY_BEGIN',tabId:91,url:'https://isolated.example/read'});
     expect(blocked).toMatchObject({budgetExceeded:true,budget:1000,monthlyUsed:2100,estimate:100}); // 400 字符 × 0.25 回退比率

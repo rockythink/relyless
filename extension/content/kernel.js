@@ -26,7 +26,7 @@
     scrollTimer: 0, rebuildTimer: 0, opportunityTimer: 0,
     startedAt: Date.now(),
     failed: false, windowKey: '', policyKey: '', refreshing: 0, article: null, emergency: null,
-    siteRule: null, siteRuleChecked: false,
+    siteRule: null, siteRuleChecked: false, reader: null,
   };
 
   const blockIds = new WeakMap();
@@ -40,6 +40,11 @@
   const normalizeText = text => (text || '').replace(/\s+/g, ' ').trim();
   const nodeElement = node => node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
   const blockId = block => { if (!blockIds.has(block)) blockIds.set(block, ++nextBlock); return blockIds.get(block); };
+  const readerContentRoot = () => state.reader && globalThis.ShisuiReader?.active() ? globalThis.ShisuiReader.contentRoot() : null;
+  const readingScope = () => readerContentRoot() || document.body;
+  const uiMountRoot = () => readerContentRoot() ? globalThis.ShisuiReader.overlayRoot() : document.body;
+  const isReaderContent = node => { const root = readerContentRoot(); return Boolean(root && node && (node === root || root.contains(node))); };
+  const inReadingSurface = node => Boolean(node && (!state.reader || isReaderContent(node)));
   function hiddenStyle(style) { return style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.contentVisibility === 'hidden' || Number(style.opacity) === 0 || style.clip === 'rect(0px, 0px, 0px, 0px)' || style.clipPath === 'inset(50%)' || style.overflow === 'hidden' && parseFloat(style.width) <= 1 && parseFloat(style.height) <= 1; }
   function isVisible(element) {
     if (!element?.isConnected || !element.getClientRects().length) return false;
@@ -64,7 +69,14 @@
   }
   function lookupEditing(event) {
     if (document.designMode === 'on') return true;
-    return event.composedPath().some(node => node.nodeType === Node.ELEMENT_NODE && (node.isContentEditable || node.matches(LOOKUP_CONTROLS + ',' + LOOKUP_UI))) || Boolean(document.activeElement?.matches(LOOKUP_CONTROLS + ',' + LOOKUP_UI)) || Boolean(document.activeElement?.localName.includes('-'));
+    const inContent = isReaderContent(event.target);
+    const pathEditing = event.composedPath().some(node => node?.nodeType === Node.ELEMENT_NODE &&
+      (node.isContentEditable || node.matches(LOOKUP_CONTROLS) ||
+        node.matches(LOOKUP_UI) && !(inContent && globalThis.ShisuiReader?.contains(node))));
+    const active = document.activeElement;
+    return pathEditing || !inContent && Boolean(active?.matches(LOOKUP_CONTROLS) ||
+      active?.matches(LOOKUP_UI) && !isReaderContent(active) ||
+      active?.localName.includes('-') && !isReaderContent(active));
   }
   // 供测试替换的取点/取选区接缝：默认走真实 DOM。
   const pointElement = point => document.elementFromPoint(point.clientX, point.clientY);
@@ -81,7 +93,8 @@
   globalThis.ShisuiContent = {
     OWN, MARK_CLASS, HINT_CLASS, BLOCK_SELECTOR, SKIP, LOOKUP_CONTROLS, LOOKUP_UI,
     state, register, hooks,
-    normalizeText, nodeElement, blockId, hiddenStyle, isVisible, textMap, blockText, sha256, lookupEditing,
+    normalizeText, nodeElement, readingScope, uiMountRoot, inReadingSurface, isReaderContent,
+    blockId, hiddenStyle, isVisible, textMap, blockText, sha256, lookupEditing,
     pointElement, currentSelection, selectionSignature, dismissSelection, dismissedSignature,
   };
 })();

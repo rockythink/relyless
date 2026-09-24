@@ -8,14 +8,21 @@
   const kernel = globalThis.ShisuiContent;
   if (!kernel || globalThis.ShisuiConversation) return;
 
+  const currentView = (view, scope, generation) => kernel.state.card === view &&
+    kernel.readingScope() === scope && kernel.state.generation === generation &&
+    (!kernel.state.reader || kernel.inReadingSurface(view.target.block || view.target.anchor?.startContainer));
   async function openConversation(view) {
     if (view.convoSessionId || !kernel.state.enabled) return;
+    const scope = kernel.readingScope(), generation = kernel.state.generation;
+    if (!currentView(view, scope, generation)) return;
     const seed = view.target.context || view.target.text;
-    view.convoSessionId = await kernel.sha256(location.origin + '\u0000' + view.target.text + '\u0000' + seed.slice(0, 400));
+    const sessionId = await kernel.sha256([location.origin, view.target.text, seed.slice(0, 400)].join(String.fromCharCode(0)));
+    if (!currentView(view, scope, generation)) return;
+    view.convoSessionId = sessionId;
     view.convo.hidden = false;
     let turns = [];
-    try { const result = await kernel.hooks.request('CONVERSATION_HISTORY', {sessionId: view.convoSessionId}); turns = result.turns || []; } catch { turns = []; }
-    if (kernel.state.card !== view) return;
+    try { const result = await kernel.hooks.request('CONVERSATION_HISTORY', {sessionId}); turns = result.turns || []; } catch { turns = []; }
+    if (!currentView(view, scope, generation)) return;
     renderConversation(view, turns);
   }
   function renderConversation(view, turns) {
@@ -37,17 +44,19 @@
     row.append(question, answer); return row;
   }
   async function askConversation(view) {
-    if (view.convoBusy || !view.convoSessionId) return;
+    const scope = kernel.readingScope(), generation = kernel.state.generation;
+    if (!currentView(view, scope, generation) || view.convoBusy || !view.convoSessionId) return;
     const question = kernel.normalizeText(view.convoInput.value);
     if (!question) { view.convoInput.focus(); return; }
     view.convoBusy = true; view.convoInput.value = ''; view.convoSend.disabled = true; view.convoStop.hidden = false; view.convoTurnId = crypto.randomUUID();
     let history = [];
     try { const result = await kernel.hooks.request('CONVERSATION_HISTORY', {sessionId: view.convoSessionId}); history = (result.turns || []).filter(turn => turn.status === 'complete' && turn.answer).slice(-4).map(turn => ({question: turn.question, answer: turn.answer})); } catch { history = []; }
+    if (!currentView(view, scope, generation)) return;
     const row = conversationRow({question, answer: '', status: 'generating'}); view.convoLog.append(row); view.convoRow = row;
     const target = view.target;
     try {
       const result = await kernel.hooks.request('CONVERSATION_ASK', {turnId: view.convoTurnId, sessionId: view.convoSessionId, question, text: target.text, context: target.context, domain: kernel.state.domain || 'general', kind: target.kind, level: view.level, history});
-      if (kernel.state.card === view) {
+      if (currentView(view, scope, generation)) {
         const answer = row.querySelector('.conversation-answer');
         answer.textContent = result.answer; answer.classList.remove('error');
         if (result.memoryCount > 0) {
@@ -58,22 +67,25 @@
         view.convoRow = null; kernel.hooks.positionCard?.(view);
       }
     } catch (error) {
-      if (kernel.state.card === view) {
+      if (currentView(view, scope, generation)) {
         const answer = row.querySelector('.conversation-answer');
         answer.textContent = error.message || '追问失败。'; answer.classList.add('error'); view.convoRow = null;
       }
     } finally {
       view.convoBusy = false; view.convoSend.disabled = false; view.convoStop.hidden = true; view.convoTurnId = '';
-      if (kernel.state.card === view) kernel.hooks.positionCard?.(view);
+      if (currentView(view, scope, generation)) kernel.hooks.positionCard?.(view);
     }
   }
   async function stopConversation(view) {
+    const scope = kernel.readingScope(), generation = kernel.state.generation;
+    if (!currentView(view, scope, generation)) return;
     const turnId = view.convoTurnId;
     if (!turnId) return;
     view.convoStop.disabled = true;
     try { await kernel.hooks.request('CONVERSATION_STOP', {turnId}); } catch {}
+    if (!currentView(view, scope, generation)) return;
     view.convoStop.disabled = false;
-    if (view.convoRow && kernel.state.card === view) { view.convoRow.querySelector('.conversation-answer').textContent = '已停止。'; view.convoRow = null; }
+    if (view.convoRow) { view.convoRow.querySelector('.conversation-answer').textContent = '已停止。'; view.convoRow = null; }
   }
   // 由 renderHelpCard 在按钮区之后调用：构建并挂载追问区块，字段回填到 view。
   function mount(view, card) {
