@@ -3,7 +3,7 @@ import {Window} from 'happy-dom';
 import {readFileSync} from 'node:fs';
 
 const source=name=>readFileSync(new URL('../extension/'+name,import.meta.url),'utf8');
-
+const waitFor=async(predicate)=>{const deadline=Date.now()+1000;while(!predicate()){if(Date.now()>=deadline)throw new Error('Reader state did not settle');await new Promise(resolve=>setTimeout(resolve,5));}};
 test('a late initial state cannot reopen a reader after an explicit exit',async()=>{
   const window=new Window({url:'https://example.test/article'});
   const original=new Map();
@@ -41,20 +41,20 @@ test('a late initial state cannot reopen a reader after an explicit exit',async(
     const count=await send({type:'SS_EMERGENCY_COUNT'});expect(count.data.chars).toBeGreaterThan(200);
     const toolbar=document.querySelector('[data-shisui-ui="reader"] .reader-toolbar'),button=[...toolbar.querySelectorAll('button')].find(item=>item.textContent==='翻译本页');
     button.click();await new Promise(resolve=>setTimeout(resolve,0));expect(button.textContent).toBe('确认并翻译');expect(messages).not.toContain('EMERGENCY_TRANSLATE');
-    button.click();await new Promise(resolve=>setTimeout(resolve,20));expect(button.textContent).toBe('停止翻译');expect(messages).toContain('READER_TRANSLATION_BEGIN');
+    button.click();await waitFor(()=>document.querySelector('[data-shisui-ui="reader"] [data-shisui-ui="emergency-translation"]')?.textContent.includes('中文译文'));expect(button.textContent).toBe('停止翻译');expect(messages).toContain('READER_TRANSLATION_BEGIN');
     expect(document.querySelector('[data-shisui-ui="emergency-translation"]')?.textContent).toContain('中文译文');
     await send({type:'SS_READER_SET',enabled:false,pageUrl:location.href});
     expect(document.querySelector('main').inert).toBe(false);
     expect(messages.some(type=>['ANALYZE','SUPPORT_BATCH','PREPARED_SUPPORT','HISTORY_BEGIN','SENTENCE_GROUPS_BATCH'].includes(type))).toBe(false);
     const original=await send({type:'SS_EMERGENCY_START',token:'original-token',resume:false});
-    expect(original.ok).toBe(true);await new Promise(resolve=>setTimeout(resolve,20));
+    expect(original.ok).toBe(true);await waitFor(()=>document.querySelector('main [data-shisui-ui="emergency-translation"]'));
     const sourceTranslations=document.querySelectorAll('main [data-shisui-ui="emergency-translation"]');
     expect(sourceTranslations.length).toBeGreaterThan(0);
     const withPageTranslation=await send({type:'SS_READER_SET',enabled:true,pageUrl:location.href});
     expect(withPageTranslation.data.reader.active).toBe(true);
     expect(document.querySelectorAll('main [data-shisui-ui="emergency-translation"]').length).toBe(sourceTranslations.length);
     const readerButton=[...document.querySelectorAll('[data-shisui-ui="reader"] .reader-toolbar button')].find(item=>item.textContent==='翻译本页');
-    readerButton.click();await new Promise(resolve=>setTimeout(resolve,0));readerButton.click();await new Promise(resolve=>setTimeout(resolve,20));
+    readerButton.click();await new Promise(resolve=>setTimeout(resolve,0));readerButton.click();await waitFor(()=>document.querySelector('[data-shisui-ui="reader"] [data-shisui-ui="emergency-translation"]')?.textContent.includes('中文译文'));
     expect(document.querySelector('[data-shisui-ui="reader"] [data-shisui-ui="emergency-translation"]')?.textContent).toContain('中文译文');
     [...document.querySelectorAll('[data-shisui-ui="reader"] .reader-toolbar button')].find(item=>item.textContent==='返回原文').click();
     expect(document.querySelectorAll('main [data-shisui-ui="emergency-translation"]').length).toBe(sourceTranslations.length);
@@ -71,7 +71,7 @@ test('a late initial state cannot reopen a reader after an explicit exit',async(
     const reopened=await send({type:'SS_READER_SET',enabled:true,pageUrl:location.href});
     expect(reopened.data.reader.active).toBe(true);
     document.querySelector('[data-shisui-ui="reader"]').remove();
-    await new Promise(resolve=>setTimeout(resolve,20));
+    await waitFor(()=>!document.querySelector('main').inert);
     expect((await send({type:'SS_STATUS'})).data.reader.active).toBe(false);
     expect(document.querySelector('main').inert).toBe(false);
   }finally{
