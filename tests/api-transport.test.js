@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,test} from 'bun:test';
-import {performProviderRequest} from '../extension/api-transport.mjs';
+import {performProviderRequest,providerRequestTimeoutMs} from '../extension/api-transport.mjs';
 import {translationProgress} from '../extension/assistance-stream.mjs';
 import {EMERGENCY_SCHEMA} from '../extension/gloss.mjs';
 
@@ -202,6 +202,56 @@ test('an incompatible no-thinking request is never retried without its control',
   let calls=0,sent;globalThis.fetch=async(_url,init)=>{calls++;sent=JSON.parse(init.body);return new Response('',{status:400});};
   await expect(performProviderRequest(service('openai-compatible','https://custom.example/v1','custom-model'),{},'Explain.',schema)).rejects.toMatchObject({code:'INCOMPATIBLE_REQUEST'});
   expect(calls).toBe(1);expect(sent.reasoning_effort).toBe('none');
+});
+
+test('per-service thinking levels map to each provider protocol parameter',async()=>{
+  const cases=[
+    ['stepfun','https://api.stepfun.com/v1','step-3.7-flash','high',{choices:[{finish_reason:'stop',message:{content:'{"value":"ok"}'}}]},body=>body.reasoning_effort==='high'],
+    ['deepseek','https://api.deepseek.com','deepseek-v4-flash','medium',{choices:[{finish_reason:'stop',message:{content:'{"value":"ok"}'}}]},body=>body.thinking?.type==='enabled'],
+    ['alibaba','https://dashscope.aliyuncs.com/compatible-mode/v1','qwen3.8-flash','low',{choices:[{finish_reason:'stop',message:{content:'{"value":"ok"}'}}]},body=>body.enable_thinking===true],
+    ['openrouter','https://openrouter.ai/api/v1','zai-org/GLM-5.2','high',{choices:[{finish_reason:'stop',message:{content:'{"value":"ok"}'}}]},body=>body.reasoning?.effort==='high'],
+    ['openai-compatible','https://custom.example/v1','custom-model','low',{choices:[{finish_reason:'stop',message:{content:'{"value":"ok"}'}}]},body=>body.reasoning_effort==='low'],
+    ['openai','https://api.openai.com/v1','o3','low',{status:'completed',output_text:'{"value":"ok"}'},body=>body.reasoning?.effort==='low'],
+  ];
+  for(const [providerId,baseUrl,model,level,reply,check] of cases){let sent;globalThis.fetch=async(_url,init)=>{sent=JSON.parse(init.body);return Response.json(reply);};const configured={...service(providerId,baseUrl,model),options:{thinking:level}};expect(await performProviderRequest(configured,{},'Explain.',schema)).toEqual({value:'ok'});expect(check(sent)).toBe(true);}
+});
+
+test('explicit thinking levels reach Google, Anthropic, Bedrock and Ollama native params',async()=>{
+  let sent;globalThis.fetch=async(_url,init)=>{sent=JSON.parse(init.body);return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:'{"value":"ok"}'}]}}]});};
+  await performProviderRequest({...service('google','https://generativelanguage.googleapis.com/v1beta','gemini-2.5-flash-lite'),options:{thinking:'high'}},{},'Explain.',schema);
+  expect(sent.generationConfig.thinkingConfig).toEqual({thinkingBudget:-1});
+  await performProviderRequest({...service('google','https://generativelanguage.googleapis.com/v1beta','gemini-2.5-flash-lite'),options:{thinking:'off'}},{},'Explain.',schema);
+  expect(sent.generationConfig.thinkingConfig).toEqual({thinkingBudget:0});
+  globalThis.fetch=async(_url,init)=>{sent=JSON.parse(init.body);return Response.json({stop_reason:'end_turn',content:[{text:'{"value":"ok"}'}]});};
+  await performProviderRequest({...service('anthropic','https://api.anthropic.com/v1','claude-haiku-4-5'),options:{thinking:'medium'}},{},'Explain.',schema);
+  expect(sent.thinking).toEqual({type:'enabled',budget_tokens:4096});
+  globalThis.fetch=async(_url,init)=>{sent=JSON.parse(init.body);return Response.json({stopReason:'end_turn',output:{message:{content:[{text:'{"value":"ok"}'}]}}});};
+  await performProviderRequest({...service('bedrock','https://bedrock-runtime.us-east-1.amazonaws.com','anthropic.claude-haiku-4-5-v1:0'),options:{thinking:'low'}},{},'Explain.',schema);
+  expect(sent.additionalModelRequestFields).toEqual({thinking:{type:'enabled',budget_tokens:1024}});
+  globalThis.fetch=async(_url,init)=>{sent=JSON.parse(init.body);return Response.json({done:true,message:{content:'{"value":"ok"}'}});};
+  await performProviderRequest({...service('ollama','http://localhost:11434/api','qwen3:8b'),options:{thinking:'low'}},{},'Explain.',schema);
+  expect(sent.think).toBe('low');
+});
+
+test('thinking off sends generic disable params and still rejects always-reasoning models',async()=>{
+  let sent;globalThis.fetch=async(_url,init)=>{sent=JSON.parse(init.body);return Response.json({choices:[{finish_reason:'stop',message:{content:'{"value":"ok"}'}}]});};
+  await performProviderRequest({...service('mistral','https://api.mistral.ai/v1','mistral-small-latest'),options:{thinking:'off'}},{},'Explain.',schema);
+  expect(sent.reasoning_effort).toBe('none');
+  let calls=0;globalThis.fetch=async()=>{calls++;return Response.json({});};
+  await expect(performProviderRequest({...service('stepfun','https://api.stepfun.com/v1','step-3.7-flash'),options:{thinking:'off'}},{},'Explain.',schema)).rejects.toMatchObject({code:'THINKING_REQUIRED'});
+  await expect(performProviderRequest({...service('openai','https://api.openai.com/v1','o3'),options:{thinking:'off'}},{},'Explain.',schema)).rejects.toMatchObject({code:'THINKING_REQUIRED'});
+  expect(calls).toBe(0);
+});
+
+test('explicit thinking levels widen the request timeout while auto and off keep the default',()=>{
+  const mistral=service('mistral','https://api.mistral.ai/v1','mistral-small-latest');
+  expect(providerRequestTimeoutMs(mistral)).toBe(180_000);
+  expect(providerRequestTimeoutMs({...mistral,options:{thinking:'auto'}})).toBe(180_000);
+  expect(providerRequestTimeoutMs({...mistral,options:{thinking:'off'}})).toBe(180_000);
+  for(const thinking of ['low','medium','high'])expect(providerRequestTimeoutMs({...mistral,options:{thinking}})).toBe(300_000);
+  // 服务商覆盖仍优先：stepfun 无论档位都给慢推理预算。
+  expect(providerRequestTimeoutMs(service('stepfun','https://api.stepfun.com/v1','step-3.7-flash'))).toBe(300_000);
+  expect(providerRequestTimeoutMs({...service('stepfun','https://api.stepfun.com/v1','step-3.7-flash'),options:{thinking:'off'}})).toBe(300_000);
 });
 
 test('Azure v1 chat uses the common v1 route and keeps the deployment name in model',async()=>{
