@@ -10,6 +10,7 @@ const ICON_FALLBACK = Object.freeze({
   jalapenocloud: 'custom-api',
   requesty: 'custom-api',
   tensdaq: 'custom-api',
+  'siliconflow-systemone': 'custom-api',
 });
 
 export function providerIconFile(providerId) {

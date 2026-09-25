@@ -212,6 +212,10 @@ function publicState(state,trusted) {
 function text(value,name,max,required=true) { if (typeof value !== 'string' || value.length > max || (required && !value.trim())) throw new Error(name+'不能为空，且不能超过 '+max+' 个字符。'); return value.trim(); }
 function domain(value) { if (!Object.hasOwn(DOMAINS,value)) throw new Error('不支持的领域。'); return value; }
 function customDetectionService(api,model='') { return {id:'domain-detection',name:'领域识别 API',providerId:'openai-compatible',baseUrl:api.baseUrl,model,apiKey:api.apiKey,options:{}}; }
+// 判定通道（领域识别 / 路由判卷）可在支持判定协议的服务商之间切换；缺省为 Requesty。
+const JUDGMENT_PROTOCOLS=['jev','systemone'];
+function judgmentProvider(detection){const provider=getApiProvider(detection?.jevProvider);return provider&&JUDGMENT_PROTOCOLS.includes(provider.protocol)?provider:getApiProvider('requesty');}
+function judgmentService(detection,{id='domain-detection-jev',name='Jev 领域识别',apiKey}={}){const provider=judgmentProvider(detection),same=!detection?.jevProvider||detection.jevProvider===provider.id;return normalizeApiService({id,name,providerId:provider.id,baseUrl:((same?detection?.jevBaseUrl:'')||provider.baseUrl).trim(),model:((same?detection?.jevModel:'')||provider.defaultModel).trim(),apiKey:apiKey??(detection?.jevApiKey||''),options:{}});}
 function validatePatch(patch,currentSettings) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('无效设置。');
   const result={}; for (const key of Object.keys(patch)) if (!Object.hasOwn(DEFAULT_SETTINGS,key)) throw new Error('未知设置项。');
@@ -236,11 +240,13 @@ function validatePatch(patch,currentSettings) {
   if (patch.domainDetection !== undefined) {
     const d=patch.domainDetection; if (!d || !['local','chatgpt','grok','antigravity','api','jev'].includes(d.mode) || typeof d.useTranslationApi !== 'boolean') throw new Error('无效的领域识别配置。');
     const api={baseUrl:text(d.api?.baseUrl,'识别 API 地址',2048),apiKey:text(d.api?.apiKey ?? '','识别 API Key',4096,false)}; apiServiceOrigins(customDetectionService(api));
-    const jevBaseUrl=text(d.jevBaseUrl ?? 'https://router.requesty.ai/v1','Jev 接口地址',2048,false) || 'https://router.requesty.ai/v1';
-    const jevModel=text(d.jevModel ?? 'typesafe/jev-1.13.0','Jev 模型',150,d.mode==='jev');
+    const jevProviderId=text(d.jevProvider ?? 'requesty','判定接入',60,false)||'requesty',jevProvider=getApiProvider(jevProviderId);
+    if(!jevProvider||!JUDGMENT_PROTOCOLS.includes(jevProvider.protocol))throw new Error('无效的判定接入服务。');
+    const jevBaseUrl=text(d.jevBaseUrl ?? jevProvider.baseUrl,'Jev 接口地址',2048,false) || jevProvider.baseUrl;
+    const jevModel=text(d.jevModel ?? jevProvider.defaultModel,'Jev 模型',150,d.mode==='jev');
     const jevApiKey=text(d.jevApiKey ?? '','Jev API Key',4096,false);
-    if(d.mode==='jev'||jevApiKey)apiServiceOrigins(normalizeApiService({id:'domain-detection-jev',name:'Jev 领域识别',providerId:'requesty',baseUrl:jevBaseUrl,model:jevModel,apiKey:jevApiKey||'pending',options:{}}));
-    result.domainDetection={mode:d.mode,subscriptionModel:text(d.subscriptionModel ?? '','识别订阅模型',150,isSubscriptionKind(d.mode)),apiModel:text(d.apiModel ?? '','识别 API 模型',150,d.mode==='api'),useTranslationApi:d.useTranslationApi,api,jevModel,jevApiKey,jevBaseUrl};
+    if(d.mode==='jev'||jevApiKey)apiServiceOrigins(normalizeApiService({id:'domain-detection-jev',name:'Jev 领域识别',providerId:jevProvider.id,baseUrl:jevBaseUrl,model:jevModel,apiKey:jevApiKey||'pending',options:{}}));
+    result.domainDetection={mode:d.mode,subscriptionModel:text(d.subscriptionModel ?? '','识别订阅模型',150,isSubscriptionKind(d.mode)),apiModel:text(d.apiModel ?? '','识别 API 模型',150,d.mode==='api'),useTranslationApi:d.useTranslationApi,api,jevProvider:jevProvider.id,jevModel,jevApiKey,jevBaseUrl};
   }
   if (patch.providerKind !== undefined) { if (!['chatgpt','grok','antigravity','api','local'].includes(patch.providerKind)) throw new Error('不支持的服务类型。'); result.providerKind=patch.providerKind; }
   if (patch.apiServices !== undefined) {
@@ -350,7 +356,7 @@ async function classifyText(settings,source,title,{force = false,guard = async (
     if (detection.mode === 'jev') {
       if (!detection.jevApiKey) throw new Error('请先填写 Jev API Key，再使用 Jev 增强识别。');
       if (!detection.jevModel) throw new Error('请先填写 Jev 模型。');
-      const service=normalizeApiService({id:'domain-detection-jev',name:'Jev 领域识别',providerId:'requesty',baseUrl:detection.jevBaseUrl,model:detection.jevModel,apiKey:detection.jevApiKey,options:{}});
+      const service=judgmentService(detection);
       if (!apiServiceReady(service)) throw new Error('请先配置 Jev 领域识别的接口与模型。');
       const criteria={tech:'software and AI',data:'databases and data engineering',finance:'finance and business',medical:'medicine and life sciences',legal:'law',design:'design and products',general:'everyday text, mixed topics or insufficient evidence'};
       const value=await withBackgroundSlot(()=>apiRequest(service,{state:`Title: ${title}
@@ -967,11 +973,8 @@ function routingVersion(settings) {
 }
 function judgeService(settings) {
   const detection = settings?.domainDetection || {};
-  const baseUrl = (detection.jevBaseUrl || 'https://router.requesty.ai/v1').trim();
-  const model = (detection.jevModel || 'typesafe/jev-1.13.0').trim();
-  const apiKey = detection.jevApiKey || '';
-  if (!apiKey || !model) return null;
-  try { return normalizeApiService({id: 'route-judge', name: '路由判定', providerId: 'requesty', baseUrl, model, apiKey, options: {}}); } catch { return null; }
+  if (!detection.jevApiKey || !(detection.jevModel || judgmentProvider(detection).defaultModel)) return null;
+  try { return judgmentService(detection,{id: 'route-judge', name: '路由判定'}); } catch { return null; }
 }
 function premiumTarget(settings, routing, operation) {
   if (!routing.premiumServiceId) return null;
@@ -1326,7 +1329,7 @@ function providerPermissionPatterns(settings) {
   const add = service => { try { for(const origin of apiServiceOrigins(service))patterns.add(origin+'/*'); } catch {} };
   for (const service of settings.apiServices) add(service);
   if (settings.domainDetection.mode === 'api' && settings.domainDetection.api.apiKey) add(customDetectionService(settings.domainDetection.api,settings.domainDetection.apiModel));
-  if (settings.domainDetection.mode === 'jev' && settings.domainDetection.jevApiKey) add(normalizeApiService({id:'domain-detection-jev',name:'Jev 领域识别',providerId:'requesty',baseUrl:settings.domainDetection.jevBaseUrl,model:settings.domainDetection.jevModel,apiKey:settings.domainDetection.jevApiKey,options:{}}));
+  if (settings.domainDetection.mode === 'jev' && settings.domainDetection.jevApiKey) add(judgmentService(settings.domainDetection));
   return patterns;
 }
 

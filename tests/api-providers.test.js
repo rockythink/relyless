@@ -2,10 +2,10 @@ import {expect,test} from 'bun:test';
 import {API_PROVIDERS,apiProviderBaseUrl,apiServiceOrigins,apiServiceReady,normalizeApiService} from '../extension/api-providers.mjs';
 
 test('catalog exposes the complete unique supported LLM provider set',()=>{
-  expect(API_PROVIDERS).toHaveLength(32);
-  expect(new Set(API_PROVIDERS.map(provider=>provider.id)).size).toBe(32);
+  expect(API_PROVIDERS).toHaveLength(33);
+  expect(new Set(API_PROVIDERS.map(provider=>provider.id)).size).toBe(33);
   expect(API_PROVIDERS.map(provider=>provider.id)).toEqual([
-    'openai','deepseek','google','anthropic','xai','requesty','openai-compatible','open-responses','jalapenocloud','atlascloud','openrouter','minimax','siliconflow','tensdaq','azure','bedrock','groq','deepinfra','mistral','togetherai','cohere','fireworks','cerebras','replicate','perplexity','vercel','ollama','volcengine','alibaba','moonshotai','stepfun','huggingface',
+    'openai','deepseek','google','anthropic','xai','requesty','openai-compatible','open-responses','jalapenocloud','atlascloud','openrouter','minimax','siliconflow','siliconflow-systemone','tensdaq','azure','bedrock','groq','deepinfra','mistral','togetherai','cohere','fireworks','cerebras','replicate','perplexity','vercel','ollama','volcengine','alibaba','moonshotai','stepfun','huggingface',
   ]);
   expect(API_PROVIDERS.every(provider=>provider.apiKeyUrl===''||!/[?&](?:ref|aff|utm_)/i.test(provider.apiKeyUrl))).toBe(true);
 });

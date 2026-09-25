@@ -632,11 +632,19 @@
 <input type="radio" name="domain-detection-mode" value="jev">
 <span>
 <b>Jev 判定</b>
-<small>Requesty 结构化判定，密钥单独填写</small>
+<small>Requesty / SiliconFlow 结构化判定，密钥单独填写</small>
 </span>
 </label>
           </div>
 </fieldset>          <div id="detection-jev" class="form-stack" hidden="">
+<label class="field">
+<span>判定接入</span>
+<select id="detection-jev-provider">
+<option value="requesty">Requesty · Jev</option>
+<option value="siliconflow-systemone">SiliconFlow · System One</option>
+</select>
+<small id="detection-jev-provider-note">SiliconFlow System One 处于 Alpha 测试期，可能调整或停用。</small>
+</label>
 <label class="field">
 <span>Jev 模型</span>
 <input id="detection-jev-model" autocomplete="off" placeholder="typesafe/jev-1.13.0">

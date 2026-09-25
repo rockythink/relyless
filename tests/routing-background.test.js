@@ -119,6 +119,38 @@ test('incognito routing does not retain a decision in shared local storage', asy
   } finally { globalThis.chrome = chromeBefore; }
 });
 
+test('a siliconflow systemone judge routes through the systemone endpoint', async () => {
+  const fixture = isolatedChrome({
+    wordSchemaVersion: 5, productSchemaVersion: 1, words: [],
+    settings: {
+      providerKind: 'api', apiServices: [primary, premium], activeApiServiceId: primary.id,
+      domainDetection: {mode: 'local', subscriptionModel: '', apiModel: '', useTranslationApi: true, api: {baseUrl: 'https://api.openai.com/v1', apiKey: ''}, jevProvider: 'siliconflow-systemone', jevModel: 'diffusiongemma', jevApiKey: 'judge-key', jevBaseUrl: 'https://api.siliconflow.cn/v1'},
+      routing: normalizeRouting({enabled: true, premiumServiceId: premium.id}),
+      rememberSupport: false,
+    },
+  }, {id: 'routing-systemone'});
+  globalThis.chrome = fixture.api;
+  const seen = [];
+  globalThis.fetch = withCapabilityProbe(async (url, init) => {
+    const body = JSON.parse(init.body);
+    seen.push({url: String(url), model: body.model, state: typeof body.state === 'string'});
+    if (String(url).includes('api.siliconflow.cn')) return Response.json({answers: {tier: {selected: 'premium'}, confidence: {score: 0.4}}});
+    return assistReply(init);
+  });
+  await import(`../extension/background.js?routing-systemone=${Date.now()}`);
+  const result = await isolatedSend(fixture, {type: 'ASSIST', requestId: 'route-sf', text: 'index', context: 'The database query uses an index.', domain: 'tech', kind: 'word', level: 'hint', detail: 'full'}, pageSender);
+  expect(result.hint).toBe('a short gloss');
+  const judge = seen.find(entry => entry.url === 'https://api.siliconflow.cn/v1/systemone');
+  expect(judge).toBeTruthy();
+  expect(judge.model).toBe('diffusiongemma');
+  expect(judge.state).toBe(true);
+  const served = seen.filter(entry => !entry.url.includes('api.siliconflow.cn'));
+  expect(served.at(-1).url).toContain('premium.example');
+  const stats = await isolatedSend(fixture, {type: 'ROUTING_STATS'}, {id: 'routing-systemone', url: 'chrome-extension://routing-systemone/ui/options.html'});
+  expect(stats.routing.escalated).toBeGreaterThanOrEqual(1);
+  globalThis.chrome = chromeBefore;
+});
+
 test('a failing judge falls back to the primary service without breaking the request', async () => {
   const fixture = routingFixture();
   globalThis.chrome = fixture.api;
