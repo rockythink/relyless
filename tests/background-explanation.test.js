@@ -29,7 +29,7 @@ globalThis.chrome={
   },
   permissions:{contains:async()=>true,remove:async()=>true,onAdded:event(),onRemoved:event()},
   tabs:{onRemoved:event(),onUpdated:event(),query:async()=>[],sendMessage:async()=>{},get:async()=>({...tab})},
-  webNavigation:{getFrame:async()=>({documentId:currentDocumentId,url:tab.url})},
+  webNavigation:{onCommitted:event(),getFrame:async()=>({documentId:currentDocumentId,url:tab.url})},
   contextMenus:{onClicked:event(),removeAll:async()=>{},create:(_options,callback)=>callback()},
   scripting:{executeScript:async()=>[{result:true}],getRegisteredContentScripts:async()=>[],unregisterContentScripts:async()=>{},registerContentScripts:async()=>{}},
   commands:{onCommand:event()},action:{setBadgeText:async()=>{},setTitle:async()=>{},setBadgeBackgroundColor:async()=>{}},

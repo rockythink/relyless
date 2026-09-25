@@ -23,6 +23,7 @@ flowchart LR
 ### `extension/background.js`
 
 Service worker 是请求编排和持久状态入口：设置、权限、模型调用、路由、诊断、阅读记录、会话、复习和消息分发在这里汇合。不要继续把可独立测试的规则堆进该文件；稳定规则应放入专门模块，由 background 负责协调。
+`activation.js` 承载自动开启规则与域名关键词提示：提示默认关闭，只在本机按域名片段比较主框架导航的 hostname，不产生权限来源或网址持久化（见 ADR 0003）。
 
 ### `extension/content.js` 与 `extension/content/`
 

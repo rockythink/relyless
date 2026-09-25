@@ -1,5 +1,5 @@
 import {expect,test} from 'bun:test';
-import {ALL_HOSTS,registrationMatches,requiredPermissionOrigins,resolveAutomation,validateAutomation,validateVideo} from '../extension/activation.js';
+import {ALL_HOSTS,DEFAULT_KEYWORD_HINTS,KEYWORD_PATTERN,hostKeyword,normalizeKeywordHints,registrationMatches,requiredPermissionOrigins,resolveAutomation,validateAutomation,validateVideo} from '../extension/activation.js';
 import {normalizeSettings} from '../extension/shared.js';
 
 const activationDefaults={allSites:false,sentenceGroupsAllSites:false,sites:[],videoSites:false};
@@ -132,6 +132,87 @@ test('popup renders the complete bilingual snapshot and confirms retained-sessio
     const types=events.map(message=>message.type);
     expect(types.indexOf('PAGE_UI_INJECT')).toBeLessThan(types.indexOf('EMERGENCY_BEGIN'));
     expect(types.indexOf('EMERGENCY_BEGIN')).toBeLessThan(types.indexOf('SS_EMERGENCY_START'));
+  }finally{
+    if(previousChrome===undefined)delete globalThis.chrome;else globalThis.chrome=previousChrome;
+    if(previousDocument===undefined)delete globalThis.document;else globalThis.document=previousDocument;
+  }
+});
+
+test('hostKeyword matches whole hostname segments only and honors keyword order',()=>{
+  expect(hostKeyword('docs.python.org',['docs'])).toBe('docs');
+  expect(hostKeyword('python-docs.example.com',['docs'])).toBe('docs');
+  expect(hostKeyword('paradocs.com',['docs'])).toBe(null);
+  expect(hostKeyword('readthedocs.io',['docs'])).toBe(null);
+  expect(hostKeyword('learn.docs.example.com',['docs','learn'])).toBe('docs');
+  expect(hostKeyword('learn.docs.example.com',['learn','docs'])).toBe('learn');
+});
+
+test('keywordHint resolves on unruled non-dismissed http sites regardless of the badge flag',()=>{
+  const hints={badge:false,keywords:['docs'],dismissed:[]};
+  const automation=validateAutomation({keywordHints:{...hints,dismissed:[]}},{...activationDefaults,keywordHints:hints});
+  expect(resolveAutomation(automation,'https://docs.example/read').keywordHint).toBe('docs');
+  expect(resolveAutomation({...automation,keywordHints:{...hints,badge:true}},'https://docs.example/read').keywordHint).toBe('docs');
+  expect(resolveAutomation({...automation,sites:[{origin:'https://docs.example',enabled:true}]},'https://docs.example/read').keywordHint).toBe(null);
+  expect(resolveAutomation({...automation,sites:[{origin:'https://docs.example',enabled:false}]},'https://docs.example/read').keywordHint).toBe(null);
+  expect(resolveAutomation({...automation,allSites:true},'https://docs.example/read').keywordHint).toBe(null);
+  expect(resolveAutomation({...automation,keywordHints:{...hints,dismissed:['https://docs.example']}},'https://docs.example/read').keywordHint).toBe(null);
+  expect(resolveAutomation(automation,'chrome://settings').keywordHint).toBe(null);
+});
+
+test('keywordHints validation enforces exact shape, keyword format, and origin list',()=>{
+  const base={...activationDefaults,keywordHints:{badge:false,keywords:['docs'],dismissed:[]}};
+  expect(validateAutomation({keywordHints:{badge:true,keywords:['docs','wiki'],dismissed:['https://a.example']}},base).keywordHints).toEqual({badge:true,keywords:['docs','wiki'],dismissed:['https://a.example']});
+  expect(()=>validateAutomation({keywordHints:{enabled:true,keywords:['docs'],dismissed:[]}},base)).toThrow('域名关键词提示');
+  expect(()=>validateAutomation({keywordHints:{badge:true,keywords:['docs']}},base)).toThrow('域名关键词提示');
+  expect(()=>validateAutomation({keywordHints:{badge:true,keywords:['docs'],dismissed:[],extra:1}},base)).toThrow('域名关键词提示');
+  for(const keywords of [['Docs'],['a'],['123'],['do.cs'],['docs','docs'],Array(21).fill(0).map((_v,i)=>'k'+i)]){
+    expect(()=>validateAutomation({keywordHints:{badge:true,keywords,dismissed:[]}},base)).toThrow('关键词');
+  }
+  expect(()=>validateAutomation({keywordHints:{badge:true,keywords:['docs'],dismissed:['https://a.example/path']}},base)).toThrow('忽略列表');
+  expect(()=>validateAutomation({keywordHints:{badge:true,keywords:['docs'],dismissed:['https://a.example','https://a.example']}},base)).toThrow('忽略列表');
+  expect(()=>validateAutomation({keywordHints:{badge:true,keywords:['docs'],dismissed:Array(501).fill(0).map((_v,i)=>'https://d'+i+'.example')}},base)).toThrow('忽略列表');
+});
+
+test('keyword hints never broaden permission or registration requirements',()=>{
+  const automation=validateAutomation({keywordHints:{badge:true,keywords:['docs'],dismissed:[]}},activationDefaults);
+  expect(registrationMatches(automation)).toEqual([]);
+  expect(requiredPermissionOrigins(automation)).toEqual([]);
+});
+
+test('normalizeSettings applies lenient keyword hint defaults and drops invalid entries',()=>{
+  expect(normalizeSettings({}).automation.keywordHints).toEqual(DEFAULT_KEYWORD_HINTS);
+  expect(normalizeSettings({automation:{allSites:true,sites:[]}}).automation.keywordHints).toEqual(DEFAULT_KEYWORD_HINTS);
+  expect(normalizeSettings({automation:{keywordHints:{badge:true,keywords:['Docs','bad!','wiki','a','123','do.cs'],dismissed:['https://a.example','https://a.example/path','not-a-url','https://a.example']}}}).automation.keywordHints).toEqual({badge:true,keywords:['docs','wiki'],dismissed:['https://a.example']});
+  expect(normalizeSettings({automation:{keywordHints:{badge:true,keywords:[],dismissed:[]}}}).automation.keywordHints.keywords).toEqual([]);
+  expect(normalizeSettings({automation:{keywordHints:{badge:'yes'}}}).automation.keywordHints.badge).toBe(false);
+  expect(normalizeSettings({automation:{keywordHints:{enabled:true,keywords:['docs'],dismissed:[]}}}).automation.keywordHints.badge).toBe(false);
+});
+
+test('popup shows the keyword hint note and dismisses the origin through an automation patch',async()=>{
+  const previousChrome=globalThis.chrome,previousDocument=globalThis.document;
+  const elements=new Map();
+  const element=id=>{
+    if(!elements.has(id))elements.set(id,{checked:false,disabled:true,hidden:true,textContent:'',handlers:{},classList:{toggle(){},add(){},remove(){}},addEventListener(type,handler){this.handlers[type]=handler;}});
+    return elements.get(id);
+  };
+  const patches=[];
+  const hints={badge:false,keywords:['docs'],dismissed:[]};
+  const automation={allSites:false,sites:[],videoSites:false,keywordHints:hints};
+  globalThis.document={querySelector:element,querySelectorAll:()=>[]};
+  globalThis.chrome={runtime:{async sendMessage(message){
+    if(message.type==='STATE_GET')return{ok:true,data:{settings:{assistanceMode:'on-demand'},providerConfigured:true}};
+    if(message.type==='AUTOMATION_PATCH'){patches.push(message.patch);return{ok:true,data:{automation:{...automation,keywordHints:message.patch.keywordHints},siteRule:null,keywordHint:null}};}
+    return{ok:true,data:{automation,siteRule:null,keywordHint:'docs'}};
+  }},storage:{onChanged:{addListener(){}}},tabs:{query:async()=>[{id:7,url:'https://docs.example/read'}],sendMessage:async()=>({ok:true,data:{enabled:false}})},permissions:{request:async()=>true}};
+  try{
+    await import('../extension/ui/popup.js?keyword-hint-regression');
+    await new Promise(resolve=>setTimeout(resolve,0));
+    expect(element('#site-auto-note').textContent).toContain('docs');
+    expect(element('#site-hint-dismiss').hidden).toBe(false);
+    element('#site-hint-dismiss').handlers.click();
+    await new Promise(resolve=>setTimeout(resolve,0));
+    expect(patches).toEqual([{keywordHints:{badge:false,keywords:['docs'],dismissed:['https://docs.example']}}]);
+    expect(element('#site-hint-dismiss').hidden).toBe(true);
   }finally{
     if(previousChrome===undefined)delete globalThis.chrome;else globalThis.chrome=previousChrome;
     if(previousDocument===undefined)delete globalThis.document;else globalThis.document=previousDocument;

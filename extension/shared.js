@@ -2,6 +2,7 @@ import './reading-style.js';
 import {normalizeApiService} from './api-providers.mjs';
 import {normalizeRulePacks} from './rule-pack.js';
 import {normalizeRouting} from './routing.js';
+import {normalizeKeywordHints} from './activation.js';
 
 export const DOMAINS = {auto:'自动识别',general:'通用阅读',tech:'软件与 AI',data:'数据工程',finance:'金融与商业',medical:'医学与生命科学',legal:'法律',design:'设计与产品'};
 export const DEFAULT_SETTINGS = {assistanceMode:'ambient',rememberSupport:true,keyboardNav:{enabled:false},persistTranslationCache:false,helpLanguage:'zh',lookupKey:'D',lookupDisplay:'card',hintDisplay:'direct',readingStyle:globalThis.ShisuiReadingStyle.defaults,domain:'auto',providerKind:'chatgpt',subscriptionModel:'',apiServices:[],activeApiServiceId:'',domainRules:[],domainDetection:{mode:'local',subscriptionModel:'',apiModel:'',useTranslationApi:true,api:{baseUrl:'https://api.openai.com/v1',apiKey:''},jevModel:'typesafe/jev-1.13.0',jevApiKey:'',jevBaseUrl:'https://router.requesty.ai/v1'},customTerms:[],automation:{allSites:false,sentenceGroupsAllSites:false,sites:[],videoSites:false},video:{fontSize:20,theme:'auto'},passageAction:{open:'click',delay:600},rulePacks:[],requestConcurrency:2,routing:{enabled:false,premiumServiceId:'',operations:{assist:true,passage:true,emergency:true,conversation:true,sentenceGroups:false},minConfidence:0.7,cacheTtlMinutes:1440},usageBudget:{monthlyTokens:0}};
@@ -26,6 +27,7 @@ export function normalizeSettings(value = {}) {
   settings.domainDetection.api = pick(DEFAULT_SETTINGS.domainDetection.api,value.domainDetection?.api);
   settings.automation = pick(DEFAULT_SETTINGS.automation,value.automation);
   settings.automation.sites = Array.isArray(value.automation?.sites) ? value.automation.sites.map(({origin,enabled}) => ({origin,enabled})) : [];
+  settings.automation.keywordHints = normalizeKeywordHints(value.automation?.keywordHints);
   settings.video = pick(DEFAULT_SETTINGS.video,value.video);
   settings.passageAction = {open:value.passageAction?.open==='hover'?'hover':'click',delay:Number.isSafeInteger(value.passageAction?.delay)&&value.passageAction.delay>=0&&value.passageAction.delay<=3000?value.passageAction.delay:DEFAULT_SETTINGS.passageAction.delay};
   settings.requestConcurrency = Number.isSafeInteger(value.requestConcurrency) && value.requestConcurrency >= 1 && value.requestConcurrency <= 8 ? value.requestConcurrency : DEFAULT_SETTINGS.requestConcurrency;

@@ -515,6 +515,39 @@
 <h3>尚未添加网站</h3>
 <p>也可在扩展弹窗中授权当前网站。</p>
 </div>
+          <div class="adaptive-setting">
+<div>
+<b>文档类网站提示</b>
+<p>打开弹窗时，如果当前网站的域名片段命中下列关键词，会提示可为此网站开启自动辅助。</p>
+</div>
+</div>
+          <form id="keyword-hints-form" class="automation-site-form">
+<label class="field">
+<span>提示关键词</span>
+<input id="keyword-hints-keywords" type="text" autocomplete="off" spellcheck="false" placeholder="docs developer learn wiki">
+<small>用逗号或空格分隔；按域名片段完整匹配，例如 docs 命中 docs.python.org，不命中 readthedocs.io。</small>
+</label>
+<button class="primary-action narrow" type="submit">保存关键词</button>
+</form>
+          <div class="adaptive-setting">
+<div>
+<b>同时在扩展图标上提示</b>
+<p>开启后扩展会在本机检查每次打开网页的域名，命中时在图标上显示提示；不保存、不发送网址。</p>
+</div>
+<label class="switch">
+<input id="keyword-hints-badge" type="checkbox">
+<span aria-hidden="true">
+</span>
+<span class="sr-only">同时在扩展图标上提示</span>
+</label>
+</div>
+          <p id="keyword-hints-result" class="inline-message" aria-live="polite" hidden="">
+</p>
+          <div id="keyword-hints-dismissed-list" class="automation-site-list">
+</div>
+          <div id="keyword-hints-dismissed-empty" class="empty-state compact-empty" hidden="">
+<h3>没有忽略提示的网站。</h3>
+</div>
           <form id="rule-pack-form" class="automation-site-form">
 <label class="field">
 <span>站点规则包（JSON）</span>
