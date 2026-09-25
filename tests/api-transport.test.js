@@ -152,6 +152,16 @@ test('Gemini sends budget zero only for models that can actually turn thinking o
   await expect(performProviderRequest(service('google','https://generativelanguage.googleapis.com/v1beta','gemini-3.5-flash-lite'),{},'Explain.',schema)).rejects.toMatchObject({code:'THINKING_REQUIRED'});expect(calls).toBe(0);
 });
 
+test('google uses streamGenerateContent only for streamed requests',async()=>{
+  const urls=[],gemini=service('google','https://generativelanguage.googleapis.com/v1beta','gemini-2.5-flash-lite');
+  globalThis.fetch=async(target)=>{urls.push(String(target));return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:'{"value":"ok"}'}]}}]});};
+  await performProviderRequest(gemini,{},'Explain.',schema);
+  expect(urls.at(-1)).toContain(':generateContent');expect(urls.at(-1)).not.toContain(':streamGenerateContent');expect(urls.at(-1)).not.toContain('alt=sse');
+  globalThis.fetch=async(target)=>{urls.push(String(target));return sse(['data: '+JSON.stringify({candidates:[{finishReason:'STOP',content:{parts:[{text:'{"value":"ok"}'}]}}]})+'\n\n']);};
+  await performProviderRequest(gemini,{},'Explain.',schema,{onContent:()=>{}});
+  expect(urls.at(-1)).toContain(':streamGenerateContent');expect(urls.at(-1)).toContain('alt=sse');
+});
+
 test('known always-reasoning models fail before any paid request',async()=>{
   const cases=[['minimax','MiniMax-M2.7'],['xai','grok-4.6'],['xai','grok-4'],['openai','o3'],['openrouter','openai/o3'],['openrouter','x-ai/grok-4'],['togetherai','deepseek-ai/DeepSeek-R1'],['groq','openai/gpt-oss-20b'],['jalapenocloud','GLM-5.3']];let calls=0;globalThis.fetch=async()=>{calls++;return Response.json({});};
   for(const [providerId,model] of cases)await expect(performProviderRequest(service(providerId,'https://api.example.test/v1',model),{},'Explain.',schema)).rejects.toMatchObject({code:'THINKING_REQUIRED'});expect(calls).toBe(0);

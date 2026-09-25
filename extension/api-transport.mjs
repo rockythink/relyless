@@ -104,7 +104,7 @@ function providerFor(service){const provider=getApiProvider(service?.providerId)
 function serviceBase(service){const raw=service?.baseUrl||apiProviderBaseUrl(service?.providerId,service?.options||{});let url;try{url=new URL(raw);}catch{throw transportError('API 地址无效。','INVALID_URL');}if(url.username||url.password||url.search||url.hash)throw transportError('API 地址不能包含用户名、密码、查询参数或片段。','INVALID_URL');return url;}
 function cleanPath(path){return path.replace(/\/+$/,'');}
 function appendPath(base,suffix){const url=new URL(base.href);const current=cleanPath(url.pathname);const wanted='/'+suffix.replace(/^\/+/, '');if(!current.endsWith(wanted))url.pathname=(current||'')+wanted;return url;}
-function endpointFor(service,kind){const base=serviceBase(service),model=encodeURIComponent(service.model||'');const path=cleanPath(base.pathname);
+function endpointFor(service,kind,stream=false){const base=serviceBase(service),model=encodeURIComponent(service.model||'');const path=cleanPath(base.pathname);
   if(service.providerId==='azure'){
     const mode=service.options?.apiMode==='chat'?'chat':'responses',v1=service.options?.apiVersion?.toLowerCase()==='v1'||/\/openai\/v1$/i.test(path);
     if(mode==='chat'){
@@ -122,7 +122,7 @@ function endpointFor(service,kind){const base=serviceBase(service),model=encodeU
   if(kind==='chat')return /\/chat\/completions$/i.test(path)?base:appendPath(base,'chat/completions');
   if(kind==='responses')return /\/responses$/i.test(path)?base:appendPath(base,'responses');
   if(kind==='anthropic')return /\/messages$/i.test(path)?base:appendPath(base,'messages');
-  if(kind==='google'){const id=model.replace(/^models%2F/i,'');return appendPath(base,`models/${id}:${arguments[2]?'streamGenerateContent':'generateContent'}`);}
+  if(kind==='google'){const id=model.replace(/^models%2F/i,'');return appendPath(base,`models/${id}:${stream?'streamGenerateContent':'generateContent'}`);}
   if(kind==='bedrock')return appendPath(base,`model/${model}/converse`);
   if(kind==='cohere')return /\/v2\/chat$/i.test(path)?base:appendPath(base,/\/v2$/i.test(path)?'chat':'v2/chat');
   if(kind==='ollama')return /\/api\/chat$/i.test(path)?base:appendPath(base,/\/api$/i.test(path)?'chat':'api/chat');
