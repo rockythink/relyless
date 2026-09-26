@@ -72,16 +72,17 @@
 3. 主动再查一个已排期的词 → 计划重置到第 1 盒（视为遗忘）。
 4. 设置里清空本机记录 → 复习入口不再出现（计划键随清理移除见“数据与隐私”）。
 
-## 5.8 Jev 领域识别（Requesty）
+## 5.8 Jev 领域识别（Requesty / SiliconFlow）
 
-1. 设置 → 领域识别 → 选“Jev 判定”→ 填模型 `typesafe/jev-1.13.0`、接口地址与 API Key → 保存（首次会请求 router.requesty.ai 权限）。
-2. 打开英文文章 → 领域识别使用 Jev；诊断里 source 显示 `jev`，带置信度分数。
-3. 留空模型或 Key 保存 → 明确报错；返回的领域不在支持列表 → 按远程失败回退本地结果（有 warning）。
-4. 清除密钥后 → 权限来源里不再包含 router.requesty.ai。
+1. 设置 → 领域识别 → 选“Jev 判定”→ 「判定接入」默认 Requesty → 填模型 `typesafe/jev-1.13.0`、接口地址与 API Key → 保存（首次会请求 router.requesty.ai 权限）。
+2. 「判定接入」切换到 SiliconFlow · System One → 接口地址与模型自动换成硅基流动默认值（`https://api.siliconflow.cn/v1`、`diffusiongemma`）→ 填硅基流动 API Key → 保存（首次会请求 api.siliconflow.cn 权限）。
+3. 打开英文文章 → 领域识别使用所选判定服务；诊断里 source 显示 `jev`，带置信度分数。
+4. 留空模型或 Key 保存 → 明确报错；返回的领域不在支持列表 → 按远程失败回退本地结果（有 warning）。
+5. 清除密钥后 → 权限来源里不再包含相应判定端点（router.requesty.ai 或 api.siliconflow.cn）。
 
 ## 5.9 模型路由（实验）
 
-前置：领域识别里已填好 Jev 模型/地址/Key（路由复用同一份凭据）。
+前置：领域识别里已选好判定接入并填好模型/地址/Key（路由复用同一份凭据）。
 
 1. 设置 → 模型服务 → 「模型路由」打开开关 → 选升级目标（某个已保存服务或 ChatGPT 订阅）→ 保存。
 2. 打开英文文章主动查一个词 → 若被判为 premium（段落/救援级/难内容），请求打到升级服务；「统计」行显示“已判 1 次 · 升级 1 次”。

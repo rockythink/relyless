@@ -1,0 +1,45 @@
+:root{color-scheme:light dark;}
+*{box-sizing:border-box;}
+body{margin:0;font-family:var(--sans,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif);background:var(--canvas,#525659);color:var(--ink,#202124);}
+.viewer-bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--paper,#323639);color:#e8eaed;border-bottom:1px solid rgba(0,0,0,.2);}
+.viewer-brand{flex:none;}
+.doc-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;opacity:.9;}
+.bar-actions{display:flex;align-items:center;gap:6px;}
+.bar-actions button{background:rgba(255,255,255,.08);color:#e8eaed;border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:5px 12px;font-size:13px;cursor:pointer;}
+.bar-actions button:hover{background:rgba(255,255,255,.16);}
+.bar-actions button:disabled{opacity:.45;cursor:default;}
+#page-info{font-size:13px;min-width:52px;text-align:center;font-variant-numeric:tabular-nums;}
+#status{margin:0;padding:8px 16px;font-size:13px;color:#e8eaed;background:rgba(0,0,0,.25);min-height:0;}
+#status:empty{display:none;}
+.viewer-body{display:flex;align-items:flex-start;}
+.pages{flex:1;display:flex;flex-direction:column;align-items:center;gap:18px;padding:18px 12px 40px;min-width:0;}
+.pdf-page{position:relative;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);}
+.pdf-page canvas{display:block;}
+/* pdf.js 文本层：透明、可选中、逐块绝对定位 */
+.textLayer{position:absolute;inset:0;overflow:hidden;line-height:1;text-align:initial;forced-color-adjust:none;transform-origin:0 0;caret-color:CanvasText;z-index:1;}
+.textLayer span,.textLayer br{color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0 0;}
+.textLayer ::selection{background:rgba(80,140,255,.45);color:transparent;}
+.pdf-block{position:absolute;z-index:2;border-radius:4px;outline:1px solid transparent;pointer-events:none;}
+.pdf-block:hover,.pdf-block.hover{outline-color:rgba(30,120,220,.4);background:rgba(30,120,220,.06);}
+.pdf-block.translated{outline-color:rgba(30,140,80,.5);}
+.block-action{position:absolute;top:2px;right:2px;z-index:3;pointer-events:auto;opacity:.75;font-size:12px;padding:2px 8px;border-radius:6px;border:1px solid rgba(30,120,220,.5);background:#fff;color:#1a73e8;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.25);}
+.block-action:hover{opacity:1;}
+#zh-panel{position:sticky;top:52px;flex:none;width:320px;max-height:calc(100vh - 70px);overflow:auto;margin:18px 14px 18px 0;padding:12px 14px;background:var(--paper,#fff);color:var(--ink,#202124);border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.3);font-size:13px;line-height:1.65;}
+#zh-panel h2{margin:0 0 8px;font-size:14px;}
+#zh-list .zh-row{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,.18);border-radius:6px;}
+#zh-list .zh-row:hover{background:rgba(30,120,220,.07);}
+#zh-list .zh-row .zh-src{color:#888;font-size:12px;margin-bottom:3px;}
+#zh-list .zh-row .zh-err{color:#b3261e;font-size:12px;}
+.float-card{position:fixed;z-index:50;width:300px;max-height:280px;overflow:auto;padding:12px 14px;background:var(--paper,#fff);color:var(--ink,#202124);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.35);font-size:13px;line-height:1.6;}
+.float-card .card-word{font-size:16px;font-weight:600;margin-bottom:4px;}
+.float-card .card-sense{color:#1a73e8;font-size:12px;margin-bottom:6px;}
+.float-card .card-answer{white-space:pre-wrap;}
+.float-card .card-note{margin-top:6px;color:#888;font-size:12px;}
+.float-card .card-actions{display:flex;gap:6px;margin-top:8px;}
+.float-card button,.sel-actions button{font-size:12px;padding:4px 10px;border-radius:7px;border:1px solid rgba(30,120,220,.45);background:#fff;color:#1a73e8;cursor:pointer;}
+.float-card button:hover,.sel-actions button:hover{background:rgba(30,120,220,.08);}
+.float-card .card-error{color:#b3261e;}
+.sel-actions{position:fixed;z-index:50;display:flex;gap:6px;padding:5px;background:var(--paper,#fff);border-radius:9px;box-shadow:0 4px 16px rgba(0,0,0,.3);}
+@media (prefers-color-scheme:dark){body{--canvas:#202124;--paper:#2b2c2f;--ink:#e8eaed;}
+  .float-card,.sel-actions,#zh-panel{background:#2b2c2f;color:#e8eaed;}
+  .float-card button,.sel-actions button,.block-action{background:#2b2c2f;color:#8ab4f8;}}

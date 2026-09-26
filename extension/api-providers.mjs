@@ -22,6 +22,7 @@ export const API_PROVIDERS = [
   {id:'openrouter',name:'OpenRouter',protocol:'chat',baseUrl:'https://openrouter.ai/api/v1',defaultModel:'google/gemma-4-31b-it:free',apiKeyUrl:'',keyOptional:false,fields:[]},
   {id:'minimax',name:'MiniMax',protocol:'chat',baseUrl:'https://api.minimax.io/v1',defaultModel:'MiniMax-M3',apiKeyUrl:'',keyOptional:false,fields:[]},
   {id:'siliconflow',name:'SiliconFlow',protocol:'chat',baseUrl:'https://api.siliconflow.cn/v1',defaultModel:'Qwen/Qwen3-Next-80B-A3B-Instruct',apiKeyUrl:'',keyOptional:false,fields:[]},
+  {id:'siliconflow-systemone',name:'SiliconFlow · 快速决策',protocol:'systemone',baseUrl:'https://api.siliconflow.cn/v1',defaultModel:'diffusiongemma',apiKeyUrl:'',keyOptional:false,fields:[]},
   {id:'tensdaq',name:'Tensdaq',protocol:'chat',baseUrl:'https://tensdaq-api.x-aio.com/v1',defaultModel:'Qwen3-30B-A3B-Instruct-2507',apiKeyUrl:'',keyOptional:false,fields:[]},
   {id:'azure',name:'Azure OpenAI',protocol:'responses',baseUrl:'',defaultModel:'gpt-5.6-luna',apiKeyUrl:'',keyOptional:false,fields:azureFields},
   {id:'bedrock',name:'Amazon Bedrock',protocol:'bedrock',baseUrl:'',defaultModel:'us.amazon.nova-micro-v1:0',apiKeyUrl:'',keyOptional:false,fields:bedrockFields},

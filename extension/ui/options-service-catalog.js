@@ -34,6 +34,7 @@ const PROVIDER_CATALOG_META = {
   requesty: {category: 'popular', desc: 'Requesty 路由上的 Jev 判定模型，结构化领域识别', website: 'https://app.requesty.ai'},
   minimax: {category: 'domestic', desc: 'MiniMax 系列国内多模态大模型', website: 'https://platform.minimaxi.com'},
   siliconflow: {category: 'domestic', desc: '多模型聚合平台，DeepSeek 与 Qwen 开源全家桶', website: 'https://cloud.siliconflow.cn'},
+  'siliconflow-systemone': {category: 'domestic', desc: 'System One 快速决策模型，结构化判定（Alpha 限时免费）', website: 'https://cloud.siliconflow.cn'},
   volcengine: {category: 'domestic', desc: '火山引擎豆包大模型官方接口', website: 'https://console.volcengine.com/ark'},
   alibaba: {category: 'domestic', desc: '阿里云百炼通义千问兼容接口', website: 'https://bailian.console.aliyun.com'},
   moonshotai: {category: 'domestic', desc: '月之暗面 Kimi 超长上下文模型', website: 'https://platform.moonshot.cn'},

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RelyLess PDF 阅读</title>
+<link rel="icon" href="icons/icon-32.png">
+<link rel="stylesheet" href="pdf-viewer.css">
+<script src="design.js"></script>
+</head>
+<body>
+<header class="viewer-bar">
+  <img class="viewer-brand" src="icons/relyless.svg" alt="" width="18" height="18">
+  <span class="doc-title" id="doc-title"></span>
+  <div class="bar-actions">
+    <button id="prev-page" type="button" title="上一页">‹</button>
+    <span id="page-info" aria-live="polite">– / –</span>
+    <button id="next-page" type="button" title="下一页">›</button>
+    <button id="zoom-out" type="button" title="缩小">−</button>
+    <button id="zoom-in" type="button" title="放大">＋</button>
+    <button id="translate-page" type="button">翻译本页</button>
+    <button id="native-open" type="button" title="交给浏览器自带的 PDF 查看器">原生查看器</button>
+  </div>
+</header>
+<p id="status" role="status" aria-live="polite"></p>
+<div class="viewer-body">
+  <main id="pages" class="pages"></main>
+  <aside id="zh-panel" hidden>
+    <h2>本页译文</h2>
+    <div id="zh-list"></div>
+  </aside>
+</div>
+<div id="word-card" class="float-card" role="dialog" aria-label="词义" hidden></div>
+<div id="sel-actions" class="sel-actions" hidden>
+  <button id="sel-translate" type="button">翻译选段</button>
+  <button id="sel-assist" type="button">解释选段</button>
+</div>
+<script type="module" src="pdf-viewer.js"></script>
+</body>
+</html>

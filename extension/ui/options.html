@@ -151,6 +151,21 @@
 </div>
 </fieldset>
         <fieldset>
+<legend>PDF 阅读</legend>
+<div class="adaptive-setting">
+<div>
+<b>在 RelyLess 阅读器中打开 PDF</b>
+<p>点击 .pdf 链接时使用自带阅读器，支持点词解释、选段与整页翻译；译文只在你明确请求时发送给模型。关闭后 PDF 交给浏览器查看器。</p>
+</div>
+<label class="switch">
+<input id="pdf-reader" type="checkbox">
+<span aria-hidden="true">
+</span>
+<span class="sr-only">在 RelyLess 阅读器中打开 PDF</span>
+</label>
+</div>
+</fieldset>
+        <fieldset>
 <legend>划词动作打开方式</legend>
 <div class="choice-cards two">
 <label>
@@ -632,11 +647,19 @@
 <input type="radio" name="domain-detection-mode" value="jev">
 <span>
 <b>Jev 判定</b>
-<small>Requesty 结构化判定，密钥单独填写</small>
+<small>Requesty / SiliconFlow 结构化判定，密钥单独填写</small>
 </span>
 </label>
           </div>
 </fieldset>          <div id="detection-jev" class="form-stack" hidden="">
+<label class="field">
+<span>判定接入</span>
+<select id="detection-jev-provider">
+<option value="requesty">Requesty · Jev</option>
+<option value="siliconflow-systemone">SiliconFlow · System One</option>
+</select>
+<small id="detection-jev-provider-note">SiliconFlow System One 处于 Alpha 测试期，可能调整或停用。</small>
+</label>
 <label class="field">
 <span>Jev 模型</span>
 <input id="detection-jev-model" autocomplete="off" placeholder="typesafe/jev-1.13.0">

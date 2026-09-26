@@ -212,6 +212,10 @@ function publicState(state,trusted) {
 function text(value,name,max,required=true) { if (typeof value !== 'string' || value.length > max || (required && !value.trim())) throw new Error(name+'不能为空，且不能超过 '+max+' 个字符。'); return value.trim(); }
 function domain(value) { if (!Object.hasOwn(DOMAINS,value)) throw new Error('不支持的领域。'); return value; }
 function customDetectionService(api,model='') { return {id:'domain-detection',name:'领域识别 API',providerId:'openai-compatible',baseUrl:api.baseUrl,model,apiKey:api.apiKey,options:{}}; }
+// 判定通道（领域识别 / 路由判卷）可在支持判定协议的服务商之间切换；缺省为 Requesty。
+const JUDGMENT_PROTOCOLS=['jev','systemone'];
+function judgmentProvider(detection){const provider=getApiProvider(detection?.jevProvider);return provider&&JUDGMENT_PROTOCOLS.includes(provider.protocol)?provider:getApiProvider('requesty');}
+function judgmentService(detection,{id='domain-detection-jev',name='Jev 领域识别',apiKey}={}){const provider=judgmentProvider(detection),same=!detection?.jevProvider||detection.jevProvider===provider.id;return normalizeApiService({id,name,providerId:provider.id,baseUrl:((same?detection?.jevBaseUrl:'')||provider.baseUrl).trim(),model:((same?detection?.jevModel:'')||provider.defaultModel).trim(),apiKey:apiKey??(detection?.jevApiKey||''),options:{}});}
 function validatePatch(patch,currentSettings) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('无效设置。');
   const result={}; for (const key of Object.keys(patch)) if (!Object.hasOwn(DEFAULT_SETTINGS,key)) throw new Error('未知设置项。');
@@ -228,6 +232,7 @@ function validatePatch(patch,currentSettings) {
   if (patch.usageBudget !== undefined) { const b=patch.usageBudget; if (!b || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some(key=>key!=='monthlyTokens')) throw new Error('无效的用量预算设置。'); result.usageBudget={monthlyTokens:Number.isSafeInteger(b.monthlyTokens)&&b.monthlyTokens>=0&&b.monthlyTokens<=100000000?b.monthlyTokens:0}; }
   if (patch.keyboardNav !== undefined) { const k=patch.keyboardNav; if (!k || typeof k !== 'object' || Array.isArray(k) || Object.keys(k).some(key=>key!=='enabled') || typeof k.enabled !== 'boolean') throw new Error('无效的键盘导航设置。'); result.keyboardNav={enabled:k.enabled}; }
   if (patch.persistTranslationCache !== undefined) { if(typeof patch.persistTranslationCache!=='boolean')throw new Error('无效的译文缓存设置。');result.persistTranslationCache=patch.persistTranslationCache; }
+  if (patch.pdfReader !== undefined) { if (typeof patch.pdfReader !== 'boolean') throw new Error('无效的 PDF 阅读设置。'); result.pdfReader=patch.pdfReader; }
   if (patch.requestConcurrency !== undefined) { if (!Number.isSafeInteger(patch.requestConcurrency) || patch.requestConcurrency < 1 || patch.requestConcurrency > 8) throw new Error('并发请求数需为 1–8 的整数。'); result.requestConcurrency=patch.requestConcurrency; }
   if (patch.rememberSupport !== undefined) { if (typeof patch.rememberSupport !== 'boolean') throw new Error('无效记忆设置。'); result.rememberSupport=patch.rememberSupport; }
   if (patch.domain !== undefined) result.domain=domain(patch.domain);
@@ -236,11 +241,13 @@ function validatePatch(patch,currentSettings) {
   if (patch.domainDetection !== undefined) {
     const d=patch.domainDetection; if (!d || !['local','chatgpt','grok','antigravity','api','jev'].includes(d.mode) || typeof d.useTranslationApi !== 'boolean') throw new Error('无效的领域识别配置。');
     const api={baseUrl:text(d.api?.baseUrl,'识别 API 地址',2048),apiKey:text(d.api?.apiKey ?? '','识别 API Key',4096,false)}; apiServiceOrigins(customDetectionService(api));
-    const jevBaseUrl=text(d.jevBaseUrl ?? 'https://router.requesty.ai/v1','Jev 接口地址',2048,false) || 'https://router.requesty.ai/v1';
-    const jevModel=text(d.jevModel ?? 'typesafe/jev-1.13.0','Jev 模型',150,d.mode==='jev');
+    const jevProviderId=text(d.jevProvider ?? 'requesty','判定接入',60,false)||'requesty',jevProvider=getApiProvider(jevProviderId);
+    if(!jevProvider||!JUDGMENT_PROTOCOLS.includes(jevProvider.protocol))throw new Error('无效的判定接入服务。');
+    const jevBaseUrl=text(d.jevBaseUrl ?? jevProvider.baseUrl,'Jev 接口地址',2048,false) || jevProvider.baseUrl;
+    const jevModel=text(d.jevModel ?? jevProvider.defaultModel,'Jev 模型',150,d.mode==='jev');
     const jevApiKey=text(d.jevApiKey ?? '','Jev API Key',4096,false);
-    if(d.mode==='jev'||jevApiKey)apiServiceOrigins(normalizeApiService({id:'domain-detection-jev',name:'Jev 领域识别',providerId:'requesty',baseUrl:jevBaseUrl,model:jevModel,apiKey:jevApiKey||'pending',options:{}}));
-    result.domainDetection={mode:d.mode,subscriptionModel:text(d.subscriptionModel ?? '','识别订阅模型',150,isSubscriptionKind(d.mode)),apiModel:text(d.apiModel ?? '','识别 API 模型',150,d.mode==='api'),useTranslationApi:d.useTranslationApi,api,jevModel,jevApiKey,jevBaseUrl};
+    if(d.mode==='jev'||jevApiKey)apiServiceOrigins(normalizeApiService({id:'domain-detection-jev',name:'Jev 领域识别',providerId:jevProvider.id,baseUrl:jevBaseUrl,model:jevModel,apiKey:jevApiKey||'pending',options:{}}));
+    result.domainDetection={mode:d.mode,subscriptionModel:text(d.subscriptionModel ?? '','识别订阅模型',150,isSubscriptionKind(d.mode)),apiModel:text(d.apiModel ?? '','识别 API 模型',150,d.mode==='api'),useTranslationApi:d.useTranslationApi,api,jevProvider:jevProvider.id,jevModel,jevApiKey,jevBaseUrl};
   }
   if (patch.providerKind !== undefined) { if (!['chatgpt','grok','antigravity','api','local'].includes(patch.providerKind)) throw new Error('不支持的服务类型。'); result.providerKind=patch.providerKind; }
   if (patch.apiServices !== undefined) {
@@ -317,12 +324,16 @@ async function hashValue(value) {
   const digest = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest),byte => byte.toString(16).padStart(2,'0')).join('');
 }
-async function tabPage(tabId) {
+async function tabPage(tabId,fallbackUrl) {
   if (!Number.isInteger(tabId) || tabId < 0) throw new Error('请选择普通网页标签页。');
   const tab = await readingPageCall(()=>chrome.tabs.get(tabId));
   let url;
-  try { url = new URL(tab.url); } catch { throw new Error('请在普通网页点击插件后重试。'); }
-  if (!['http:','https:'].includes(url.protocol)) throw new Error('此页面不支持阅读辅助。');
+  try { url = new URL(tab.url||fallbackUrl); } catch { throw new Error('请在普通网页点击插件后重试。'); }
+  if (!['http:','https:'].includes(url.protocol)) {
+    const src=pdfSourceUrl(url.href);
+    if(!src)throw new Error('此页面不支持阅读辅助。');
+    url=src;
+  }
   return {url,key:url.origin + url.pathname};
 }
 function sampleForDomain(source) {
@@ -350,7 +361,7 @@ async function classifyText(settings,source,title,{force = false,guard = async (
     if (detection.mode === 'jev') {
       if (!detection.jevApiKey) throw new Error('请先填写 Jev API Key，再使用 Jev 增强识别。');
       if (!detection.jevModel) throw new Error('请先填写 Jev 模型。');
-      const service=normalizeApiService({id:'domain-detection-jev',name:'Jev 领域识别',providerId:'requesty',baseUrl:detection.jevBaseUrl,model:detection.jevModel,apiKey:detection.jevApiKey,options:{}});
+      const service=judgmentService(detection);
       if (!apiServiceReady(service)) throw new Error('请先配置 Jev 领域识别的接口与模型。');
       const criteria={tech:'software and AI',data:'databases and data engineering',finance:'finance and business',medical:'medicine and life sciences',legal:'law',design:'design and products',general:'everyday text, mixed topics or insufficient evidence'};
       const value=await withBackgroundSlot(()=>apiRequest(service,{state:`Title: ${title}
@@ -375,7 +386,7 @@ ${source}`,questions:{domain:{type:'choice',instructions:'Classify the English r
 async function resolvePageDomain(message,sender) {
   if (!sender.tab?.id) throw new Error('领域自动识别仅在已开启的网页中运行。');
   await readingSource(sender);
-  const page = await tabPage(sender.tab.id);
+  const page = await tabPage(sender.tab.id,sender.url);
   const {settings}=await load(false);
   if(settings.assistanceMode==='on-demand'&&message.explicit!==true)throw new Error('仅在明确求助时识别当前上下文领域。');
   const rule = resolveRuleDomain(page.url,settings);
@@ -393,7 +404,7 @@ async function resolvePageDomain(message,sender) {
   const sharedGuard=async()=>{if(generation!==classificationGeneration||providerVersion!==providerGeneration)throw staleWork();};
   const guard = async () => {
     await sharedGuard();
-    const currentSource=await readingSource(sender),current=await tabPage(sender.tab.id),latest=await load();
+    const currentSource=await readingSource(sender),current=await tabPage(sender.tab.id,sender.url),latest=await load();
     if(!currentSource.active||await tabPaused(sender.tab.id)||(latest.settings.assistanceMode==='on-demand'&&message.explicit!==true))throw staleWork();
     if(currentSource.sourceHash!==await hashValue(page.key)||current.key!==page.key)throw new Error('页面已变化，请重试。');
   };
@@ -510,13 +521,25 @@ async function readingPageCall(operation){
   try{return await operation();}catch(error){if(/No tab with id:|No frame with id:|Frame not found|No document with id:|The tab was closed/i.test(error?.message||''))throw staleWork();throw error;}
 }
 function persistSupportCache(expectedProvider=providerGeneration,expectedSupport){const work=writes.then(async()=>{const state=await load(false);if(futureSchema||expectedProvider!==providerGeneration||(expectedSupport!==undefined&&expectedSupport!==state.supportDataGeneration))return;await writeReadingSession({supportCache:Object.fromEntries(supportCache)},expectedProvider);});writes=work.catch(()=>{});return work;}
+const pdfViewerPrefix=()=>chrome.runtime.getURL('pdf-viewer.html')+'?src=';
+function isPdfViewerUrl(value){return typeof value==='string'&&value.startsWith(pdfViewerPrefix());}
+function pdfSourceUrl(tabUrl){try{const page=new URL(tabUrl),viewer=new URL(chrome.runtime.getURL('pdf-viewer.html'));if(page.origin!==viewer.origin||page.pathname!==viewer.pathname)return null;const src=new URL(page.searchParams.get('src')||'');return ['http:','https:'].includes(src.protocol)?src:null;}catch{return null;}}
 async function readingSource(sender){
   if(!Number.isInteger(sender.tab?.id)||(sender.frameId!==undefined&&sender.frameId!==0))throw new Error('阅读操作只能来自当前普通网页主框架。');
   const tab=await readingPageCall(()=>chrome.tabs.get(sender.tab.id)),actual=tab.url||sender.url;let url;try{url=new URL(actual);}catch{throw new Error('此网页不支持阅读辅助。');}
-  if(!['http:','https:'].includes(url.protocol))throw new Error('此网页不支持阅读辅助。');
-  if(sender.documentId&&chrome.webNavigation?.getFrame){const frame=await readingPageCall(()=>chrome.webNavigation.getFrame({tabId:sender.tab.id,frameId:0}));if(!frame||frame.documentId!==sender.documentId)throw new Error('网页已切换，请在当前页面重新操作。');}
-  else if(sender.url&&new URL(sender.url).href!==url.href)throw new Error('网页已切换，请在当前页面重新操作。');
-  url.username='';url.password='';url.search='';url.hash='';const sourceHash=await hashValue(url.href),day=new Date().toISOString().slice(0,10),pageKey=await hashValue(sourceHash+':'+day);return {tabId:sender.tab.id,url:actual,sourceHash,pageKey,day,active:tab.active!==false,incognito:tab.incognito===true};
+  if(url.protocol==='chrome-extension:'){
+    const src=pdfSourceUrl(actual);
+    if(!src)throw new Error('此网页不支持阅读辅助。');
+    if(sender.url&&new URL(sender.url).href!==url.href)throw new Error('文档已切换，请在当前页面重新操作。');
+    url=src;
+  }
+  else{
+    if(!['http:','https:'].includes(url.protocol))throw new Error('此网页不支持阅读辅助。');
+    if(sender.documentId&&chrome.webNavigation?.getFrame){const frame=await readingPageCall(()=>chrome.webNavigation.getFrame({tabId:sender.tab.id,frameId:0}));if(!frame||frame.documentId!==sender.documentId)throw new Error('网页已切换，请在当前页面重新操作。');}
+    else if(sender.url&&new URL(sender.url).href!==url.href)throw new Error('网页已切换，请在当前页面重新操作。');
+    url.search='';
+  }
+  url.username='';url.password='';url.hash='';const sourceHash=await hashValue(url.href),day=new Date().toISOString().slice(0,10),pageKey=await hashValue(sourceHash+':'+day);return {tabId:sender.tab.id,url:actual,docUrl:url.href,sourceHash,pageKey,day,active:tab.active!==false,incognito:tab.incognito===true};
 }
 const offeredKey=tabId=>'offeredSupport:'+tabId,pendingKey=tabId=>'pendingAssists:'+tabId,assistCacheKey=tabId=>'assistResultCache:'+tabId;
 async function sessionMap(key,ttl,limit){
@@ -758,16 +781,17 @@ async function emergencyUsageEstimate(tabId,settings){
   const budget=settings.usageBudget?.monthlyTokens||0;
   return {chars,estimate,monthlyUsed,budget,budgetExceeded:budget>0&&monthlyUsed+estimate>budget};
 }
-async function emergencyBegin(message){
+async function emergencyBegin(message,sender){
   if(!Number.isInteger(message.tabId)||typeof message.url!=='string')throw new Error('无效的紧急翻译请求。');
   const tab=await chrome.tabs.get(message.tabId);
-  if(tab.url!==message.url)throw new Error('页面已变化，请重新确认。');
-  if(injectedEmergencyPages.get(message.tabId)!==tab.url)throw new Error('请先准备当前页面再开始紧急翻译。');
-  if(!['http:','https:'].includes(new URL(tab.url).protocol))throw new Error('此网页不支持紧急翻译。');
+  const actual=tab.url||sender?.url;
+  if(actual!==message.url)throw new Error('页面已变化，请重新确认。');
+  if(!isPdfViewerUrl(actual)&&injectedEmergencyPages.get(message.tabId)!==actual)throw new Error('请先准备当前页面再开始紧急翻译。');
+  if(!isPdfViewerUrl(actual)&&!['http:','https:'].includes(new URL(actual).protocol))throw new Error('此网页不支持紧急翻译。');
   const estimate=await emergencyUsageEstimate(message.tabId,(await load(false)).settings);
   if(estimate.budgetExceeded&&message.confirmed!==true)return {budgetExceeded:true,estimate:estimate.estimate,monthlyUsed:estimate.monthlyUsed,budget:estimate.budget};
   return changeEmergency(async()=>{const loaded=await load(),state={...loaded,settings:dispatchSettings(loaded.settings)},generation=providerGeneration,token=crypto.randomUUID()+crypto.randomUUID(),provider=await emergencyProvider(state.settings),current=await chrome.tabs.get(message.tabId);
-    if(current.url!==message.url||generation!==providerGeneration)throw new Error('页面或服务已变化，请重新确认。');
+    if((current.url||sender?.url)!==message.url||generation!==providerGeneration)throw new Error('页面或服务已变化，请重新确认。');
     await chrome.storage.session.set({[emergencyKey(message.tabId)]:{token,url:message.url,generation:state.supportDataGeneration,provider,cancelledThrough:0}});
     return {token,estimate:estimate.estimate};});
 }
@@ -816,7 +840,7 @@ async function emergencyTranslate(message,sender) {
   const items=normalizePageTranslationItems(message.items),state=await load();
   if(armed.generation!==state.supportDataGeneration||armed.provider!==await emergencyProvider(state.settings))throw new Error('翻译设置已改变，请重新开始。');
   const guard=async()=>{const [latest,page]=await Promise.all([load(),readingSource(sender)]),current=await emergencySession(source.tabId);if(!current||current.token!==armed.token||page.url!==armed.url||current.provider!==await emergencyProvider(latest.settings)||current.generation!==latest.supportDataGeneration||message.requestSeq<=(current.cancelledThrough||0))throw staleWork();};
-  const result=await translateItems(items,state.settings,diagnostics.trace(message),{scope:'page',incognito:source.incognito,origin:new URL(source.url).origin,sourceHash:source.sourceHash,guard});
+  const result=await translateItems(items,state.settings,diagnostics.trace(message),{scope:'page',incognito:source.incognito,origin:new URL(source.docUrl||source.url).origin,sourceHash:source.sourceHash,guard});
   await guard();
   return result;
 }
@@ -851,7 +875,7 @@ async function passageTranslate(message,sender) {
     previous=progress;pending=progress;if(!delivering&&!timer)void deliver();
   };
   try{
-    const result=await translateItems(items,state.settings,diagnostics.trace(message),{scope:'passage',incognito:source.incognito,onProgress,origin:new URL(source.url).origin,guard});open=false;clearTimeout(timer);
+    const result=await translateItems(items,state.settings,diagnostics.trace(message),{scope:'passage',incognito:source.incognito,onProgress,origin:new URL(source.docUrl||source.url).origin,guard});open=false;clearTimeout(timer);
     if(!await current())throw new Error('页面或服务已变化，已丢弃段落译文。');
     await readingHistory.prepareQuery(sender,message.requestId,{items,domain:message.domain},result);return result;
   }finally{open=false;pending=null;clearTimeout(timer);}
@@ -967,11 +991,8 @@ function routingVersion(settings) {
 }
 function judgeService(settings) {
   const detection = settings?.domainDetection || {};
-  const baseUrl = (detection.jevBaseUrl || 'https://router.requesty.ai/v1').trim();
-  const model = (detection.jevModel || 'typesafe/jev-1.13.0').trim();
-  const apiKey = detection.jevApiKey || '';
-  if (!apiKey || !model) return null;
-  try { return normalizeApiService({id: 'route-judge', name: '路由判定', providerId: 'requesty', baseUrl, model, apiKey, options: {}}); } catch { return null; }
+  if (!detection.jevApiKey || !(detection.jevModel || judgmentProvider(detection).defaultModel)) return null;
+  try { return judgmentService(detection,{id: 'route-judge', name: '路由判定'}); } catch { return null; }
 }
 function premiumTarget(settings, routing, operation) {
   if (!routing.premiumServiceId) return null;
@@ -1326,7 +1347,7 @@ function providerPermissionPatterns(settings) {
   const add = service => { try { for(const origin of apiServiceOrigins(service))patterns.add(origin+'/*'); } catch {} };
   for (const service of settings.apiServices) add(service);
   if (settings.domainDetection.mode === 'api' && settings.domainDetection.api.apiKey) add(customDetectionService(settings.domainDetection.api,settings.domainDetection.apiModel));
-  if (settings.domainDetection.mode === 'jev' && settings.domainDetection.jevApiKey) add(normalizeApiService({id:'domain-detection-jev',name:'Jev 领域识别',providerId:'requesty',baseUrl:settings.domainDetection.jevBaseUrl,model:settings.domainDetection.jevModel,apiKey:settings.domainDetection.jevApiKey,options:{}}));
+  if (settings.domainDetection.mode === 'jev' && settings.domainDetection.jevApiKey) add(judgmentService(settings.domainDetection));
   return patterns;
 }
 
@@ -1458,7 +1479,7 @@ async function handle(message,sender) {
     case 'AUTOMATION_PATCH':{const settings=await patchAutomation(message.patch);await reconcileAutomation();const tab=await requestedTab(message,sender);return automationResult(settings,tab,Boolean(tab?.id&&await tabPaused(tab.id)));}
     case 'PAGE_ACTIVITY_SET':if(!Number.isInteger(sender.tab?.id)||sender.frameId!==0||typeof message.enabled!=='boolean')throw new Error('无效的页面活动状态。');await setTabPaused(sender.tab.id,!message.enabled);return{paused:!message.enabled};
     case 'VIDEO_SETTINGS_PATCH':{if(!trusted&&(!Number.isInteger(sender.tab?.id)||sender.frameId!==0))throw new Error('视频设置只能由网页主框架更新。');const video=await mutate(state=>{const next=validateVideo(message.patch,state.settings.video);state.settings={...state.settings,video:next};return next;},false,false);await broadcastVideoSettings(video);return{video};}
-    case 'YOUTUBE_CAPTIONS_BRIDGE':{if(!VIDEO_SUPPORT_ENABLED)throw new Error('视频字幕功能暂未开放。');if(!Number.isInteger(sender.tab?.id)||sender.frameId!==0)throw new Error('字幕桥只能由当前网页主框架启用。');const {url}=await tabPage(sender.tab.id);if(url.protocol!=='https:'||!['www.youtube.com','m.youtube.com'].includes(url.hostname))throw new Error('字幕桥仅适用于 YouTube。');await chrome.scripting.executeScript({target:{tabId:sender.tab.id,frameIds:[0]},world:'MAIN',files:['youtube-captions-bridge.js']});return{};}
+    case 'YOUTUBE_CAPTIONS_BRIDGE':{if(!VIDEO_SUPPORT_ENABLED)throw new Error('视频字幕功能暂未开放。');if(!Number.isInteger(sender.tab?.id)||sender.frameId!==0)throw new Error('字幕桥只能由当前网页主框架启用。');const {url}=await tabPage(sender.tab.id,sender.url);if(url.protocol!=='https:'||!['www.youtube.com','m.youtube.com'].includes(url.hostname))throw new Error('字幕桥仅适用于 YouTube。');await chrome.scripting.executeScript({target:{tabId:sender.tab.id,frameIds:[0]},world:'MAIN',files:['youtube-captions-bridge.js']});return{};}
     case 'STATE_GET':return {...publicState(await load(false),trusted),emergencyActive:Number.isInteger(sender.tab?.id)&&Boolean(await emergencySession(sender.tab.id))};
     case 'SUBSCRIPTION_STATUS':return refreshSubscription(isSubscriptionKind(message.kind)?message.kind:nativeKind((await load(false)).settings));
     case 'SUBSCRIPTION_LOGIN':return loginSubscription(isSubscriptionKind(message.kind)?message.kind:nativeKind((await load(false)).settings));
@@ -1498,7 +1519,7 @@ async function handle(message,sender) {
     case 'ASSIST_PREVIEW':return assistPreview(message,sender);
     case 'READER_TRANSLATION_ESTIMATE':{const source=await readingSource(sender);if(!source.active)throw new Error('当前网页不可翻译。');return emergencyUsageEstimate(source.tabId,(await load(false)).settings);}
     case 'READER_TRANSLATION_BEGIN':{const source=await readingSource(sender);if(!source.active||typeof message.confirmed!=='boolean')throw new Error('当前网页不可翻译。');injectedEmergencyPages.set(source.tabId,source.url);return emergencyBegin({tabId:source.tabId,url:source.url,confirmed:message.confirmed});}
-    case 'EMERGENCY_BEGIN':if(!trusted)throw new Error('仅扩展界面可确认紧急翻译。');return emergencyBegin(message);
+    case 'EMERGENCY_BEGIN':if(!trusted)throw new Error('仅扩展界面可确认紧急翻译。');return emergencyBegin(message,sender);
     case 'EMERGENCY_ESTIMATE':{if(!trusted)throw new Error('仅扩展界面可确认紧急翻译。');if(!Number.isInteger(message.tabId))throw new Error('无效的预估请求。');return emergencyUsageEstimate(message.tabId,(await load(false)).settings);}
     case 'PASSAGE_TRANSLATE':return passageTranslate(message,sender);
     case 'EMERGENCY_TRANSLATE':return emergencyTranslate(message,sender);
@@ -1582,6 +1603,17 @@ chrome.tabs.onRemoved.addListener(tabId => {
   void forgetEmergency(tabId);injectedEmergencyPages.delete(tabId);sentenceModeGeneration.delete(tabId);void chrome.storage.session.remove(sentenceModeKey(tabId));
   tabActivationGeneration.delete(tabId);
   void forgetTabAutomation(tabId);
+});
+// PDF 主框架导航重定向到自带阅读页；#relyless-native 是“在原生查看器打开”的逃逸标记。
+chrome.webNavigation?.onBeforeNavigate?.addListener(details=>{
+  if(details.frameId!==0||details.tabId<0)return;
+  let url;try{url=new URL(details.url);}catch{return;}
+  if(!['http:','https:'].includes(url.protocol)||url.hash==='#relyless-native')return;
+  if(!url.pathname.toLowerCase().endsWith('.pdf'))return;
+  void load(false).then(({settings})=>{
+    if(!settings.pdfReader)return;
+    void chrome.tabs.update(details.tabId,{url:pdfViewerPrefix()+encodeURIComponent(url.href)}).catch(()=>{});
+  }).catch(()=>{});
 });
 void reconcileAutomation().catch(error => console.error('初始化自动开启策略失败',error));
 
