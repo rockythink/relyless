@@ -16,6 +16,9 @@ flowchart LR
   Native --> CLI[官方 CLI / 订阅服务]
   BG --> LocalStore[(chrome.storage.local)]
   BG --> SessionStore[(chrome.storage.session)]
+  PdfNav[.pdf 主框架导航\nwebNavigation] --> BG
+  BG --> PdfViewer[pdf-viewer.html\n扩展页 + vendored PDF.js]
+  PdfViewer <--> BG
 ```
 
 ## 主要边界
@@ -33,6 +36,10 @@ content/reader.js 在当前主框架中做有上限的本地正文筛选和白�
 ### `extension/ui/`
 
 `popup.html`/`popup.js` 负责当前标签页的短操作；`options.html`/`options.js` 负责持久配置和说明；服务目录、历史等复杂区域使用独立模块。UI 使用 `extension/design.js` 注入的共享 token，规则见 `docs/design-system.md`。
+
+### `extension/pdf-viewer.*` 与 `extension/pdf-blocks.mjs`
+
+扩展自有的 PDF 阅读表面。默认仍由浏览器原生查看器接管 .pdf 导航；进入路径有两条且都源于用户明确动作：`.pdf` 链接右键菜单「在阅读器中打开 PDF」单次进入，或 `pdfReader` 设置开启后 `webNavigation.onBeforeNavigate` 拦截主框架 `.pdf` 导航并重定向到 `pdf-viewer.html?src=<原文档地址>`。`#relyless-native` 是「在原生查看器打开」的单次逃逸标记。阅读器加载 `extension/vendor/pdfjs/` 内的本地 PDF.js（无远程脚本），画布负责视觉排版，文本层按 `pdf-blocks.mjs` 的几何规则聚合成可译文本块；渲染按代次（renderGen）失效，缩放会取消在途任务。查词、选段翻译、整页翻译复用 `ASSIST`/`PASSAGE_TRANSLATE`/`EMERGENCY_*` 既有契约——后台把 viewer 标签页视作文档表面，文档身份取自 `src` 参数而非扩展页 URL（扩展页对 `chrome.tabs` 不暴露 `url`，身份回落到 `sender.url`）。阅读器不新增持久化、不自动翻译；远程文档仅在站点拒绝跨域读取时经用户点击申请该站访问权限。详见 ADR 0005。
 
 ### 领域与阅读模块
 
@@ -83,6 +90,7 @@ content/reader.js 在当前主框架中做有上限的本地正文筛选和白�
 | 修改记录或个性化 | `history-service.js`、`personalization.mjs`、隐私文档 |
 | 修改 UI 视觉 | `design.js`、`ui.css`、`docs/design-system.md` |
 | 修改权限或可访问资源 | `manifest.json`、`activation.js`、隐私与安全说明 |
+| 修改 PDF 阅读器 | `pdf-viewer.*`、`pdf-blocks.mjs`、`background.js`（导航拦截与 `readingSource`）、ADR 0005 |
 | 发布版本 | `package.json`、`manifest.json`、README、Release 工具 |
 
 ## 架构变更门槛

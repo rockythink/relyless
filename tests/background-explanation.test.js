@@ -923,6 +923,28 @@ test('emergency begin estimates tokens and enforces the monthly budget with expl
   }finally{globalThis.chrome=previous;}
 });
 
+// PDF 查看器是扩展页：tabs.sendMessage 探针到不了它，预算必须以 BEGIN 自带 chars 为准。
+test('declared chars drive the budget estimate when the tab probe cannot reach the page',async()=>{
+  const previous=globalThis.chrome,month=usageDay();
+  const data={wordSchemaVersion:5,productSchemaVersion:1,words:[],settings:{providerKind:'api',provider:{baseUrl:'https://api.example/v1',model:'fixture',apiKey:'fixture-key'},usageBudget:{monthlyTokens:1000}},modelUsage:{rows:[{day:month,provider:'api',service:'svc',model:'fixture',operation:'EMERGENCY_TRANSLATE',requests:1,input:1500,output:600,estInput:0,estOutput:0,inputChars:0,outputChars:0}]}};
+  const fixture=isolatedChrome(data,{id:'budget-declared'});
+  try{
+    globalThis.chrome=fixture.api;fixture.api.tabs.sendMessage=async()=>null; // 扩展页探针不可达
+    await import('../extension/background.js?budget-declared='+Date.now());
+    await isolatedSend(fixture,{type:'PAGE_UI_INJECT',tabId:91});
+    const blocked=await isolatedSend(fixture,{type:'EMERGENCY_BEGIN',tabId:91,url:'https://isolated.example/read',chars:400});
+    expect(blocked).toMatchObject({budgetExceeded:true,budget:1000,monthlyUsed:2100,estimate:100});
+    const confirmed=await isolatedSend(fixture,{type:'EMERGENCY_BEGIN',tabId:91,url:'https://isolated.example/read',chars:400,confirmed:true});
+    expect(confirmed).toMatchObject({estimate:100});expect(confirmed.token).toBeTruthy();
+    // 未声明且探针不可达 → chars=0 的诚实回落，不臆造用量（本月已超量仍如实拦截）
+    const quiet=await isolatedSend(fixture,{type:'EMERGENCY_BEGIN',tabId:91,url:'https://isolated.example/read'});
+    expect(quiet).toMatchObject({budgetExceeded:true,estimate:0});
+    // 非整数/负数的声明值回落到探针路径而非被采信
+    const bad=await isolatedSend(fixture,{type:'EMERGENCY_BEGIN',tabId:91,url:'https://isolated.example/read',chars:-5});
+    expect(bad).toMatchObject({budgetExceeded:true,estimate:0});
+  }finally{globalThis.chrome=previous;}
+});
+
 test('ending a page session rejects a late result and prevents it from entering translation cache',async()=>{
   const previous=globalThis.chrome,previousFetch=globalThis.fetch,data={wordSchemaVersion:5,productSchemaVersion:1,words:[],settings:{providerKind:'api',provider:{baseUrl:'https://api.example/v1',model:'fixture',apiKey:'fixture-key'}}},fixture=isolatedChrome(data,{id:'page-stop-cache'}),page={url:'https://isolated.example/read',tab:{id:91},frameId:0},gate=Promise.withResolvers(),started=Promise.withResolvers();let calls=0;
   try{

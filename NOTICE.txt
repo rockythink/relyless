@@ -69,7 +69,17 @@ youtube-caption-extractor 1.10.2
   Vendored portion: JSON3 caption-event parsing.
   License text: extension/vendor/LICENSE.youtube-caption-extractor.txt
 
-4. Provider icons and names
+4. PDF rendering engine — Apache-2.0
+------------------------------------
+pdfjs-dist 6.3.289 (PDF.js)
+  Copyright 2024 Mozilla Foundation
+  License: Apache License 2.0
+  Source: https://github.com/mozilla/pdf.js
+  Vendored files: extension/vendor/pdfjs/pdf.min.mjs,
+                  extension/vendor/pdfjs/pdf.worker.min.mjs
+  License text: extension/vendor/LICENSE.pdfjs.txt
+
+5. Provider icons and names
 ---------------------------
 Provider icons sourced from the LobeHub icon collection are distributed under
 the MIT License:
