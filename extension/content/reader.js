@@ -103,13 +103,25 @@
       if (['ltr','rtl','auto'].includes(node.dir)) result.dir=node.dir;
       for (const name of ['colspan','rowspan','start']) { const value=Number(node.getAttribute(name));if (Number.isInteger(value) && value>0 && value<=1000 && node.hasAttribute(name)) result.setAttribute(name,String(value)); }
       if (node.hasAttribute('title')) result.title=node.title.slice(0,300);
-      if (tag === 'a') {result.href=href;result.rel='noopener noreferrer';if(fragment!==null&&anchorIds.has(fragment))pendingAnchors.push({link:result,id:anchorIds.get(fragment),href:fallbackHref});}
+      const ariaLabel=(tag==='a'||tag==='th')?node.getAttribute('aria-label')?.trim():null;
+      if(ariaLabel)result.setAttribute('aria-label',ariaLabel.slice(0,300));
+      if (tag === 'a') {result.href=href;result.rel='noopener noreferrer';}
       if (tag === 'img') {
         result.src=node.currentSrc;result.alt=(node.alt || '').slice(0,300);result.referrerPolicy='no-referrer';
         result.addEventListener('error',()=>{const note=rootDocument.createElement('span');note.textContent=(result.alt ? result.alt+' · ' : '')+'图片请在原网页查看';result.replaceWith(note);},{once:true});
       }
       destination.append(result);
       if (kind !== 'img') for (const child of node.childNodes) render(child,result);
+      // CSS-generated labels and hidden descendants do not survive the whitelist rebuild.
+      // An unnamed link must not become a keyboard stop; an empty header is a data cell.
+      if ((tag === 'a' || tag === 'th') && !result.textContent.trim() && !result.getAttribute('aria-label')?.trim() && !result.title?.trim() && !result.querySelector('img[alt]:not([alt=""])')) {
+        const plain=rootDocument.createElement(tag==='a'?'span':'td');
+        for(const name of ['id','dir','colspan','rowspan'])if(result.hasAttribute(name))plain.setAttribute(name,result.getAttribute(name));
+        while(result.firstChild)plain.append(result.firstChild);
+        result.replaceWith(plain);sourceMap.set(plain,node);
+        return;
+      }
+      if(tag==='a'&&fragment!==null&&anchorIds.has(fragment))pendingAnchors.push({link:result,id:anchorIds.get(fragment),href:fallbackHref});
     }
     if (!source.querySelector('h1') && rootDocument.title) {const heading=rootDocument.createElement('h1');heading.textContent=rootDocument.title.slice(0,300);article.append(heading);}
     sourceMap.set(article,source);
@@ -154,6 +166,16 @@
     for (const [label,values,property,unit] of [['字号',[18,20,22,24],'--reader-size','px'],['栏宽',[54,60,72],'--reader-width','ch'],['行距',[1.6,1.8,2],'--reader-leading','']]) {const select=doc.createElement('select');select.setAttribute('aria-label',label);for (const value of values){const option=doc.createElement('option');option.value=String(value);option.textContent=label+' '+value+unit;if(value===values[1])option.selected=true;select.append(option);}select.addEventListener('change',()=>{host.style.setProperty(property,select.value+unit);onScroll();});toolbar.append(select);}
     const theme=doc.createElement('select');theme.setAttribute('aria-label','主题');for(const [value,label] of [['auto','跟随系统'],['light','浅色'],['dark','深色']]){const option=doc.createElement('option');option.value=value;option.textContent=label;theme.append(option);}theme.addEventListener('change',()=>{style.textContent=style.textContent.replace(/^.*?(?=\[data-shisui-ui="reader"\]\{position)/s,globalThis.ShisuiDesign.cssFor(selector,theme.value));});toolbar.append(theme);
     const scroll=doc.createElement('div');scroll.className='reader-scroll';scroll.append(article);scroll.addEventListener('scroll',onScroll,{passive:true});article.addEventListener('load',onScroll,true);const overlay=doc.createElement('div');overlay.className='reader-overlay';host.append(style,toolbar,scroll,overlay);
+    article.addEventListener('click',event=>{
+      const element=event.target.nodeType===Node.ELEMENT_NODE?event.target:event.target.parentElement;
+      const link=element?.closest?.('a[href^="#shisui-reader-anchor-"]');
+      if(event.defaultPrevented||!link||!article.contains(link))return;
+      const id=link.getAttribute('href').slice(1);
+      if(!/^shisui-reader-anchor-\d+$/.test(id))return;
+      const target=article.querySelector('#'+id);
+      if(!target)return;
+      event.preventDefault();target.scrollIntoView?.({block:'start'});target.tabIndex=-1;target.focus({preventScroll:true});onScroll();
+    });
     const previous={x:window.scrollX,y:window.scrollY,focus:doc.activeElement,body:doc.body,html:doc.documentElement,bodyOverflow:doc.body.style.getPropertyValue('overflow'),bodyPriority:doc.body.style.getPropertyPriority('overflow'),htmlOverflow:doc.documentElement.style.getPropertyValue('overflow'),htmlPriority:doc.documentElement.style.getPropertyPriority('overflow'),inert:new Map()};
     const inertSibling=node=>{if(node!==host && node.nodeType===Node.ELEMENT_NODE && !previous.inert.has(node)){previous.inert.set(node,node.inert);node.inert=true;}};
     let observer;
