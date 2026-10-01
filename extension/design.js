@@ -3,6 +3,7 @@
 
   const common = `
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --serif: Georgia, "Iowan Old Style", "Songti SC", "Noto Serif CJK SC", serif;
     --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
     --type-page-title: 22px;
     --type-section-title: 18px;

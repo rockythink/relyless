@@ -96,3 +96,16 @@ RelyLess project artwork. Provider names and trademarks remain the property of
 their respective owners. Their inclusion identifies compatible services and
 does not imply endorsement. Trademark and logo rights are not granted by the
 MPL-2.0 license for RelyLess.
+
+6. Focused-reader verification screenshots — CC BY-SA 4.0 article content
+--------------------------------------------------------------------------
+docs/development/records/images/focused-reader-light.webp and
+docs/development/records/images/focused-reader-dark.webp capture RelyLess's
+interface over public Wikipedia articles ("Software engineering" and
+"English language"). The article text is by Wikipedia contributors and is
+licensed under Creative Commons Attribution-ShareAlike 4.0 International:
+  https://en.wikipedia.org/wiki/Software_engineering
+  https://en.wikipedia.org/wiki/English_language
+  https://creativecommons.org/licenses/by-sa/4.0/
+The screenshots adapt the page layout using RelyLess's focused reading view;
+RelyLess interface code remains under MPL-2.0.

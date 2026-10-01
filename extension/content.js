@@ -1505,7 +1505,7 @@
     if(!entry){const container=document.createElement('span');container.setAttribute(OWN,'emergency-translation');container.lang='zh-CN';container.setAttribute('aria-label','对应正文的中文翻译');container.style.display='block';unit.nodes.at(-1).after(container);entry={container,parts:new Map()};session.containers.set(unit,entry);inheritPageTranslationStyle(unit.parent,container);}
     const part=document.createElement('span');part.style.display='block';part.textContent=translation;entry.parts.set(item.index,part);entry.container.replaceChildren(...[...entry.parts].sort((a,b)=>a[0]-b[0]).map(([,node])=>node));
   }
-  let emergencyPending=null;
+  const emergencyPending=new Set();
   function emergencySlice(text,limit,tail=false){
     if(text.length<=limit)return text;let start=tail?text.length-limit:0,end=tail?text.length:limit;if(start&&/[\uDC00-\uDFFF]/.test(text[start]))start++;if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;return text.slice(start,end);
   }
@@ -1543,31 +1543,62 @@
   function scheduleEmergency(session){
     if(state.emergency!==session||session.frame)return;session.frame=requestAnimationFrame(()=>{session.frame=0;emergencyReady(session);updateEmergencyStatus(session);if(session.active)void runEmergency(session);});
   }
-  function cancelEmergencyBatch(session){
-    const pending=emergencyPending;if(!pending||pending.session!==session||pending.cancelled)return;pending.cancelled=true;
-    for(const item of pending.batch)if(item.unit.state==='translating')item.unit.state='deferred';
-    if(session.active&&session.token===pending.token)void request('EMERGENCY_CANCEL_REQUEST',{token:pending.token,through:pending.seq}).catch(()=>{});
+  function cancelEmergencyBatch(session,through){
+    let cancelled=false;
+    for(const pending of emergencyPending){
+      if(pending.session!==session||pending.seq>through||pending.cancelled)continue;
+      pending.cancelled=true;cancelled=true;
+      for(const item of pending.batch)if(item.unit.state==='translating')item.unit.state='deferred';
+    }
+    if(cancelled&&session.active)void request('EMERGENCY_CANCEL_REQUEST',{token:session.token,through}).catch(()=>{});
   }
   function invalidateEmergencyUnit(unit,session,sourceChanged=true){
     unit.version=++session.version;unit.invalid=unit.invalid||sourceChanged;unit.done.clear();unit.state=unit.skipped?'skipped':'deferred';session.containers.get(unit)?.container.remove();session.containers.delete(unit);
-    if(emergencyPending?.batch.some(item=>item.unit===unit))cancelEmergencyBatch(session);
+    let through=0;for(const pending of emergencyPending)if(pending.session===session&&pending.batch.some(item=>item.unit===unit))through=Math.max(through,pending.seq);
+    if(through)cancelEmergencyBatch(session,through);
   }
-  async function runEmergency(session) {
-    if(session.running||emergencyPending||session.dirty.size||!session.active||state.emergency!==session||document.visibilityState!=='visible')return;session.running=true;
-    try{while(session.active&&state.emergency===session&&!session.dirty.size&&document.visibilityState==='visible'){
+  function nextEmergencyBatch(session){
+    const batch=[];let size=0;
+    for(const unit of emergencyReady(session)){
+      if(!validEmergencyUnit(unit,session)||!validEmergencyContext(unit,session)){invalidateEmergencyUnit(unit,session);continue;}
+      const index=unit.chunks.findIndex((_,index)=>!unit.done.has(index));if(index<0){unit.state='complete';continue;}
+      const text=unit.chunks[index];if(batch.length&&(unit.chunks.length>1||size+text.length>4000))continue;
+      batch.push({id:'e'+(++session.nextId),text,context:unit.context,unit,version:unit.version,index});size+=text.length;
+      if(batch.length===4||unit.chunks.length>1)break;
+    }
+    return batch;
+  }
+  async function sendEmergencyBatch(session,batch){
+    const pending={session,batch,seq:++session.requestSeq,token:session.token,cancelled:false},generation=session.generation;
+    emergencyPending.add(pending);updateEmergencyStatus(session);let result;
+    try{
+      result=await request('EMERGENCY_TRANSLATE',{token:pending.token,requestSeq:pending.seq,items:batch.map(({id,text,context})=>({id,text,context}))});
+      if(!session.active||state.emergency!==session||generation!==session.generation||pending.cancelled){reportResult(result,'cancelled');return;}
+      if(batch.some(item=>item.unit.version!==item.version||!validEmergencyUnit(item.unit,session)||!validEmergencyContext(item.unit,session))){cancelEmergencyBatch(session,pending.seq);reportResult(result,'cancelled');return;}
+      if(!result||!Array.isArray(result.items)||!Array.isArray(result.errors))throw new Error('全文翻译协议不兼容，请同时更新扩展与连接器。');
+      const byId=new Map(result.items.map(item=>[item.id,item.translation])),failures=new Map(result.errors.map(item=>[item.id,item.code]));
+      if(byId.size!==result.items.length||failures.size!==result.errors.length||byId.size+failures.size!==batch.length||batch.some(item=>byId.has(item.id)===failures.has(item.id)))throw new Error('全文翻译结果映射无效。');
+      session.cacheHits=(session.cacheHits||0)+(result?.cacheHits||0);
+      for(const item of batch){const unit=item.unit;if(failures.has(item.id)){unit.state='failed';renderEmergencyFailure(unit,session);continue;}renderEmergencyChunk(item,byId.get(item.id),session);unit.done.add(item.index);unit.state=unit.done.size===unit.chunks.length?'complete':'deferred';}
+      reportResult(result,result.errors.length?'error':'ok');
+    }catch(error){reportResult(result,error.code==='STALE'||error.code==='CANCELLED'?'cancelled':'error');if(session.active&&state.emergency===session&&generation===session.generation&&!pending.cancelled)session.error ||= error.message;}
+    finally{emergencyPending.delete(pending);if(session.generation===generation)for(const item of batch)if(item.unit.state==='translating')item.unit.state='deferred';}
+  }
+  async function runEmergency(session){
+    const limit=Math.min(2,Number.isInteger(state.settings.requestConcurrency)?state.settings.requestConcurrency:2);
+    if(session.running||emergencyPending.size>=limit||session.dirty.size||!session.active||state.emergency!==session||document.visibilityState!=='visible')return;
+    session.running=true;const generation=session.generation;
+    try{while(session.active&&state.emergency===session&&!session.error&&!session.dirty.size&&document.visibilityState==='visible'){
       if(!session.root.isConnected||session.source!==location.href){finishEmergency(true,true);break;}
-      const batch=[];let size=0;for(const unit of emergencyReady(session)){if(!validEmergencyUnit(unit,session)||!validEmergencyContext(unit,session)){invalidateEmergencyUnit(unit,session);continue;}const index=unit.chunks.findIndex((_,index)=>!unit.done.has(index));if(index<0){unit.state='complete';continue;}const text=unit.chunks[index];if(batch.length&&(unit.chunks.length>1||size+text.length>4000))continue;batch.push({id:'e'+(++session.nextId),text,context:unit.context,unit,version:unit.version,index});size+=text.length;if(batch.length===4||unit.chunks.length>1)break;}if(!batch.length)break;
-      for(const item of batch)item.unit.state='translating';const pending={session,batch,seq:++session.requestSeq,token:session.token,cancelled:false};emergencyPending=pending;updateEmergencyStatus(session);const generation=session.generation;let result;
-      try{result=await request('EMERGENCY_TRANSLATE',{token:pending.token,requestSeq:pending.seq,items:batch.map(({id,text,context})=>({id,text,context}))});
-        if(!session.active||state.emergency!==session||generation!==session.generation||pending.cancelled){reportResult(result,'cancelled');continue;}
-        if(batch.some(item=>item.unit.version!==item.version||!validEmergencyUnit(item.unit,session)||!validEmergencyContext(item.unit,session))){cancelEmergencyBatch(session);reportResult(result,'cancelled');continue;}
-        if(!result||!Array.isArray(result.items)||!Array.isArray(result.errors))throw new Error('全文翻译协议不兼容，请同时更新扩展与连接器。');
-        const byId=new Map(result.items.map(item=>[item.id,item.translation])),failures=new Map(result.errors.map(item=>[item.id,item.code]));
-        if(byId.size!==result.items.length||failures.size!==result.errors.length||byId.size+failures.size!==batch.length||batch.some(item=>byId.has(item.id)===failures.has(item.id)))throw new Error('全文翻译结果映射无效。');
-        session.cacheHits=(session.cacheHits||0)+(result?.cacheHits||0);for(const item of batch){const unit=item.unit;if(failures.has(item.id)){unit.state='failed';renderEmergencyFailure(unit,session);continue;}renderEmergencyChunk(item,byId.get(item.id),session);unit.done.add(item.index);unit.state=unit.done.size===unit.chunks.length?'complete':'deferred';}reportResult(result,result.errors.length?'error':'ok');
-      }catch(error){reportResult(result,error.code==='STALE'||error.code==='CANCELLED'?'cancelled':'error');if(session.active&&state.emergency===session&&generation===session.generation&&!pending.cancelled){finishEmergency(false,true);session.phase='error';session.error=error.message;}}
-      finally{if(emergencyPending===pending)emergencyPending=null;for(const item of batch)if(item.unit.state==='translating')item.unit.state='deferred';}
-    }}finally{session.running=false;updateEmergencyStatus(session);const current=state.emergency;if(current?.active&&current!==session)scheduleEmergency(current);}
+      const tasks=[],capacity=limit-emergencyPending.size;
+      for(let index=0;index<capacity;index++){
+        const batch=nextEmergencyBatch(session);if(!batch.length)break;
+        for(const item of batch)item.unit.state='translating';
+        tasks.push(sendEmergencyBatch(session,batch));
+      }
+      if(!tasks.length)break;
+      await Promise.all(tasks);
+    }}finally{session.running=false;if(session.error&&session.active&&state.emergency===session&&generation===session.generation){const error=session.error;finishEmergency(false,true);session.error=error;session.phase='error';}updateEmergencyStatus(session);const current=state.emergency;if(current?.active&&(current!==session||generation!==session.generation))scheduleEmergency(current);}
   }
   function scanEmergency(session,roots=[session.root]){
     if(state.emergency!==session)return 0;if(session.source!==location.href||!session.root.isConnected){finishEmergency(true,true);return 0;}
