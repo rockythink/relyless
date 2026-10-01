@@ -141,6 +141,7 @@
       ${selector} article :where(p,blockquote,figcaption){margin:0 0 1.2em!important}
       ${selector} article li{margin-bottom:.35em!important}
       ${selector} article blockquote{padding-inline-start:1.2em!important;border-inline-start:2px solid var(--line)!important}
+      ${selector} article th{overflow-wrap:normal!important;word-break:normal!important}
       ${selector} article a{text-decoration-thickness:1px!important;text-underline-offset:.12em!important}
       @media(max-width:600px){${selector} .reader-toolbar > span:first-of-type{margin-right:0!important;flex-basis:100%!important;order:3!important}${selector} article h1{font-size:1.65em!important}${selector} article h2{font-size:1.2em!important}}
     `;
