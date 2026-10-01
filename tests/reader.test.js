@@ -57,6 +57,30 @@ test('a footnote excluded from the snapshot links back to the original page',()=
   expect(article.querySelector('a').href).toBe('https://example.test/article#hidden-note');
   expect(article.querySelector('[id^="shisui-reader-anchor-"]')).toBeNull();
 });
+test('snapshot keeps meaningful links and headers but removes unnamed focus targets',()=>{
+  const {reader}=page('<article><p id="intro">'+long('English prose stays in its original order. ')+'</p><p>'+long('Another paragraph remains readable. ')+'</p><table><tr><th id="empty-head"><span hidden>hidden label</span></th><th>Visible heading</th></tr><tr><td>One</td><td>Two</td></tr></table><a id="empty-backlink" href="#intro"><span hidden>backlink icon</span></a><a href="#intro" aria-label="Back to introduction"><span hidden>icon</span></a><a href="#intro">Read introduction</a></article>');
+  const {article}=reader.extract();
+  expect(article.querySelectorAll('a[href]')).toHaveLength(2);
+  expect(article.querySelector('a[aria-label="Back to introduction"]')?.href).toContain('#shisui-reader-anchor-');
+  expect(article.querySelector('a[href]')?.getAttribute('aria-label')).toBe('Back to introduction');
+  expect(article.querySelector('a[href]:last-of-type')?.textContent).toBe('Read introduction');
+  expect(article.querySelector('#shisui-reader-anchor-2')?.tagName).toBe('TD');
+  expect(article.querySelectorAll('th')).toHaveLength(1);
+  expect([...article.querySelectorAll('a[href]')].every(link=>link.textContent.trim()||link.getAttribute('aria-label')||link.querySelector('img[alt]:not([alt=""])'))).toBe(true);
+});
+test('keyboard-activated snapshot footnotes stay inside the reader without changing page identity',()=>{
+  const {window,reader}=page('<article><p id="note">'+long('A meaningful footnote target. ')+'</p><p>'+long('Another English paragraph. ')+'</p><a href="#note">Return to note</a></article>');
+  const oldShow=window.HTMLElement.prototype.showPopover;window.HTMLElement.prototype.showPopover=function(){};
+  try{
+    const extraction=reader.extract(),host=reader.mount({...extraction});
+    const link=host.querySelector('a[href^="#shisui-reader-anchor-"]'),target=host.querySelector(link.getAttribute('href'));
+    link.focus();const event=new window.MouseEvent('click',{bubbles:true,cancelable:true});link.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(location.hash).toBe('');
+    expect(reader.active()).toBe(true);
+    expect(document.activeElement).toBe(target);
+  }finally{reader.unmount();window.HTMLElement.prototype.showPopover=oldShow;}
+});
 test('page-controlled metadata cannot produce unbounded attributes or links',()=>{
   const {reader}=page('<article><p>'+long('Original prose remains visible. ')+'</p><p>'+long('Second paragraph remains visible. ')+'</p><a id="note" href="https://example.test/ok" title="safe">ordinary link</a><a id="oversized" href="/ok">oversized link</a><img alt="figure"><svg aria-label="diagram"></svg></article>');
   const source=document.querySelector('article'),huge='x'.repeat(5000);

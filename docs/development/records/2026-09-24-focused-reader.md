@@ -2,8 +2,8 @@
 
 - 日期：2026-09-24
 - 状态：已交付
-- 相关 Issue：https://github.com/rockythink/relyless/issues/23、https://github.com/rockythink/relyless/issues/44
-- 相关 PR：#45（长文修正）
+- 相关 Issue：https://github.com/rockythink/relyless/issues/23、https://github.com/rockythink/relyless/issues/44、https://github.com/rockythink/relyless/issues/46
+- 相关 PR：#45（长文修正）、#47（可访问性）
 - 相关 ADR：../decisions/0002-focused-reader-surface.md
 
 ## 背景与目标
@@ -49,6 +49,10 @@
 ![深色专注阅读：English language 正文与表格](images/focused-reader-dark.webp)
 
 截图中的维基百科文本由其贡献者按 CC BY-SA 4.0 提供；来源与许可见根目录 NOTICE。
+
+### 后续修正：快照链接与表头可访问性（Issue #46）
+
+真实 Wikipedia English language 中，有些脚注回链的文本后代被站点设为 display:none，浏览器只用 CSS counter 伪内容显示回链；快照过滤隐藏后代后产生无名称链接。另有真正为空的表头。修复前视图审计报告 377 个无名称链接与 4 个空表头；修复后浅色 Software engineering 与深色 English language 的视图范围内 axe 均 0 confirmed violations（分别仍有 1、2 项需人工复核）。无名锚点保留安全 ID 但不再可交互，空表头变为普通单元格；可读的正文链接与脚注仍保留。键盘 Enter 激活具名脚注时视图保持开启、焦点和滚动进入快照目标，原页面 URL 不变；退出后原文节点仍在，滚动锁解除。截图已替换为本轮实际扩展画面。
 ## 后续事项
 
 后续在更多真实网站复核复杂 CSS 和延迟媒体；未配置真实服务商凭证，不声称远程模型调用已验收。
