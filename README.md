@@ -10,7 +10,7 @@ RelyLess 是一个面向英语阅读的 Chrome / Edge 扩展。它保留网页�
 
 它的默认目标不是把整页替换成中文：自动辅助只面向能可靠识别的主要阅读区域，普通页面导航、控件和无关内容不会被自动翻译。导航链接可通过查词键单击或右键菜单单独请求译文。本页双语翻译需要单独确认，只随阅读位置处理附近正文，保留英文并原位插入译文；结果仍取决于所选模型，可能超时、失败或不完整。
 
-> 当前版本：`v0.4.1`。通过 GitHub Releases 提供，尚未发布到 Chrome Web Store 或 Microsoft Edge Add-ons。
+> 当前版本：`v0.6.0`。通过 GitHub Releases 提供，尚未发布到 Chrome Web Store 或 Microsoft Edge Add-ons。
 
 ## 产品理念
 
@@ -84,8 +84,8 @@ PDF 单次读取上限 64 MiB、最多 500 页；过大文档或画布页会提�
 
 要求 Chrome 或 Edge **116 及以上版本**。
 
-1. 从 GitHub Releases 下载 `relyless-0.4.1.zip`。
-2. 解压后会得到 `relyless-0.4.1/`，其中包含：
+1. 从 GitHub Releases 下载 `relyless-0.6.0.zip`。
+2. 解压后会得到 `relyless-0.6.0/`，其中包含：
    - `extension/`
    - `connector/`
    - `README.md`
