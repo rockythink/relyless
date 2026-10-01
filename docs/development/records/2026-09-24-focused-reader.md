@@ -3,7 +3,7 @@
 - 日期：2026-09-24
 - 状态：已交付
 - 相关 Issue：https://github.com/rockythink/relyless/issues/23、https://github.com/rockythink/relyless/issues/44
-- 相关 PR：待提交
+- 相关 PR：#45（长文修正）
 - 相关 ADR：../decisions/0002-focused-reader-surface.md
 
 ## 背景与目标
