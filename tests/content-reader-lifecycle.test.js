@@ -8,7 +8,7 @@ test('a late initial state cannot reopen a reader after an explicit exit',async(
   const window=new Window({url:'https://example.test/article'});
   const original=new Map();
   const globals={window,document:window.document,location:window.location,Node:window.Node,NodeFilter:window.NodeFilter,HTMLElement:window.HTMLElement,MutationObserver:window.MutationObserver,
-    getComputedStyle:()=>({opacity:'1',display:'block',visibility:'visible',contentVisibility:'visible',clip:'auto',clipPath:'none',overflowX:'visible',overflowY:'visible'}),
+    getComputedStyle:element=>({opacity:'1',display:element.tagName==='SPAN'?'inline':'block',visibility:'visible',contentVisibility:'visible',clip:'auto',clipPath:'none',overflowX:'visible',overflowY:'visible'}),
     matchMedia:()=>({addEventListener(){},removeEventListener(){}}),innerWidth:1000,innerHeight:800,scrollX:0,scrollY:0,
     requestAnimationFrame:callback=>setTimeout(callback,1),cancelAnimationFrame:clearTimeout,
     IntersectionObserver:class{observe(){}disconnect(){}},CSS:{highlights:new Map()},Highlight:class{},getSelection:()=>window.getSelection(),scrollTo:()=>{},
@@ -16,16 +16,16 @@ test('a late initial state cannot reopen a reader after an explicit exit',async(
     ShisuiReview:{hide(){},refresh(){return Promise.resolve()}},ShisuiCopy:{onPointerTrack(){},copyParagraph(){}},ShisuiConversation:{}};
   for(const [key,value] of Object.entries(globals)){original.set(key,globalThis[key]);globalThis[key]=value;}
   for(const key of ['chrome','ShisuiContent','ShisuiReader'])original.set(key,globalThis[key]);
-  let reply,releaseState;const pendingState=new Promise(resolve=>releaseState=resolve),messages=[];
+  let reply,releaseState,holdTranslations=false;const pendingState=new Promise(resolve=>releaseState=resolve),messages=[],pendingBatches=[];
   let listener;document.fonts||={addEventListener(){},removeEventListener(){}};
   globalThis.chrome={runtime:{id:'abc',getURL:path=>'chrome-extension://abc/'+path,
-    sendMessage:(message,callback)=>{messages.push(message.type);if(message.type==='STATE_GET')pendingState.then(()=>callback({ok:true,data:{settings:{assistanceMode:'on-demand',domain:'auto',rulePacks:[]},providerConfigured:false,emergencyActive:false}}));else if(message.type==='READER_TRANSLATION_ESTIMATE')callback({ok:true,data:{estimate:120}});else if(message.type==='READER_TRANSLATION_BEGIN')callback({ok:true,data:{token:'reader-token'}});else if(message.type==='EMERGENCY_TRANSLATE')callback({ok:true,data:{items:message.items.map(item=>({id:item.id,translation:'这是对应的中文译文。'})),errors:[]}});else callback({ok:true,data:{enabled:false}});},
+    sendMessage:(message,callback)=>{messages.push(message.type);if(message.type==='STATE_GET')pendingState.then(()=>callback({ok:true,data:{settings:{assistanceMode:'on-demand',domain:'auto',rulePacks:[],requestConcurrency:2},providerConfigured:false,emergencyActive:false}}));else if(message.type==='READER_TRANSLATION_ESTIMATE')callback({ok:true,data:{estimate:120}});else if(message.type==='READER_TRANSLATION_BEGIN')callback({ok:true,data:{token:'reader-token'}});else if(message.type==='EMERGENCY_TRANSLATE'){let replied=false;const respond=()=>{if(replied)return;replied=true;callback({ok:true,data:{items:message.items.map(item=>({id:item.id,translation:'这是对应的中文译文。'})),errors:[]}});};if(holdTranslations)pendingBatches.push({message,respond,reject:()=>{if(replied)return;replied=true;callback({ok:false,error:'上游限流'});}});else respond();}else callback({ok:true,data:{enabled:false}});},
     onMessage:{addListener:callback=>listener=callback,removeListener(){}}}};
   try{
     window.HTMLElement.prototype.getClientRects=function(){return [{width:100,height:20}]};
     window.HTMLElement.prototype.showPopover=function(){};
     window.HTMLElement.prototype.hidePopover=function(){};
-    document.body.innerHTML='<main><article><h1>Original article</h1><p>'+('The original prose remains on the page. ').repeat(30)+'</p><p>'+('A second paragraph preserves the author’s words. ').repeat(30)+'</p></article></main>';
+    document.body.innerHTML='<main><article><h1>Original article</h1>'+Array.from({length:8},(_,i)=>'<p>'+('The paragraph '+(i+1)+' preserves its English source and reading context. ').repeat(18)+'</p>').join('')+'</article></main>';
     delete globalThis.ShisuiContent;delete globalThis.ShisuiReader;for(const name of ['content/kernel.js','content/reader.js','content.js'])new Function(source(name))();
     const send=(message,sender={id:'abc',url:'chrome-extension://abc/ui/popup.html'})=>new Promise(resolve=>listener(message,sender,resolve));
     const enter=send({type:'SS_READER_SET',enabled:true,pageUrl:location.href});
@@ -41,8 +41,11 @@ test('a late initial state cannot reopen a reader after an explicit exit',async(
     const count=await send({type:'SS_EMERGENCY_COUNT'});expect(count.data.chars).toBeGreaterThan(200);
     const toolbar=document.querySelector('[data-shisui-ui="reader"] .reader-toolbar'),button=[...toolbar.querySelectorAll('button')].find(item=>item.textContent==='翻译本页');
     button.click();await new Promise(resolve=>setTimeout(resolve,0));expect(button.textContent).toBe('确认并翻译');expect(messages).not.toContain('EMERGENCY_TRANSLATE');
-    button.click();await waitFor(()=>document.querySelector('[data-shisui-ui="reader"] [data-shisui-ui="emergency-translation"]')?.textContent.includes('中文译文'));expect(button.textContent).toBe('停止翻译');expect(messages).toContain('READER_TRANSLATION_BEGIN');
+    holdTranslations=true;button.click();await waitFor(()=>pendingBatches.length===2);expect(pendingBatches[0].message.items.every(item=>item.text.length<4000)).toBe(true);
+    pendingBatches[0].respond();await waitFor(()=>document.querySelectorAll('[data-shisui-ui="reader"] article p [data-shisui-ui="emergency-translation"]').length>0);expect(document.querySelectorAll('[data-shisui-ui="reader"] article p [data-shisui-ui="emergency-translation"]').length).toBeLessThan(8);
+    pendingBatches[1].respond();holdTranslations=false;await waitFor(()=>document.querySelectorAll('[data-shisui-ui="reader"] article p [data-shisui-ui="emergency-translation"]').length===8);expect(button.textContent).toBe('停止翻译');expect(messages).toContain('READER_TRANSLATION_BEGIN');
     expect(document.querySelector('[data-shisui-ui="emergency-translation"]')?.textContent).toContain('中文译文');
+    expect([...document.querySelectorAll('[data-shisui-ui="reader"] article p')].every(p=>p.querySelector('[data-shisui-ui="emergency-translation"]')?.textContent.includes('中文译文'))).toBe(true);
     await send({type:'SS_READER_SET',enabled:false,pageUrl:location.href});
     expect(document.querySelector('main').inert).toBe(false);
     expect(messages.some(type=>['ANALYZE','SUPPORT_BATCH','PREPARED_SUPPORT','HISTORY_BEGIN','SENTENCE_GROUPS_BATCH'].includes(type))).toBe(false);
@@ -70,12 +73,20 @@ test('a late initial state cannot reopen a reader after an explicit exit',async(
     await send({type:'SS_EMERGENCY_END'});
     const reopened=await send({type:'SS_READER_SET',enabled:true,pageUrl:location.href});
     expect(reopened.data.reader.active).toBe(true);
+    pendingBatches.length=0;holdTranslations=true;
+    const failingButton=[...document.querySelectorAll('[data-shisui-ui="reader"] .reader-toolbar button')].find(item=>item.textContent==='翻译本页');
+    failingButton.click();await new Promise(resolve=>setTimeout(resolve,0));failingButton.click();
+    await waitFor(()=>pendingBatches.length===2);
+    pendingBatches[0].reject();pendingBatches[1].respond();holdTranslations=false;
+    await waitFor(()=>document.querySelectorAll('[data-shisui-ui="reader"] article p [data-shisui-ui="emergency-translation"]').length>0);
+    expect((await send({type:'SS_STATUS'})).data.emergency.phase).toBe('error');
+    expect(document.querySelector('[data-shisui-ui="reader"] article p [data-shisui-ui="emergency-translation"]')?.textContent).toContain('中文译文');
     document.querySelector('[data-shisui-ui="reader"]').remove();
     await waitFor(()=>!document.querySelector('main').inert);
     expect((await send({type:'SS_STATUS'})).data.reader.active).toBe(false);
     expect(document.querySelector('main').inert).toBe(false);
   }finally{
-    releaseState();window.__SHISUI_CONTENT__?.dispose();window.happyDOM.abort();
+    holdTranslations=false;for(const entry of pendingBatches)entry.respond();releaseState();window.__SHISUI_CONTENT__?.dispose();window.happyDOM.abort();
     for(const [key,value] of original){if(value===undefined)delete globalThis[key];else globalThis[key]=value;}
   }
 });
