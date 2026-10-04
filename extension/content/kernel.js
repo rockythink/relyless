@@ -26,7 +26,7 @@
     scrollTimer: 0, rebuildTimer: 0, opportunityTimer: 0,
     startedAt: Date.now(),
     failed: false, windowKey: '', policyKey: '', refreshing: 0, article: null, emergency: null,
-    siteRule: null, siteRuleChecked: false, reader: null,
+    siteRule: null, siteRuleChecked: false, reader: null, taskSequence: 0,
   };
 
   const blockIds = new WeakMap();

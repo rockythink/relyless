@@ -1469,12 +1469,60 @@ async function activateTab(tab) {
 let automationReconciliation = Promise.resolve();
 const keywordHintKey=tabId=>'keywordHint:'+tabId;
 const tabErrorKey=tabId=>'tabError:'+tabId;
+const pageTaskStatusKey=tabId=>'pageTaskStatus:'+tabId;
+const tabStatusGeneration=new Map();
 const tabStatusQueues=new Map();
 function withTabStatus(tabId,fn) {
   const run=(tabStatusQueues.get(tabId)||Promise.resolve()).catch(()=>{}).then(fn);
   tabStatusQueues.set(tabId,run);
-  void run.finally(()=>{if(tabStatusQueues.get(tabId)===run)tabStatusQueues.delete(tabId);});
+  void run.finally(()=>{if(tabStatusQueues.get(tabId)===run)tabStatusQueues.delete(tabId);}).catch(()=>{});
   return run;
+}
+async function tabHasError(tabId) {
+  const status=await chrome.storage.session.get([tabErrorKey(tabId),pageTaskStatusKey(tabId)]);
+  return Boolean(status[tabErrorKey(tabId)]||status[pageTaskStatusKey(tabId)]?.error);
+}
+function errorBadge(tabId,title='RelyLess：页面任务失败，请在弹窗中查看或重试') {
+  return Promise.all([
+    chrome.action.setBadgeBackgroundColor({tabId,color:'#B42318'}),
+    chrome.action.setBadgeText({tabId,text:'!'}),
+    chrome.action.setTitle({tabId,title}),
+    chrome.storage.session.remove(keywordHintKey(tabId))
+  ]);
+}
+function pageTaskStatus(message,sender) {
+  const tabId=sender.tab?.id,documentId=sender.documentId,pageUrl=message.pageUrl;
+  if(sender.id!==chrome.runtime.id||!Number.isSafeInteger(tabId)||tabId<0||sender.frameId!==0||typeof documentId!=='string'||!documentId||documentId.length>128||typeof pageUrl!=='string'||!pageUrl||pageUrl.length>8192||typeof sender.url!=='string'||sender.url!==pageUrl||typeof message.error!=='boolean'||!Number.isSafeInteger(message.sequence)||message.sequence<=0)throw new Error('无效的页面任务状态。');
+  let url;try{url=new URL(pageUrl);}catch{throw new Error('无效的页面任务状态。');}
+  if(!['http:','https:'].includes(url.protocol)||url.href!==pageUrl||!chrome.webNavigation?.getFrame)throw new Error('无效的页面任务状态。');
+  const generation=tabStatusGeneration.get(tabId)||0,key=pageTaskStatusKey(tabId);
+  const validate=async()=>{
+    const tab=await readingPageCall(()=>chrome.tabs.get(tabId));
+    if(!tab||tab.url!==pageUrl||(tabStatusGeneration.get(tabId)||0)!==generation)throw staleWork();
+    const frame=await readingPageCall(()=>chrome.webNavigation.getFrame({tabId,frameId:0}));
+    if(!frame||frame.documentId!==documentId||frame.url!==pageUrl||(tabStatusGeneration.get(tabId)||0)!==generation)throw staleWork();
+    const current=await readingPageCall(()=>chrome.tabs.get(tabId));
+    if(!current||current.url!==pageUrl||(tabStatusGeneration.get(tabId)||0)!==generation)throw staleWork();
+  };
+  return withTabStatus(tabId,async()=>{
+    await validate();
+    const previous=(await chrome.storage.session.get(key))[key];
+    await validate();
+    if(previous?.documentId===documentId&&previous.sequence>=message.sequence)return{accepted:false};
+    const status={documentId,sequence:message.sequence,error:message.error};
+    await chrome.storage.session.set({[key]:status});
+    try{
+      await validate();
+      if(message.error)await errorBadge(tabId);
+      else if(previous?.error&&!await tabHasError(tabId)){await validate();await resetBadge(tabId);await applyKeywordHint(tabId,undefined,validate);}
+      await validate();
+    }catch(error){
+      await chrome.storage.session.set({[key]:{...status,error:false}});
+      if(!await tabHasError(tabId)){await resetBadge(tabId);await applyKeywordHint(tabId);}
+      throw error;
+    }
+    return{accepted:true};
+  });
 }
 function resetBadge(tabId) {
   return Promise.all([
@@ -1482,17 +1530,19 @@ function resetBadge(tabId) {
     chrome.action.setTitle({tabId,title:'RelyLess'})
   ]);
 }
-async function applyKeywordHint(tabId,url) {
+async function applyKeywordHint(tabId,url,guard) {
   if (!Number.isInteger(tabId)) return;
-  const key=keywordHintKey(tabId);
+  const generation=tabStatusGeneration.get(tabId)||0,key=keywordHintKey(tabId);
   const {settings:raw}=await chrome.storage.local.get('settings');
   const incognito=await chrome.tabs.get(tabId).then(value=>value?.incognito===true).catch(()=>false);
   const automation=await automationWithSessionDismissed(normalizeSettings(raw).automation,incognito);
   if (automation.keywordHints.badge&&url===undefined) url=await chrome.webNavigation.getFrame({tabId,frameId:0}).then(frame=>frame?.url||'').catch(()=>null);
   if (url===null) return;
   const keyword=automation.keywordHints.badge&&url?resolveAutomation(automation,url).keywordHint:null;
+  if(await tabHasError(tabId))return;
+  if(guard)await guard();
+  if((tabStatusGeneration.get(tabId)||0)!==generation)return;
   if (keyword) {
-    if ((await chrome.storage.session.get(tabErrorKey(tabId)))[tabErrorKey(tabId)]) return;
     await Promise.allSettled([
       chrome.action.setBadgeBackgroundColor({tabId,color:'#70509c'}),
       chrome.action.setBadgeText({tabId,text:'+'}),
@@ -1502,18 +1552,35 @@ async function applyKeywordHint(tabId,url) {
     return;
   }
   if (!(await chrome.storage.session.get(key))[key]) return;
+  if(guard)await guard();
+  if((tabStatusGeneration.get(tabId)||0)!==generation)return;
   await Promise.allSettled([resetBadge(tabId),chrome.storage.session.remove(key)]);
 }
 function refreshKeywordHint(tabId,url) {
   return withTabStatus(tabId,()=>applyKeywordHint(tabId,url));
 }
-chrome.webNavigation.onCommitted.addListener(details => {
-  if (details.frameId !== 0) return;
-  void withTabStatus(details.tabId,async()=>{
-    await chrome.storage.session.remove(tabErrorKey(details.tabId));
-    await applyKeywordHint(details.tabId,details.url);
-  }).catch(error => console.error('更新文档类网站提示失败',error));
-},{url:[{schemes:['http','https']}]});
+function clearNavigationStatus(tabId,url,sameDocument=false) {
+  const generation=(tabStatusGeneration.get(tabId)||0)+1;
+  tabStatusGeneration.set(tabId,generation);
+  return withTabStatus(tabId,async()=>{
+    if((tabStatusGeneration.get(tabId)||0)!==generation)return;
+    const key=pageTaskStatusKey(tabId),status=await chrome.storage.session.get([key,tabErrorKey(tabId)]);
+    const hadError=Boolean(status[tabErrorKey(tabId)]||status[key]?.error);
+    await chrome.storage.session.remove(tabErrorKey(tabId));
+    // SPA navigation keeps the document watermark, never its old error or URL.
+    if(sameDocument&&status[key])await chrome.storage.session.set({[key]:{documentId:status[key].documentId,sequence:status[key].sequence,error:false}});
+    else await chrome.storage.session.remove(key);
+    if(hadError)await resetBadge(tabId);
+    if((tabStatusGeneration.get(tabId)||0)!==generation)return;
+    await applyKeywordHint(tabId,url);
+  });
+}
+chrome.webNavigation.onCommitted.addListener(details=>{
+  if(details.frameId===0)void clearNavigationStatus(details.tabId,details.url).catch(()=>{});
+});
+for(const event of [chrome.webNavigation.onHistoryStateUpdated,chrome.webNavigation.onReferenceFragmentUpdated])event?.addListener(details=>{
+  if(details.frameId===0)void clearNavigationStatus(details.tabId,details.url,true).catch(()=>{});
+});
 function reconcileAutomation() {
   const work = automationReconciliation.catch(() => {}).then(async () => {
     const {settings}=await load(false);
@@ -1536,6 +1603,7 @@ async function broadcastVideoSettings(video) { const tabs = await chrome.tabs.qu
 await Promise.allSettled(tabs.map(tab => chrome.tabs.sendMessage(tab.id,{type:'SS_VIDEO_SETTINGS',video},{frameId:0}))); }
 async function handle(message,sender) {
   if(sender.id!==chrome.runtime.id)throw new Error('不受信任的请求。');
+  if(message.type==='PAGE_TASK_STATUS')return pageTaskStatus(message,sender);
   await dataReady;if(!['MEMORY_CLEAR','HISTORY_CLEAR'].includes(message.type))assertDataAvailable();if(futureSchema&&HISTORY_MUTATIONS.has(message.type))throw new Error('不支持的数据版本，请更新扩展');
   const trusted=Boolean(sender.url?.startsWith(chrome.runtime.getURL('')));
   const contentAllowed=['HISTORY_BEGIN','HISTORY_TICK','HISTORY_COMMIT','HISTORY_ANNOTATION','DIAGNOSTICS_RENDER','STATE_GET','RESOLVE_DOMAIN','ANALYZE','SUPPORT_BATCH','SENTENCE_GROUPS_GET','SENTENCE_GROUPS_SET','SENTENCE_GROUPS_BATCH','ASSIST','ASSIST_PREVIEW','ASSIST_COMMIT','ENCOUNTER','INTERACT','YOUTUBE_CAPTIONS_BRIDGE','OPEN_OPTIONS','AUTO_BOOTSTRAP_CHECK','PAGE_ACTIVITY_SET','VIDEO_SETTINGS_PATCH','PREPARED_SUPPORT','PREPARED_ASSIST','PASSAGE_TRANSLATE','READER_TRANSLATION_ESTIMATE','READER_TRANSLATION_BEGIN', 'EMERGENCY_TRANSLATE', 'EMERGENCY_CANCEL_REQUEST', 'EMERGENCY_END','LANGUAGE_PROFILE','CONVERSATION_ASK','CONVERSATION_STOP','CONVERSATION_HISTORY','CONVERSATION_DELETE','REVIEW_DUE','REVIEW_FEEDBACK','ROUTING_STATS']
@@ -1685,7 +1753,8 @@ chrome.runtime.onInstalled.addListener(registerContextMenus);
 chrome.runtime.onStartup.addListener(registerContextMenus);
 void registerContextMenus();
 async function forgetTabAutomation(tabId) {
-  await chrome.storage.session.remove([tabPauseKey(tabId),offeredKey(tabId),pendingKey(tabId),assistCacheKey(tabId),'pageDomain:'+tabId,keywordHintKey(tabId),tabErrorKey(tabId)]);
+  await withTabStatus(tabId,()=>chrome.storage.session.remove([tabPauseKey(tabId),offeredKey(tabId),pendingKey(tabId),assistCacheKey(tabId),'pageDomain:'+tabId,keywordHintKey(tabId),tabErrorKey(tabId),pageTaskStatusKey(tabId)]));
+  tabStatusGeneration.delete(tabId);
   for(const key of assistQueues.keys())if(key.startsWith(tabId+':')){assistQueues.delete(key);commitFlights.delete(key);}
 }
 
@@ -1696,6 +1765,7 @@ chrome.permissions.onAdded.addListener(refreshAutomation);
 chrome.permissions.onRemoved.addListener(()=>{clearProviderState();refreshAutomation();});
 chrome.tabs.onActivated?.addListener(()=>{void pruneBackgroundQueue();});
 chrome.tabs.onUpdated.addListener((tabId,changeInfo,tab) => {
+  if(changeInfo.url!==undefined||changeInfo.status==='loading')void clearNavigationStatus(tabId,changeInfo.url||tab?.url,changeInfo.status!=='loading').catch(()=>{});
   if(changeInfo.url!==undefined||changeInfo.status==='loading'){void pruneBackgroundQueue();void chrome.tabs.sendMessage(tabId,{type:'SS_EMERGENCY_END',navigation:true,url:changeInfo.url||tab?.url},{frameId:0}).catch(()=>{});}
   if(changeInfo.url!==undefined||changeInfo.status==='loading'){void forgetEmergency(tabId);injectedEmergencyPages.delete(tabId);void chrome.storage.session.remove([offeredKey(tabId),pendingKey(tabId),assistCacheKey(tabId),'pageDomain:'+tabId]);}
   if((changeInfo.url!==undefined||changeInfo.status==='loading')&&!pageOrigin(tab?.url||''))void clearAutomaticSentenceModes(tabId);
@@ -1708,6 +1778,7 @@ chrome.tabs.onRemoved.addListener(tabId => {
   void pruneBackgroundQueue();
   void forgetEmergency(tabId);injectedEmergencyPages.delete(tabId);sentenceModeGeneration.delete(tabId);void chrome.storage.session.remove(sentenceModeKey(tabId));
   tabActivationGeneration.delete(tabId);
+  tabStatusGeneration.set(tabId,(tabStatusGeneration.get(tabId)||0)+1);
   void forgetTabAutomation(tabId);
 });
 // PDF 主框架导航重定向到自带阅读页；#relyless-native 是“在原生查看器打开”的逃逸标记。
@@ -1729,39 +1800,50 @@ chrome.webNavigation?.onBeforeNavigate?.addListener(details=>{
 void reconcileAutomation().catch(error => console.error('初始化自动开启策略失败',error));
 
 
-function clearTabStatus(tabId) {
+const tabStatusSource=tab=>({generation:tabStatusGeneration.get(tab.id)||0,url:tab.url});
+async function currentTabStatusSource(tabId,source) {
+  const tab=await chrome.tabs.get(tabId).catch(()=>null);
+  return Boolean(tab&&tab.url===source.url&&(tabStatusGeneration.get(tabId)||0)===source.generation);
+}
+function clearTabStatus(tabId,source) {
   return withTabStatus(tabId,async()=>{
+    if(!await currentTabStatusSource(tabId,source))return;
     if (!(await chrome.storage.session.get(tabErrorKey(tabId)))[tabErrorKey(tabId)]) return;
-    await Promise.allSettled([resetBadge(tabId),chrome.storage.session.remove(tabErrorKey(tabId))]);
-    await applyKeywordHint(tabId);
+    if(!await currentTabStatusSource(tabId,source))return;
+    await chrome.storage.session.remove(tabErrorKey(tabId));
+    if(await tabHasError(tabId)){if(await currentTabStatusSource(tabId,source))await errorBadge(tabId);return;}
+    await resetBadge(tabId);
+    if(await currentTabStatusSource(tabId,source))await applyKeywordHint(tabId);
   });
 }
 
-function showTabError(tabId,error,fallback) {
+function showTabError(tabId,error,fallback,source) {
   const message = error instanceof Error && error.message ? error.message : fallback;
   console.error(fallback,error);
   return withTabStatus(tabId,async()=>{
-    await Promise.allSettled([
-      chrome.action.setBadgeBackgroundColor({tabId,color:'#B42318'}),
-      chrome.action.setBadgeText({tabId,text:'!'}),
-      chrome.action.setTitle({tabId,title:`RelyLess：${message}`}),
-      chrome.storage.session.set({[tabErrorKey(tabId)]:true}),
-      chrome.storage.session.remove(keywordHintKey(tabId))
-    ]);
+    if(!await currentTabStatusSource(tabId,source))return;
+    await chrome.storage.session.set({[tabErrorKey(tabId)]:true});
+    if(!await currentTabStatusSource(tabId,source)){
+      await chrome.storage.session.remove(tabErrorKey(tabId));
+      if(!await tabHasError(tabId))await resetBadge(tabId);
+      return;
+    }
+    await errorBadge(tabId,`RelyLess：${message}`);
   });
 }
 
 async function toggleReading(tab) {
   if (!tab?.id) return;
+  const source=tabStatusSource(tab);
   try {
     await injectPageUI(tab.id);
     const status = await chrome.tabs.sendMessage(tab.id,{type:'SS_STATUS'},{frameId:0});
     if (!status?.ok) throw new Error('无法读取阅读状态。');
     const result = await chrome.tabs.sendMessage(tab.id,{type:'SS_SET_ENABLED',enabled:!status.data.enabled},{frameId:0});
     if (!result?.ok) throw new Error('无法切换阅读状态。');
-    await clearTabStatus(tab.id);
+    await clearTabStatus(tab.id,source);
   } catch (error) {
-    await showTabError(tab.id,error,'此页面无法开启阅读辅助，请在普通网页重试。');
+    await showTabError(tab.id,error,'此页面无法开启阅读辅助，请在普通网页重试。',source);
   }
 }
 
@@ -1772,6 +1854,7 @@ chrome.commands.onCommand.addListener((command,tab) => {
 
 chrome.contextMenus.onClicked.addListener((info,tab) => {
   if (!tab?.id) return;
+  const source=tabStatusSource(tab);
   if (info.menuItemId === CONTEXT_TOGGLE_READING) {
     void toggleReading(tab);
     return;
@@ -1783,8 +1866,8 @@ chrome.contextMenus.onClicked.addListener((info,tab) => {
         await injectPageUI(tab.id);
         const result = await chrome.tabs.sendMessage(tab.id,{type:'SS_NAV_LINK_TRANSLATE',linkUrl:info.linkUrl},{frameId:0});
         if (!result?.ok) throw new Error(result?.error || '无法翻译导航链接文字。');
-        await clearTabStatus(tab.id);
-      } catch (error) { await showTabError(tab.id,error,'此页面无法翻译导航链接文字。'); }
+        await clearTabStatus(tab.id,source);
+      } catch (error) { await showTabError(tab.id,error,'此页面无法翻译导航链接文字。',source); }
     })();
     return;
   }
@@ -1795,8 +1878,8 @@ chrome.contextMenus.onClicked.addListener((info,tab) => {
         await injectPageUI(tab.id);
         const result = await chrome.tabs.sendMessage(tab.id,{type:'SS_COPY_PARAGRAPH'},{frameId:0});
         if (!result?.ok) throw new Error(result?.error || '无法复制段落原文。');
-        await clearTabStatus(tab.id);
-      } catch (error) { await showTabError(tab.id,error,'此页面无法复制段落原文。'); }
+        await clearTabStatus(tab.id,source);
+      } catch (error) { await showTabError(tab.id,error,'此页面无法复制段落原文。',source); }
     })();
     return;
   }
@@ -1815,9 +1898,9 @@ chrome.contextMenus.onClicked.addListener((info,tab) => {
       await injectPageUI(tab.id);
       const result = await chrome.tabs.sendMessage(tab.id,{type:'SS_CONTEXT_HELP',selectionText:info.selectionText || ''},{frameId:0});
       if (!result?.ok) throw new Error(result?.error || '无法解释选中内容。');
-      await clearTabStatus(tab.id);
+      await clearTabStatus(tab.id,source);
     } catch (error) {
-      await showTabError(tab.id,error,'此页面无法解释选中内容，请在普通网页重试。');
+      await showTabError(tab.id,error,'此页面无法解释选中内容，请在普通网页重试。',source);
     }
   })();
 });

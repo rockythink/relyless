@@ -18,6 +18,23 @@ let popupSentenceGroupsLoaded=false;
 let popupBusy=false;
 let popupEmergency={active:false,displayed:false,phase:'off',total:0,completed:0,failed:0,pending:0,skipped:0,error:''};
 let popupEmergencyResume=false;
+const popupTaskPanel=document.querySelector('#task-status-panel'),popupTaskList=document.querySelector('#task-status-list');
+let popupTasks=[],popupTaskSignature='';
+const popupTaskKeys=new Set(['support','structure','emergency','passage','lookup','known','copy']);
+function popupTaskSnapshot(value){
+  if(!Array.isArray(value)||value.length>popupTaskKeys.size)return [];
+  const seen=new Set();
+  for(const task of value){
+    if(!task||!popupTaskKeys.has(task.key)||seen.has(task.key)||typeof task.text!=='string'||!task.text.trim()||task.text.length>600||typeof task.error!=='boolean'||typeof task.busy!=='boolean')return [];
+    seen.add(task.key);
+  }
+  return value.map(({key,text,error,busy})=>({key,text,error,busy}));
+}
+function popupRenderTasks(){
+  popupTaskPanel.hidden=popupTasks.length===0;
+  const signature=JSON.stringify(popupTasks);if(signature===popupTaskSignature)return;popupTaskSignature=signature;
+  popupTaskList.replaceChildren(...popupTasks.map(task=>{const item=document.createElement('li');item.textContent=task.text;item.classList.toggle('error',task.error);if(task.busy)item.setAttribute('aria-busy','true');return item;}));
+}
 
 function popupSetLive(element, value) { if (element.textContent !== value) element.textContent = value; }
 function popupShowError(element,error){element.textContent=errorText(error);element.hidden=false;}
@@ -49,6 +66,7 @@ function popupRender(){
   popupUnsupported.hidden=supported;
   popupPageControls.hidden=!supported;
   if(!supported)return;
+  popupRenderTasks();
   const allSites=Boolean(popupAutomation?.automation?.allSites);
   const configured=popupAutomation?.siteRule??allSites;
   popupEls.siteAuto.disabled=popupBusy||!supported||!popupAutomation;
@@ -98,7 +116,7 @@ function popupRender(){
   popupEls.emergencyStart.disabled=popupBusy||popupReaderActive||!supported||!popupState?.providerConfigured;
   popupEls.emergencyCancel.disabled=popupBusy;
 }
-async function popupGetPageStatus(){if(!popupSupported())return;const snapshot=popupSentenceGroups;const result=await chrome.tabs.sendMessage(popupTab.id,{type:'SS_STATUS'},{frameId:0}).catch(()=>null);if(snapshot!==popupSentenceGroups||!result?.ok)return;popupEnabled=Boolean(result.data?.enabled);popupReaderActive=Boolean(result.data?.reader?.active);if(result.data?.sentenceGroups)popupSentenceGroups={...popupSentenceGroups,...result.data.sentenceGroups};if(result.data?.emergency)popupEmergency=popupEmergencySnapshot(result.data.emergency);}
+async function popupGetPageStatus(){if(!popupSupported()){popupTasks=[];return;}const snapshot=popupSentenceGroups;const result=await chrome.tabs.sendMessage(popupTab.id,{type:'SS_STATUS'},{frameId:0}).catch(()=>null);if(snapshot!==popupSentenceGroups)return;popupTasks=popupTaskSnapshot(result?.ok?result.data?.tasks:null);if(!result?.ok)return;popupEnabled=Boolean(result.data?.enabled);popupReaderActive=Boolean(result.data?.reader?.active);if(result.data?.sentenceGroups)popupSentenceGroups={...popupSentenceGroups,...result.data.sentenceGroups};if(result.data?.emergency)popupEmergency=popupEmergencySnapshot(result.data.emergency);}
 async function popupGetSentenceGroups(){const result=await request('SENTENCE_GROUPS_GET',{tabId:popupTab?.id});popupSentenceGroups={enabled:Boolean(result?.enabled),status:result?.enabled?'idle':'off',error:'',processed:0};popupSentenceGroupsLoaded=true;}
 async function popupToggleSite(){
   if(!popupSupported()||popupBusy||!popupAutomation)return;
@@ -216,7 +234,7 @@ async function popupInit(){
   }catch(error){if(popupSupported())popupShowError(popupEls.actionError,error);popupRender();}
 }
 async function popupWatchPage(){
-  try{if(!popupBusy&&(popupSentenceGroups.enabled||popupReaderActive||popupEmergency.phase!=='off')&&document.visibilityState==='visible'){await popupGetPageStatus();popupRender();}}
+  try{if(!popupBusy&&popupSupported()&&document.visibilityState==='visible'){await popupGetPageStatus();popupRender();}}
   catch{/* 轮询为尽力而为，失败下一秒重试，不写入界面 */}
   finally{setTimeout(()=>void popupWatchPage(),1000);}
 }

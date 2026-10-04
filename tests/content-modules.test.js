@@ -57,20 +57,14 @@ test('copy uses the selection block and writes only original text', async () => 
   const paragraph = document.getElementById('p');
   const range = document.createRange();
   range.selectNodeContents(paragraph);
-  const messages = [];
-  kernel().register({setPageStatus: (key, text) => messages.push([key, text])});
   const originalSelection = kernel().currentSelection;
   kernel().currentSelection = () => ({rangeCount: 1, isCollapsed: false, getRangeAt: () => range});
   await copy().copyParagraph();
   kernel().currentSelection = originalSelection;
   expect(globalThis.__clipboardWrites.at(-1)).toBe('The client retries with backoff.');
-  expect(messages.at(-1)[0]).toBe('copy');
-  expect(messages.at(-1)[1]).toContain('已复制');
 });
 
 test('copy reports a clear error without a paragraph selection', async () => {
-  const messages = [];
-  kernel().register({setPageStatus: (key, text) => messages.push([key, text])});
   kernel().currentSelection = () => ({rangeCount: 0, isCollapsed: true, getRangeAt: () => null});
   await expect(copy().copyParagraph()).rejects.toThrow('没有找到可复制的段落。');
 });

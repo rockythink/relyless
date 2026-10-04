@@ -112,16 +112,3 @@ test('mount is idempotent and returns source input and inert state after exit or
     expect(input.inert).toBe(false);
   } finally {window.HTMLElement.prototype.showPopover=oldShow;}
 });
-test('Escape in the reader status panel dismisses the panel first',()=>{
-  const {window,reader}=page('<article><p>'+long('Readable original prose. ')+'</p><p>'+long('Another original paragraph. ')+'</p></article>');
-  const oldShow=window.HTMLElement.prototype.showPopover;window.HTMLElement.prototype.showPopover=function(){};
-  let exits=0,handled=0;
-  try{
-    reader.mount({...reader.extract(),onEscape:()=>exits++});
-    const status=document.createElement('div');status.setAttribute('data-shisui-ui','task-status');
-    const button=document.createElement('button');status.append(button);reader.overlayRoot().append(status);
-    button.addEventListener('keydown',()=>handled++);
-    button.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,composed:true}));
-    expect(handled).toBe(1);expect(exits).toBe(0);
-  }finally{reader.unmount();window.HTMLElement.prototype.showPopover=oldShow;}
-});

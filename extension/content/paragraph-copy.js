@@ -38,7 +38,7 @@
     const text = kernel.normalizeText(kernel.blockText(block));
     if (!text) throw new Error('这个段落没有可复制的文字。');
     await writeClipboard(text);
-    kernel.hooks.setPageStatus?.('copy', '已复制本段原文 · ' + text.length + ' 字符', {duration: 2500});
+    kernel.hooks.setTaskStatus?.('copy', '已复制本段原文 · ' + text.length + ' 字符', {duration: 2500});
     return kernel.hooks.status?.();
   }
 

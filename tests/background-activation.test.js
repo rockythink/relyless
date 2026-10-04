@@ -12,6 +12,7 @@ let tabGetBarrier = null;
 const tabMessages = [];
 const badgeCalls = [];
 let getFrameCalls = 0;
+let currentDocumentId='activation-document',frameUrl=null,frameAvailable=true;
 const fetchBefore = globalThis.fetch;
 globalThis.fetch = async()=>{throw new Error('unexpected model call');};
 const pick = (source,keys) => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).filter(key => Object.hasOwn(source,key)).map(key => [key,source[key]]));
@@ -35,7 +36,7 @@ globalThis.chrome = {
     onAdded:event(),onRemoved:event(),
   },
   tabs:{
-    onRemoved:event(),onUpdated:event(),query:async query=>query?.active ? [tab] : [tab],get:async id=>{if(tabGetBarrier) await tabGetBarrier;return id === tab.id ? tab : null;},
+    onRemoved:event(),onUpdated:event(),query:async query=>query?.active ? [tab] : [tab],get:async id=>{if(tabGetBarrier) await tabGetBarrier;return id === tab.id ? {...tab} : null;},
     sendMessage:async (tabId,message)=>{tabMessages.push({tabId,message});return {ok:true,data:{enabled:false}};},
   },
   windows:{getAll:async()=>[{id:7,incognito:false},...privateWindows],onRemoved:event()},
@@ -45,7 +46,7 @@ globalThis.chrome = {
     unregisterContentScripts:async ({ids})=>{for (const id of ids) {const index=registrations.findIndex(item=>item.id===id);if(index>=0) registrations.splice(index,1);}},
     registerContentScripts:async scripts=>{registrations.push(...scripts);},
   },
-  webNavigation:{onCommitted:event(),getFrame:async({tabId})=>{getFrameCalls++;return tabId===tab.id?{documentId:'activation-document',url:tab.url}:null;}},
+  webNavigation:{onCommitted:event(),onHistoryStateUpdated:event(),onReferenceFragmentUpdated:event(),getFrame:async({tabId})=>{getFrameCalls++;return tabId===tab.id&&frameAvailable?{documentId:currentDocumentId,url:frameUrl??tab.url}:null;}},
   contextMenus:{onClicked:event(),removeAll:async()=>{},create:(_options,callback)=>callback()},
   commands:{onCommand:event()},action:{setBadgeText:async options=>{badgeCalls.push({call:'text',...options});},setTitle:async options=>{badgeCalls.push({call:'title',...options});},setBadgeBackgroundColor:async options=>{badgeCalls.push({call:'color',...options});}},
 };
@@ -383,7 +384,7 @@ test('main-frame commit clears error state and applies matching hint',async()=>{
   expect(session['keywordHint:'+tab.id]).toBe(true);
 });
 
-test('queued error and hint refresh resolve deterministically to !',async()=>{
+test('navigation suppresses an older context error even when its result arrives later',async()=>{
   await enableDocsBadge();
   badgeCalls.length=0;
   const restore=failTabSend();
@@ -391,9 +392,9 @@ test('queued error and hint refresh resolve deterministically to !',async()=>{
   commitMainFrame('https://docs.example.com/x');
   await flushBadgeQueue();
   restore();
-  expect(lastText()).toBe('!');
-  expect(session['keywordHint:'+tab.id]).toBeUndefined();
-  delete session['tabError:'+tab.id];
+  expect(lastText()).toBe('+');
+  expect(session['keywordHint:'+tab.id]).toBe(true);
+  expect(session['tabError:'+tab.id]).toBeUndefined();
 });
 
 test('dismissal removes the current + badge and title immediately',async()=>{
@@ -447,3 +448,264 @@ test('keyword hint dismissal evicts the oldest entry at the cap and stays sessio
     delete session['keywordHintDismissed'];
   }
 });
+
+const taskSender=()=>({id:'activation-fixture',url:tab.url,tab:{...tab},frameId:0,documentId:currentDocumentId});
+const reportTask=(error,sequence,sender=taskSender(),pageUrl=sender.url)=>send({type:'PAGE_TASK_STATUS',error,sequence,pageUrl},sender);
+const taskKey='pageTaskStatus:'+tab.id;
+async function resetTaskPage(){
+  tab.url='https://docs.example/article';tab.incognito=false;
+  currentDocumentId='activation-document';frameUrl=null;frameAvailable=true;
+  commitMainFrame(tab.url);await flushBadgeQueue();await enableDocsBadge();
+  badgeCalls.length=0;
+}
+
+test('page task failures replace +; a later clear restores the hint without persisting page data',async()=>{
+  await resetTaskPage();
+  await reportTask(true,1);
+  expect(lastText()).toBe('!');
+  expect(session['keywordHint:'+tab.id]).toBeUndefined();
+  expect(session[taskKey]).toEqual({documentId:currentDocumentId,sequence:1,error:true});
+  expect(JSON.stringify(session[taskKey])).not.toContain(tab.url);
+  expect(stored[taskKey]).toBeUndefined();
+  badgeCalls.length=0;
+  await enableDocsBadge();
+  expect(badgeCalls.some(call=>call.call==='text'&&call.text==='+')).toBe(false);
+  await reportTask(false,2);
+  expect(lastText()).toBe('+');
+  expect(session[taskKey]).toEqual({documentId:currentDocumentId,sequence:2,error:false});
+});
+
+test('task and context error channels clear independently, and ! wins until both recover',async()=>{
+  await resetTaskPage();
+  await reportTask(true,1);
+  let restore=failTabSend();clickMenu('ss-toggle-reading');await flushBadgeQueue();restore();
+  expect(session['tabError:'+tab.id]).toBe(true);
+  badgeCalls.length=0;
+  await reportTask(false,2);
+  expect(lastText()).toBeUndefined();
+  expect(session['tabError:'+tab.id]).toBe(true);
+  expect(session[taskKey].error).toBe(false);
+  clickMenu('ss-toggle-reading');await flushBadgeQueue();
+  expect(lastText()).toBe('+');
+
+  await reportTask(true,3);
+  restore=failTabSend();clickMenu('ss-toggle-reading');await flushBadgeQueue();restore();
+  badgeCalls.length=0;
+  clickMenu('ss-toggle-reading');await flushBadgeQueue();
+  expect(lastText()).toBe('!');
+  expect(session['tabError:'+tab.id]).toBeUndefined();
+  expect(session[taskKey].error).toBe(true);
+  expect(badgeCalls.some(call=>call.call==='text'&&call.text!== '!')).toBe(false);
+  await reportTask(false,4);
+  expect(lastText()).toBe('+');
+});
+
+test('sequence ordering covers errors and clears, and restarts for a new native document',async()=>{
+  await resetTaskPage();
+  await reportTask(true,9);await reportTask(false,10);
+  badgeCalls.length=0;
+  expect(await reportTask(true,9)).toEqual({accepted:false});
+  expect(await reportTask(true,10)).toEqual({accepted:false});
+  expect(badgeCalls).toEqual([]);
+  expect(session[taskKey].error).toBe(false);
+  currentDocumentId='new-native-document';
+  expect(await reportTask(true,1)).toEqual({accepted:true});
+  expect(lastText()).toBe('!');
+  expect(session[taskKey].sequence).toBe(1);
+  await reportTask(false,2);
+});
+
+test('native extension identity, main frame, document, exact URL and bounded fields are required',async()=>{
+  await resetTaskPage();
+  await reportTask(true,4);badgeCalls.length=0;
+  const sender=taskSender(),message={type:'PAGE_TASK_STATUS',error:false,sequence:5,pageUrl:tab.url};
+  const senders=[{...sender,id:'foreign-extension'},{...sender,frameId:1},{...sender,frameId:undefined},{...sender,documentId:undefined},{...sender,documentId:'old-document'},{...sender,documentId:'x'.repeat(129)},{...sender,url:'https://docs.example/old'},{...sender,tab:{id:-1}},{...sender,tab:undefined},extensionSender];
+  for(const invalid of senders)await expect(send(message,invalid)).rejects.toThrow();
+  for(const sequence of [0,-1,1.5,Infinity,NaN,Number.MAX_SAFE_INTEGER+1,'5',null])await expect(send({...message,sequence},sender)).rejects.toThrow();
+  for(const error of ['false',0,null])await expect(send({...message,error},sender)).rejects.toThrow();
+  for(const pageUrl of [null,'','https://docs.example/other','https://docs.example/?'+ 'x'.repeat(8192),'chrome://settings'])await expect(send({...message,pageUrl},{...sender,url:pageUrl})).rejects.toThrow();
+  frameUrl=tab.url+'?different=1';await expect(send(message,sender)).rejects.toThrow();frameUrl=null;
+  frameAvailable=false;await expect(send(message,sender)).rejects.toThrow();frameAvailable=true;
+  expect(badgeCalls).toEqual([]);
+  expect(session[taskKey]).toEqual({documentId:currentDocumentId,sequence:4,error:true});
+  await reportTask(false,5);
+});
+
+test('loading, non-matching and unsupported navigation clear all old error badges and titles',async()=>{
+  await resetTaskPage();
+  await reportTask(true,1);
+  const restore=failTabSend();clickMenu('ss-toggle-reading');await flushBadgeQueue();restore();
+  tab.url='https://plain.example/next';badgeCalls.length=0;
+  globalThis.chrome.tabs.onUpdated.listeners.forEach(listener=>listener(tab.id,{status:'loading',url:tab.url},{...tab}));
+  await flushBadgeQueue();
+  expect(lastText()).toBe('');
+  expect(session[taskKey]).toBeUndefined();
+  expect(session['tabError:'+tab.id]).toBeUndefined();
+  expect(badgeCalls.filter(call=>call.call==='title').at(-1)?.title).toBe('RelyLess');
+  currentDocumentId='plain-document';commitMainFrame(tab.url);await flushBadgeQueue();
+  await reportTask(true,1);
+  tab.url='chrome://settings';commitMainFrame(tab.url);await flushBadgeQueue();
+  expect(lastText()).toBe('');expect(session[taskKey]).toBeUndefined();
+
+  await resetTaskPage();await reportTask(true,1);
+  currentDocumentId='matching-document';tab.url='https://docs.example/new';
+  commitMainFrame(tab.url);await flushBadgeQueue();
+  expect(lastText()).toBe('+');expect(session[taskKey]).toBeUndefined();
+  expect(await reportTask(false,1)).toEqual({accepted:true});
+});
+
+test('SPA and fragment navigation clear errors but retain sequence ordering for the same document',async()=>{
+  await resetTaskPage();await reportTask(true,7);
+  const oldSender=taskSender();
+  tab.url='https://docs.example/route-two';
+  globalThis.chrome.webNavigation.onHistoryStateUpdated.listeners.forEach(listener=>listener({tabId:tab.id,frameId:0,url:tab.url,documentId:currentDocumentId}));
+  await flushBadgeQueue();
+  expect(lastText()).toBe('+');
+  expect(session[taskKey]).toEqual({documentId:currentDocumentId,sequence:7,error:false});
+  await expect(reportTask(true,8,oldSender)).rejects.toThrow();
+  await reportTask(true,8);
+  tab.url+='#part';
+  globalThis.chrome.webNavigation.onReferenceFragmentUpdated.listeners.forEach(listener=>listener({tabId:tab.id,frameId:0,url:tab.url,documentId:currentDocumentId}));
+  await flushBadgeQueue();expect(lastText()).toBe('+');
+  tab.url=oldSender.url;
+  globalThis.chrome.tabs.onUpdated.listeners.forEach(listener=>listener(tab.id,{url:tab.url},{...tab}));
+  await flushBadgeQueue();badgeCalls.length=0;
+  expect(await reportTask(true,7,oldSender)).toEqual({accepted:false});
+  expect(await reportTask(true,8,oldSender)).toEqual({accepted:false});
+  expect(badgeCalls).toEqual([]);
+  await reportTask(true,9);expect(lastText()).toBe('!');await reportTask(false,10);
+});
+
+test('a delayed report revalidates current URL and document after asynchronous frame lookup',async()=>{
+  await resetTaskPage();
+  const original=globalThis.chrome.webNavigation.getFrame;
+  let entered,release;
+  const ready=new Promise(resolve=>{entered=resolve;}),barrier=new Promise(resolve=>{release=resolve;});
+  let once=true;
+  globalThis.chrome.webNavigation.getFrame=async options=>{
+    const frame=await original(options);
+    if(once){once=false;entered();await barrier;}
+    return frame;
+  };
+  const pending=reportTask(true,1);
+  const rejected=pending.then(()=>null,error=>error);
+  try{
+    await ready;tab.url='https://docs.example/new-route';currentDocumentId='replacement-document';
+    release();expect(await rejected).toBeInstanceOf(Error);
+    expect(session[taskKey]).toBeUndefined();
+    expect(badgeCalls.some(call=>call.call==='text'&&call.text==='!')).toBe(false);
+  }finally{release();globalThis.chrome.webNavigation.getFrame=original;}
+});
+
+test('navigation during a session write cannot leave a late task error on the replacement document',async()=>{
+  await resetTaskPage();
+  const original=globalThis.chrome.storage.session.set;
+  let entered,release;
+  const ready=new Promise(resolve=>{entered=resolve;}),barrier=new Promise(resolve=>{release=resolve;});
+  let once=true;
+  globalThis.chrome.storage.session.set=async value=>{
+    if(once&&value[taskKey]){once=false;entered();await barrier;}
+    return original(value);
+  };
+  const pending=reportTask(true,1),rejected=pending.then(()=>null,error=>error);
+  try{
+    await ready;currentDocumentId='replacement-document';tab.url='https://plain.example/new';
+    commitMainFrame(tab.url);release();expect(await rejected).toBeInstanceOf(Error);await flushBadgeQueue();
+    expect(session[taskKey]).toBeUndefined();expect(session['tabError:'+tab.id]).toBeUndefined();
+    expect(badgeCalls.some(call=>call.call==='text'&&call.text==='!')).toBe(false);
+    expect(lastText()).toBe('');
+  }finally{release();globalThis.chrome.storage.session.set=original;}
+});
+
+test('a queued newer clear wins and a stale document cannot clear a current failure',async()=>{
+  await resetTaskPage();
+  const previous=taskSender();
+  currentDocumentId='current-document';
+  const results=await Promise.all([reportTask(true,3),reportTask(false,4),reportTask(true,2)]);
+  expect(results.at(-1)).toEqual({accepted:false});
+  expect(lastText()).toBe('+');
+  await reportTask(true,5);badgeCalls.length=0;
+  await expect(reportTask(false,100,previous)).rejects.toThrow();
+  expect(badgeCalls).toEqual([]);expect(session[taskKey].error).toBe(true);
+  await reportTask(false,6);
+});
+
+test('task metadata stays session-only in incognito and is removed with a closed tab',async()=>{
+  await resetTaskPage();tab.incognito=true;
+  await reportTask(true,1);
+  expect(stored[taskKey]).toBeUndefined();
+  globalThis.chrome.tabs.onRemoved.listeners.forEach(listener=>listener(tab.id));
+  await flushBadgeQueue();
+  expect(session[taskKey]).toBeUndefined();expect(session['tabError:'+tab.id]).toBeUndefined();
+  tab.incognito=false;
+});
+
+
+test('task recovery clears the toolbar when keyword hints are disabled',async()=>{
+  await resetTaskPage();
+  await send({type:'AUTOMATION_PATCH',tabId:tab.id,patch:{keywordHints:{badge:false,keywords:['docs'],dismissed:[]}}});
+  await reportTask(true,Number.MAX_SAFE_INTEGER-1);
+  expect(lastText()).toBe('!');
+  await reportTask(false,Number.MAX_SAFE_INTEGER);
+  expect(lastText()).toBe('');
+  expect(badgeCalls.filter(call=>call.call==='title').at(-1)?.title).toBe('RelyLess');
+  expect(session[taskKey].sequence).toBe(Number.MAX_SAFE_INTEGER);
+});
+
+test('navigation while an action write is pending removes the old task badge and metadata',async()=>{
+  await resetTaskPage();
+  const original=globalThis.chrome.action.setBadgeText;
+  let entered,release;
+  const ready=new Promise(resolve=>{entered=resolve;}),barrier=new Promise(resolve=>{release=resolve;});
+  globalThis.chrome.action.setBadgeText=async options=>{
+    if(options.text==='!'){entered();await barrier;}
+    return original(options);
+  };
+  const pending=reportTask(true,1),rejected=pending.then(()=>null,error=>error);
+  try{
+    await ready;tab.url='https://plain.example/replaced';currentDocumentId='replacement-document';
+    commitMainFrame(tab.url);release();expect(await rejected).toBeInstanceOf(Error);await flushBadgeQueue();
+    expect(lastText()).toBe('');expect(session[taskKey]).toBeUndefined();
+    expect(badgeCalls.filter(call=>call.call==='title').at(-1)?.title).toBe('RelyLess');
+  }finally{release();globalThis.chrome.action.setBadgeText=original;}
+});
+
+test('overlapping navigations cannot strand ! after the first cleanup removed its metadata',async()=>{
+  await resetTaskPage();await reportTask(true,1);
+  const original=globalThis.chrome.storage.session.remove;
+  let entered,release;
+  const ready=new Promise(resolve=>{entered=resolve;}),barrier=new Promise(resolve=>{release=resolve;});
+  let once=true;
+  globalThis.chrome.storage.session.remove=async keys=>{
+    await original(keys);
+    if(once&&keys===taskKey){once=false;entered();await barrier;}
+  };
+  try{
+    tab.url='https://plain.example/first';commitMainFrame(tab.url);await ready;
+    tab.url='https://plain.example/second';commitMainFrame(tab.url);release();await flushBadgeQueue();
+    expect(lastText()).toBe('');expect(session[taskKey]).toBeUndefined();
+    expect(badgeCalls.filter(call=>call.call==='title').at(-1)?.title).toBe('RelyLess');
+  }finally{release();globalThis.chrome.storage.session.remove=original;}
+});
+
+
+test('same-URL document replacement during session lookup cannot overwrite the previous task state',async()=>{
+  await resetTaskPage();await reportTask(true,3);badgeCalls.length=0;
+  const original=globalThis.chrome.storage.session.get;
+  let entered,release;
+  const ready=new Promise(resolve=>{entered=resolve;}),barrier=new Promise(resolve=>{release=resolve;});
+  let once=true;
+  globalThis.chrome.storage.session.get=async keys=>{
+    const value=await original(keys);
+    if(once&&keys===taskKey){once=false;entered();await barrier;}
+    return value;
+  };
+  const pending=reportTask(false,4),rejected=pending.then(()=>null,error=>error);
+  try{
+    await ready;currentDocumentId='replacement-at-same-url';release();expect(await rejected).toBeInstanceOf(Error);
+    expect(badgeCalls).toEqual([]);
+    expect(session[taskKey]).toEqual({documentId:'activation-document',sequence:3,error:true});
+  }finally{release();globalThis.chrome.storage.session.get=original;}
+  await reportTask(false,1);
+});
+

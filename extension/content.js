@@ -71,63 +71,35 @@
     label.style.cssText='display:inline-flex;align-items:center;gap:var(--space-2);min-width:0;vertical-align:middle;color:var(--muted);font:var(--weight-medium) var(--type-support)/var(--leading-support) var(--sans);text-align:start';
     label.append(icon,document.createTextNode('RelyLess'+(context?' · '+context:'')));return label;
   }
-  const pageStatus={host:null,root:null,timer:0,lines:new Map(),dismissed:new Map(),selected:null};
-  const statusPriority={support:1,structure:2,emergency:3,passage:4,lookup:5,known:6};
-  const statusFailures={support:'自动提示暂不可用',structure:'阅读解构暂不可用',emergency:'本页翻译已停止',passage:'选段翻译失败',lookup:'查词失败',known:'操作未保存'};
-  function removePageStatus(){pageStatus.host?.remove();pageStatus.host=null;pageStatus.root=null;pageStatus.selected=null;}
-  function createPageStatus(){
-    const host=document.createElement('div');host.setAttribute(OWN,'task-status');
-    host.style.cssText='position:fixed;top:max(16px,env(safe-area-inset-top));right:max(16px,env(safe-area-inset-right));z-index:2147483647;max-width:calc(100vw - 32px);pointer-events:none';
-    const shadow=host.attachShadow({mode:'closed'}),style=document.createElement('style');
-    style.textContent=globalThis.ShisuiDesign.cssFor(':host')+
-      ":host{font:var(--type-control)/var(--leading-control) var(--sans);color:var(--ink)}*{box-sizing:border-box}[hidden]{display:none!important}.panel{max-width:min(320px,calc(100vw - 32px));border:1px solid var(--line);border-radius:var(--radius-panel);background:var(--surface);box-shadow:var(--shadow-low);pointer-events:auto}.bar{display:flex;align-items:center;gap:var(--space-2);padding:var(--space-1) var(--space-1) var(--space-1) var(--space-3);min-height:40px}.indicator{width:14px;height:14px;flex:none;color:var(--muted);display:grid;place-items:center;font-weight:var(--weight-semibold);font-size:var(--type-support)}.indicator[data-busy=true]{border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:working 1.4s linear infinite}.indicator[data-error=true]{color:var(--danger)}.label{min-width:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.count{color:var(--muted);font-size:var(--type-support);flex:none}button{flex:none;min-height:32px;padding:var(--space-1) var(--space-2);border:0;border-radius:var(--radius-control);background:transparent;color:var(--muted);font:inherit;cursor:pointer}button:hover{background:var(--surface-hover);color:var(--ink)}button:focus-visible{outline:var(--focus-ring);outline-offset:var(--focus-offset)}.close{width:32px;padding:0;display:grid;place-items:center}.close svg{width:14px;height:14px}.detail{border-top:1px solid var(--line);padding:var(--space-3);max-height:min(240px,50vh);overflow:auto;color:var(--muted-strong);font-size:var(--type-support);line-height:var(--leading-body);overflow-wrap:anywhere;white-space:pre-wrap}.panel.compact{max-width:none;border-radius:var(--radius-pill)}.panel.compact .bar{gap:0;padding:0;min-height:0}.panel.compact .bar>img{display:none!important}.panel.compact .label,.panel.compact .count,.panel.compact .more,.panel.compact .close{display:none}.panel.compact .indicator{width:18px;height:18px;margin:var(--space-2)}@keyframes working{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.indicator[data-busy=true]{animation:none}}";
-    const panel=document.createElement('section'),bar=document.createElement('div'),indicator=document.createElement('span'),label=document.createElement('p'),count=document.createElement('span'),more=document.createElement('button'),close=document.createElement('button'),detail=document.createElement('div');
-    panel.className='panel';panel.setAttribute('aria-label','RelyLess 阅读状态');bar.className='bar';indicator.className='indicator';indicator.setAttribute('aria-hidden','true');label.className='label';label.setAttribute('role','status');label.setAttribute('aria-live','polite');label.setAttribute('aria-atomic','true');count.className='count';
-    more.type='button';more.textContent='详情';more.setAttribute('aria-expanded','false');more.setAttribute('aria-controls','status-detail');more.setAttribute('aria-label','查看阅读状态详情');detail.className='detail';detail.id='status-detail';detail.hidden=true;
-    const collapse=()=>{detail.hidden=true;more.textContent='详情';more.setAttribute('aria-expanded','false');more.setAttribute('aria-label','查看阅读状态详情');};
-    more.onclick=()=>{if(!detail.hidden){collapse();return;}detail.hidden=false;more.textContent='收起';more.setAttribute('aria-expanded','true');more.setAttribute('aria-label','收起阅读状态详情');};
-    close.type='button';close.className='close';close.setAttribute('aria-label','隐藏本次提示');close.title='隐藏提示，任务继续';close.innerHTML='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>';
-    close.onclick=()=>{for(const [key,entry]of pageStatus.lines)pageStatus.dismissed.set(key,entry.error?entry.text:true);renderPageStatus();};
-    panel.addEventListener('keydown',event=>{if(event.key!=='Escape')return;event.preventDefault();event.stopPropagation();if(!detail.hidden){collapse();more.focus();}else close.click();});
-    bar.append(createBrandIcon(),indicator,label,count,more,close);panel.append(bar,detail);shadow.append(style,panel);uiMountRoot().append(host);
-    pageStatus.host=host;pageStatus.root={indicator,label,count,more,detail,collapse,panel};
-  }
-  function renderPageStatus(){
-    clearTimeout(pageStatus.timer);pageStatus.timer=0;
-    const now=Date.now(),active=[];let selected=null,priority=-1,next=Infinity;
-    for(const [key,entry]of pageStatus.lines){
-      if(entry.expiresAt&&entry.expiresAt<=now){pageStatus.lines.delete(key);pageStatus.dismissed.delete(key);continue;}
+  const taskStatus={timer:0,lines:new Map(),badgeError:null};
+  const taskPriority={support:1,structure:2,emergency:3,passage:4,lookup:5,known:6,copy:7};
+  function taskSnapshot(){return [...taskStatus.lines.values()].map(({key,text,error,busy})=>({key,text,error,busy})).sort((a,b)=>Number(b.error)-Number(a.error)||taskPriority[b.key]-taskPriority[a.key]);}
+  function updateTaskStatus(forceBadge=false){
+    clearTimeout(taskStatus.timer);taskStatus.timer=0;
+    const now=Date.now();let next=Infinity;
+    for(const [key,entry]of taskStatus.lines){
+      if(entry.expiresAt&&entry.expiresAt<=now){taskStatus.lines.delete(key);continue;}
       if(entry.expiresAt)next=Math.min(next,entry.expiresAt);
-      if(pageStatus.dismissed.has(key))continue;
-      if(entry.showAt>now){next=Math.min(next,entry.showAt);continue;}
-      active.push(entry);const rank=(entry.error?100:0)+(statusPriority[key]||0);
-      if(rank>priority){selected=entry;priority=rank;}
     }
-    if(next<Infinity)pageStatus.timer=setTimeout(renderPageStatus,Math.max(1,next-now));
-    if(!selected){removePageStatus();return;}
-    if(!pageStatus.host?.isConnected)createPageStatus();
-    pageStatus.host.style.top=state.reader?Math.max(16,readerScroll().getBoundingClientRect().top+8)+'px':'max(16px,env(safe-area-inset-top))';
-    const {indicator,label,count,more,detail,collapse,panel}=pageStatus.root;
-    if(pageStatus.selected!==selected.key){collapse();pageStatus.selected=selected.key;}
-    panel.classList.toggle('compact',selected.busy&&!selected.error);
-    const copy=selected.error?(statusFailures[selected.key]||'阅读辅助暂未完成'):selected.text;
-    if(label.textContent!==copy)label.textContent=copy;label.title=copy;
-    indicator.dataset.error=String(selected.error);indicator.dataset.busy=String(selected.busy&&!selected.error);indicator.textContent=selected.error?'!':selected.busy?'':'·';
-    count.textContent=active.length>1?'+'+(active.length-1):'';count.hidden=active.length<2;count.setAttribute('aria-label','另有 '+(active.length-1)+' 项状态');
-    more.hidden=!selected.error&&active.length===1;if(more.hidden)collapse();
-    const details=active.map(entry=>entry.text).join('\n\n');if(detail.textContent!==details)detail.textContent=details;
+    if(next<Infinity)taskStatus.timer=setTimeout(updateTaskStatus,Math.max(1,next-now));
+    const tasks=taskSnapshot(),error=tasks.some(task=>task.error);
+    globalThis.ShisuiReader?.setTaskStatus(tasks);
+    if(forceBadge||taskStatus.badgeError!==error){
+      taskStatus.badgeError=error;
+      void request('PAGE_TASK_STATUS',{error,sequence:++state.taskSequence,pageUrl:location.href}).catch(()=>{});
+    }
   }
-  function setPageStatus(key,text,{error=false,busy=false,duration=0}={}){
-    const previous=pageStatus.lines.get(key);
-    if(!text){pageStatus.lines.delete(key);pageStatus.dismissed.delete(key);renderPageStatus();return;}
-    const dismissed=pageStatus.dismissed.get(key);
-    if(dismissed&&error&&dismissed!==text)pageStatus.dismissed.delete(key);
+  function setTaskStatus(key,text,{error=false,busy=false,duration=0}={}){
+    if(!Object.hasOwn(taskPriority,key)||disposed)return;
+    if(!text){if(taskStatus.lines.delete(key))updateTaskStatus();return;}
+    text=String(text).slice(0,600);error=Boolean(error);busy=Boolean(busy)&&!error;
+    const previous=taskStatus.lines.get(key);
     if(previous?.text===text&&previous.error===error&&previous.busy===busy)return;
-    const now=Date.now();pageStatus.lines.set(key,{key,text,error,busy,showAt:busy&&!error?(previous?.busy?previous.showAt:now+600):now,expiresAt:duration?now+duration:0});renderPageStatus();
+    taskStatus.lines.set(key,{key,text,error,busy,expiresAt:!error&&duration?Date.now()+duration:0});updateTaskStatus();
   }
-  function clearPageStatus(){clearTimeout(pageStatus.timer);pageStatus.timer=0;pageStatus.lines.clear();pageStatus.dismissed.clear();removePageStatus();}
+  function clearTaskStatus(){taskStatus.lines.clear();updateTaskStatus(true);}
   function updatePassageStatus(outcome='cancelled'){const count=state.passageRequests.size;
-    setPageStatus('passage',count?'正在翻译'+(count>1?' · '+count+' 处':''):outcome==='complete'?'翻译完成':outcome==='error'?'翻译未完成，未确认内容已撤下':'翻译已取消',{busy:count>0,error:!count&&outcome==='error',duration:count?0:3000});
+    setTaskStatus('passage',count?'正在翻译'+(count>1?' · '+count+' 处':''):outcome==='complete'?'翻译完成':outcome==='error'?'翻译未完成，未确认内容已撤下':'翻译已取消',{busy:count>0,error:!count&&outcome==='error',duration:count?0:3000});
   }
   const capture={timer:0,generation:0,session:null,lastInput:0,lastTick:0,elapsed:0,total:0,sequence:0,sent:new Set(),visible:new Map(),blocks:new WeakMap(),busy:false,summary:false};
   function historyInteraction(event){if(automatic()&&event.isTrusted)capture.lastInput=Date.now();}
@@ -196,7 +168,7 @@
   function sentenceColor(block,role){const rgb=getComputedStyle(block).color.match(/[\d.]+/g)?.slice(0,3).map(Number)||[32,32,32];return structureColors[structureRoles[role][1]][(.2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2])>145?1:0];}
 
   function removeStructureCard(){sentenceGroups.card?.host.remove();sentenceGroups.card=null;}
-  function removeStructureControl(){setPageStatus('structure',null);removeStructureCard();sentenceGroups.hits=[];}
+  function removeStructureControl(){setTaskStatus('structure',null);removeStructureCard();sentenceGroups.hits=[];}
   function updateStructureCard(){
     const ui=sentenceGroups.card;if(!ui)return;const entry=sentenceGroups.entries.get(ui.key);if(!entry||!validSentenceEntry(entry)){removeStructureCard();return;}
     if(ui.signature===entry.id)return;ui.signature=entry.id;ui.tree.replaceChildren();
@@ -205,10 +177,10 @@
   function updateStructureControl(){
     if(lookupBusy())return;
     if(!sentenceGroups.enabled||!state.enabled||state.emergency){removeStructureControl();return;}
-    if(state.settings.assistanceMode==='on-demand'){setPageStatus('structure',null);updateStructureCard();return;}
+    if(state.settings.assistanceMode==='on-demand'){setTaskStatus('structure',null);updateStructureCard();return;}
     const paused=state.paused||document.visibilityState!=='visible',busy=sentenceGroups.status==='analyzing'||sentenceGroups.status==='queued';
     const error=Boolean(sentenceGroups.error)||!state.providerConfigured,copy=sentenceGroups.error?'阅读解构未完成 · '+sentenceGroups.error:!state.providerConfigured?'请先连接服务，再开启阅读解构':!paused&&busy?'正在解构正文':null;
-    setPageStatus('structure',copy,{error,busy:busy&&!paused});updateStructureCard();
+    setTaskStatus('structure',copy,{error,busy:busy&&!paused});updateStructureCard();
   }
   function applySentenceDensity(density){if(!['coarse','medium','fine'].includes(density))throw new Error('无效的解构粒度。');sentenceGroups.density=density;renderSentenceGroups();return status();}
     function applySentenceLineStyle(lineStyle){if(!['solid','dashed','dotted','wavy'].includes(lineStyle))throw new Error('无效的下划线样式。');sentenceGroups.lineStyle=lineStyle;renderSentenceGroups();return status();}
@@ -299,7 +271,7 @@
   }
   async function setSentenceGroups(enabled){
     if(typeof enabled!=='boolean')throw new Error('无效的阅读解构设置。');
-    if(enabled)pageStatus.dismissed.delete('structure');
+    if(enabled);
     if(enabled){const mode=await request('SENTENCE_GROUPS_GET');sentenceGroups.density=mode.density||'medium';sentenceGroups.lineStyle=mode.lineStyle||'solid';if(!state.providerConfigured){const snapshot=await request('STATE_GET');state.settings=snapshot.settings;state.providerConfigured=Boolean(snapshot.providerConfigured);}}
     if(enabled&&!state.providerConfigured){sentenceGroups.enabled=false;stopSentenceGroups(true);throw new Error('辅助服务尚未连接，无法开启阅读解构。');}
     if(enabled&&!state.enabled)await setManualEnabled(true);sentenceGroups.enabled=enabled;if(!enabled){stopSentenceGroups(true);return status();}
@@ -473,7 +445,7 @@
       if(!blocks)state.knownBlocks.set(record.target.wordId,blocks=new Set());
       blocks.add(record.block);
       if(record.inlineRequestId){
-        if(lookup.inlineRequestId===record.inlineRequestId)setPageStatus('lookup',null);
+        if(lookup.inlineRequestId===record.inlineRequestId)setTaskStatus('lookup',null);
         record.inlineRequestId=null;
       }
       const requestedIndex=requestedRecords.indexOf(record);
@@ -498,13 +470,21 @@
     const shadow=host.attachShadow({mode:'closed'}),style=document.createElement('style'),panel=document.createElement('div'),message=document.createElement('span'),undo=document.createElement('button');
     style.textContent=globalThis.ShisuiDesign.cssFor(':host')+':host{font:var(--type-control)/var(--leading-control) var(--sans);color:var(--ink)}div{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);border:1px solid var(--line);border-radius:var(--radius-panel);background:var(--surface);box-shadow:var(--shadow-high)}span{min-width:0;overflow-wrap:anywhere}button{flex:none;min-height:32px;padding:var(--space-1) var(--space-3);border:1px solid var(--line);border-radius:var(--radius-pill);background:var(--surface);color:var(--accent);font:var(--weight-medium) var(--type-control)/var(--leading-control) var(--sans);cursor:pointer}button:hover{background:var(--accent-soft)}button:focus-visible{outline:var(--focus-ring);outline-offset:var(--focus-offset)}button:disabled{color:var(--on-action-disabled);background:var(--action-disabled)}';
     message.textContent='已认识“'+term+'”，以后不再自动提示。';undo.type='button';undo.textContent='撤销';
-    undo.onclick=async()=>{undo.disabled=true;try{await request('WORD_PREFERENCE_SET',{wordId,known:false});host.remove();setPageStatus('known','已恢复“'+term+'”的自动提示。',{duration:3000});}catch(error){undo.disabled=false;message.textContent='恢复失败：'+error.message;}};
-    panel.append(createBrandIcon(),message,undo);shadow.append(style,panel);uiMountRoot().append(host);setTimeout(()=>host.remove(),8000);
+    const generation=state.generation,page=location.href,surface=readingScope(),current=()=>isAlive()&&host.isConnected&&generation===state.generation&&page===location.href&&surface===readingScope()&&(!state.paused||state.reader);let timer=0;
+    const dismiss=document.createElement('button');dismiss.type='button';dismiss.textContent='关闭';dismiss.onclick=()=>{clearTimeout(timer);host.remove();};
+    undo.onclick=async()=>{if(!current()||undo.disabled)return;clearTimeout(timer);undo.disabled=true;setTaskStatus('known',null);try{await request('WORD_PREFERENCE_SET',{wordId,known:false});if(!current())return;message.textContent='已恢复“'+term+'”的自动提示。';message.setAttribute('role','status');message.style.removeProperty('color');undo.remove();timer=setTimeout(()=>host.remove(),3000);}catch(error){if(!current())return;undo.disabled=false;message.textContent='恢复失败：'+(error.message||'请重试。');message.setAttribute('role','alert');message.style.color='var(--danger)';setTaskStatus('known',message.textContent,{error:true});}};
+    panel.append(createBrandIcon(),message,undo,dismiss);shadow.append(style,panel);uiMountRoot().append(host);timer=setTimeout(()=>host.remove(),8000);
   }
   async function setWordKnown(wordId,term,button){
-    if(!wordId)return;button.disabled=true;state.knownWords.add(wordId);
-    try{const saved=await request('WORD_PREFERENCE_SET',{wordId,known:true});removeKnownWordAnnotations(new Set([wordId]));showKnownFeedback(saved.wordId||wordId,saved.term||term);}
-    catch(error){state.knownWords.delete(wordId);button.disabled=false;setPageStatus('known','未能保存“已认识”：'+error.message,{error:true,duration:5000});}
+    if(!wordId||button.disabled)return;
+    const generation=state.generation,page=location.href,surface=readingScope(),view=state.card?.known===button?state.card:null,record=state.records.find(item=>item.knownAction===button),block=view?.target.block||record?.block,sourceText=view?.target.sourceText||record?.sourceText;
+    let closed=false;const onClose=view?.target.onClose,knownClose=()=>{if(!state.knownWords.has(wordId))closed=true;onClose?.();};if(view)view.target.onClose=knownClose;
+    const scopeCurrent=()=>isAlive()&&!closed&&generation===state.generation&&page===location.href&&surface===readingScope()&&(!state.paused||state.reader)&&(block?block.isConnected&&inReadingSurface(block)&&blockText(block)===sourceText:view&&validTarget(view.target));
+    const current=()=>scopeCurrent()&&button.isConnected&&(view?state.card===view&&validTarget(view.target):record&&record.wrapper?.isConnected);
+    button.parentElement?.querySelector('['+OWN+'="known-error"]')?.remove();button.disabled=true;setTaskStatus('known',null);
+    try{const saved=await request('WORD_PREFERENCE_SET',{wordId,known:true});if(!scopeCurrent())return;state.knownWords.add(wordId);removeKnownWordAnnotations(new Set([wordId]));showKnownFeedback(saved.wordId||wordId,saved.term||term);}
+    catch(error){if(!current())return;button.disabled=false;const message='未能保存“已认识”：'+(error.message||'请重试。'),notice=document.createElement('aside');notice.setAttribute(OWN,'known-error');notice.setAttribute('role','alert');notice.style.cssText='display:block;max-width:320px;padding:var(--space-2);border:1px solid var(--danger-line);border-radius:var(--radius-control);background:var(--danger-soft);color:var(--danger);font:var(--type-support)/var(--leading-support) var(--sans);overflow-wrap:anywhere';notice.textContent=message;button.after(notice);if(view)positionCard(view);setTaskStatus('known',message,{error:true});}
+    finally{if(view?.target.onClose===knownClose)view.target.onClose=onClose;}
   }
   function attachKnownAction(record){
     if(record.knownAction||!record.wrapper||!record.target.wordId)return;
@@ -550,12 +530,12 @@
     const stage=pending?'待确认 · 尚未确认当前语境':record.stage==='hint'?'提示态 · 显示顶部释义':record.stage==='mark'?'标记态 · 仅标记原词':'静默态 · 不主动展示',title=stage+' · '+lookupLabel()+'获取帮助';
     for(const mark of record.marks){mark.dataset.shisuiStage=record.stage;if(supportStage)mark.dataset.shisuiSupportStage=supportStage;else delete mark.dataset.shisuiSupportStage;mark.title=title;}
   }
-    function unwrapRecord(record) { const block=record.block;record.knownAction?.remove(); record.knownAction=null; record.hint?.remove();record.hint=null;if(record.wrapper?.isConnected)record.wrapper.replaceWith(...record.wrapper.childNodes);record.wrapper=null;for(const mark of record.marks||[])if(mark.isConnected)mark.replaceWith(...mark.childNodes);record.since=0;if(block?.isConnected)layoutRecordHints(block); }
+    function unwrapRecord(record) { const block=record.block;record.wrapper?.querySelectorAll('[data-shisui-ui="known-error"]').forEach(node=>node.remove());record.knownAction?.remove(); record.knownAction=null; record.hint?.remove();record.hint=null;if(record.wrapper?.isConnected)record.wrapper.replaceWith(...record.wrapper.childNodes);record.wrapper=null;for(const mark of record.marks||[])if(mark.isConnected)mark.replaceWith(...mark.childNodes);record.since=0;if(block?.isConnected)layoutRecordHints(block); }
   function clearAutomatic(preserveContent=false) {
     state.automaticReady=false;
     for(const [id,blocks]of state.knownBlocks){for(const block of blocks)if(!preserveContent||!block.isConnected)blocks.delete(block);if(!blocks.size)state.knownBlocks.delete(id);}
     clearTimeout(state.rebuildTimer);state.rebuildTimer=0;
-    state.refreshing++;setPageStatus('support',null);
+    state.refreshing++;setTaskStatus('support',null);
     state.intersections?.disconnect(); state.intersections = null;
     const texts=preserveContent?new Map():null;
     state.records=state.records.filter(record=>{
@@ -731,7 +711,7 @@
   async function refreshViewport() {
     if (lookupBusy() || !automatic() || !state.automaticReady || !state.root?.isConnected || !inReadingSurface(state.root)) return;
     const view=viewportRect(),scroll=readerScroll(),near=state.blocks.filter(block=>inReadingSurface(block)&&isVisible(block)&&block.getBoundingClientRect().bottom>view.top-(scroll?view.height*2:0)&&block.getBoundingClientRect().top<view.bottom+(scroll?view.height*2:view.height)),visible=near.filter(inViewport),key=visible.map(blockId).join(',')+':'+Math.floor((scroll?.scrollTop??scrollY)/Math.max(view.height,1));
-    if(key===state.windowKey)return;state.windowKey=key;const viewport=++state.viewportGeneration,generation=state.generation;state.refreshing++;setPageStatus('support',null);
+    if(key===state.windowKey)return;state.windowKey=key;const viewport=++state.viewportGeneration,generation=state.generation;state.refreshing++;setTaskStatus('support',null);
     // Leaving the viewport does not revoke an already displayed annotation.
     const blocks=[...visible,...near.filter(block=>!visible.includes(block))].filter(block=>!state.processed.has(blockId(block)));if(!blocks.length)return;
     let receivedResult=null,refresh=0;
@@ -742,17 +722,17 @@
       if(lookupBusy())await waitForLookupIdle();
       if(!automatic()||generation!==state.generation||viewport!==state.viewportGeneration||!built.batch.length)return;
       if(state.providerConfigured){
-        refresh=++state.refreshing;state.failed=false;setPageStatus('support','正在准备阅读提示',{busy:true});
+        refresh=++state.refreshing;state.failed=false;setTaskStatus('support','正在准备阅读提示',{busy:true});
         const result=await request('SUPPORT_BATCH',{items:built.batch.map(({id,sentence,domain,candidates})=>({id,sentence,domain,candidates})),article});receivedResult=result;
         const values=validateBatch(result,built.batch);for(const {target}of values)if(target)target.preparationArticle=article;
-        if(!automatic()||generation!==state.generation||viewport!==state.viewportGeneration){reportResult(result,'cancelled');if(refresh===state.refreshing)setPageStatus('support',null);return;}
+        if(!automatic()||generation!==state.generation||viewport!==state.viewportGeneration){reportResult(result,'cancelled');if(refresh===state.refreshing)setTaskStatus('support',null);return;}
         let personal=[];try{personal=await preparedFor(built.batch,article);}catch{}
         if(lookupBusy())await waitForLookupIdle();
-        if(!automatic()||generation!==state.generation||viewport!==state.viewportGeneration){reportResult(result,'cancelled');if(refresh===state.refreshing)setPageStatus('support',null);return;}
-        allocate(values.filter(({job})=>job.visible));allocatePrepared(personal);reportResult(result,'ok');if(refresh===state.refreshing)setPageStatus('support',null);
+        if(!automatic()||generation!==state.generation||viewport!==state.viewportGeneration){reportResult(result,'cancelled');if(refresh===state.refreshing)setTaskStatus('support',null);return;}
+        allocate(values.filter(({job})=>job.visible));allocatePrepared(personal);reportResult(result,'ok');if(refresh===state.refreshing)setTaskStatus('support',null);
         for(const {job}of values)if(job.visible)state.processed.add(blockId(job.block));
       }
-    }catch(error){reportResult(receivedResult,'error');if(refresh&&refresh===state.refreshing)setPageStatus('support',null);if(generation===state.generation&&viewport===state.viewportGeneration&&state.providerConfigured){state.failed=true;if(refresh&&refresh===state.refreshing)setPageStatus('support','自动提示未生成：'+(error.message||'未知错误')+'。可在运行诊断查看详情。',{error:true,duration:8000});}}
+    }catch(error){reportResult(receivedResult,'error');if(refresh&&refresh===state.refreshing)setTaskStatus('support',null);if(generation===state.generation&&viewport===state.viewportGeneration&&state.providerConfigured){state.failed=true;if(refresh&&refresh===state.refreshing)setTaskStatus('support','自动提示未生成：'+(error.message||'未知错误')+'。可在运行诊断查看详情。',{error:true,duration:8000});}}
   }
   function trackOpportunities() {
     if (!automatic()) { state.records.forEach(record=>record.since=0); return; }
@@ -997,13 +977,25 @@
     const prior=target.support,identity=prior?.senseKey?{wordId:prior.wordId,senseKey:prior.senseKey}:{};
     return prepared?request('PREPARED_ASSIST',{requestId,...command,bypassCache,...identity,article:target.preparationArticle||{key:'',text:'',coverage:'excerpt'}}):request('ASSIST',{requestId,...command,articleKey:target.explicitDisplay||target.sourceKey?'':target.preparationArticle?.key||(state.root?.isConnected?state.article?.key:'')||'',bypassCache,...identity});
   }
+  function localFeedbackTarget(block,anchorRect){
+    if(!isAlive()||document.visibilityState!=='visible'||!block?.isConnected||!inReadingSurface(block))return null;
+    const mapping=textMap(block);let anchor=rangeFor(mapping,0,Math.min(mapping.text.length,200));if(!anchor){anchor=document.createRange();anchor.selectNodeContents(block);anchorRect||=block.getBoundingClientRect();}
+    return {text:anchor.toString(),context:'',kind:'passage',block,sourceText:mapping.text,anchor,anchorRect,generation:state.generation};
+  }
+  function showLocalFeedback(target,message,{busy=false,showSource=true}={}){
+    const view=renderHelpCard(target,message);view.answer.classList.toggle('error',!busy);view.answer.setAttribute('aria-busy',String(busy));view.sentence.hidden=true;view.rescue.hidden=true;view.known.hidden=true;view.wrong.closest('details').hidden=true;
+    if(!showSource)view.card.querySelector('.source-heading').hidden=true;
+    view.retry.hidden=true;positionCard(view);return view;
+  }
   async function assistInline(target,level){
-    closeCard();const record=target.requestedRecord;if(!record||record.inlineRequestId&&state.assistRequestId===record.inlineRequestId)return;
+    const record=target.requestedRecord;if(!record||record.inlineRequestId&&state.assistRequestId===record.inlineRequestId||!validTarget(target))return;
+    const view=showLocalFeedback(target,'正在查词…',{busy:true}),surface=readingScope();
     const requestId=crypto.randomUUID();state.assistRequestId=requestId;record.inlineRequestId=requestId;lookup.inlineRequestId=requestId;
-    const current=()=>state.assistRequestId===requestId&&record.inlineRequestId===requestId&&validTarget(target);
+    const onClose=target.onClose;target.onClose=()=>{target.onClose=onClose;if(lookup.inlineRequestId===requestId)setTaskStatus('lookup',null);onClose?.();};
+    const current=()=>state.assistRequestId===requestId&&record.inlineRequestId===requestId&&state.card===view&&surface===readingScope()&&validTarget(target);
     const cached=record.target.manualAssists?.[level],field=level==='rescue'?'translation':'hint';
-    if(cached?.sense&&cached.source!=='local-reference'&&cached[field]){if(lookupBusy())await waitForLookupIdle();if(!current()){if(record.inlineRequestId===requestId)record.inlineRequestId=null;return;}record.inlineRequestId=null;record.target[field]=cached[field];record.language=level==='rescue'?'zh':'en';record.stage='hint';attachRecordHint(record);record.hint.setAttribute('aria-hidden','false');record.hint.setAttribute('role','note');syncRecordPresentation(record);setPageStatus('lookup',null);return;}
-    setPageStatus('lookup','正在查词',{busy:true});let received=null;
+    if(cached?.sense&&cached.source!=='local-reference'&&cached[field]){if(lookupBusy())await waitForLookupIdle();if(!current()){if(record.inlineRequestId===requestId)record.inlineRequestId=null;if(state.card===view)closeCard();return;}record.inlineRequestId=null;record.target[field]=cached[field];record.language=level==='rescue'?'zh':'en';record.stage='hint';attachRecordHint(record);record.hint.setAttribute('aria-hidden','false');record.hint.setAttribute('role','note');syncRecordPresentation(record);closeCard();setTaskStatus('lookup',null);return;}
+    setTaskStatus('lookup','正在查词',{busy:true});let received=null,confirmed=false;
     try{
       const domain=await resolveTargetDomain(target,current);if(!domain||!current())return;
       const prepared=Boolean(target.prepared?.details?.meaning?.zh&&target.prepared?.details?.sentenceTranslation);
@@ -1014,16 +1006,16 @@
       if(result.source==='local-reference'||!result.sense?.trim())throw new Error('仅有旧参考义，尚未确认当前语境；请使用解释卡片查看。');
       record.target[field]=answer;record.language=level==='rescue'?'zh':'en';record.stage='hint';attachRecordHint(record);target.anchor=record.range.cloneRange();syncRecordPresentation(record);
       record.hint.setAttribute('aria-hidden','false');record.hint.setAttribute('role','note');
-      if(!current()){reportResult(result,'cancelled');return;}reportResult(result,'ok');
+      if(!current()){reportResult(result,'cancelled');return;}confirmed=true;reportResult(result,'ok');
       const stored={...result};record.target.manualAssists={...(record.target.manualAssists||{}),[level]:stored};
       let support=result.support;
       if(result.source==='prepared'&&!support)await request('HISTORY_COMMIT',{requestId});
       else if(result.source==='provider'||result.source==='prepared'||result.source==='cache'){const adopted=await request('ASSIST_COMMIT',{requestId});support=adopted.support||support;}
       if(!current())return;stored.support=support;record.target.manualSupport=support;
       if(support){Object.assign(record.target,support);state.assisted.add(identity(support));syncRecordPresentation(record);}
-      if(lookup.inlineRequestId===requestId)setPageStatus('lookup',null);
-    }catch(error){reportResult(received,'error');if(current()&&lookup.inlineRequestId===requestId)setPageStatus('lookup',error.message,{error:true});}
-    finally{if(!validTarget(target)&&lookup.inlineRequestId===requestId)setPageStatus('lookup',null);if(record.inlineRequestId===requestId)record.inlineRequestId=null;}
+      if(lookup.inlineRequestId===requestId)setTaskStatus('lookup',null);closeCard();
+    }catch(error){reportResult(received,current()?'error':'cancelled');if(current()&&lookup.inlineRequestId===requestId){const message=error.message||'查词失败，请重试。';view.answer.textContent=message;view.answer.classList.add('error');view.answer.setAttribute('aria-busy','false');view.note.textContent=confirmed?'已确认词注保留。':'';view.retry.hidden=false;view.retry.onclick=()=>{if(state.card===view&&surface===readingScope()&&validTarget(target))void assistInline(target,level);};positionCard(view);setTaskStatus('lookup',message,{error:true});}}
+    finally{if(!current()&&lookup.inlineRequestId===requestId)setTaskStatus('lookup',null);if(state.card===view&&(surface!==readingScope()||!validTarget(target)))closeCard();if(record.inlineRequestId===requestId)record.inlineRequestId=null;}
   }
   async function assist(view,level,bypassCache=false,detail='brief'){
     if(state.card!==view||!validTarget(view.target))return;
@@ -1034,7 +1026,6 @@
     const record=view.target.requestedRecord,prior=view.target.support;
     const current=()=>state.assistRequestId===requestId&&view.requestId===requestId&&validTarget(view.target)&&(state.card===view||Boolean(record?.manual&&record.marks.some(mark=>mark.isConnected)));
     const cardCurrent=()=>state.card===view&&current();
-    const domain=await resolveTargetDomain(view.target,current);if(!domain||!current())return;
     const manualCached=!bypassCache&&detail==='brief'?view.target.manualAssists?.[level]||null:!bypassCache&&detail==='full'?view.fullResult:null;
     const cached=manualCached||(!bypassCache?view.target.prepared:null),cachedAnswer=cached?.[level==='rescue'?'translation':'hint'];
     const cachedReference=cached?.source==='local-reference'||(detail==='full'&&(!cached?.details?.meaning||typeof cached?.details?.sentenceTranslation!=='string'||!cached.details.sentenceTranslation.trim()));
@@ -1048,6 +1039,8 @@
     if(prior?.senseKey){state.assisted.add(identity(prior));if(record){attachRecordHint(record);record.stage='hint';if(state.card!==view)view.target.anchor=record.range.cloneRange();}}
     let receivedResult=null;
     try{
+      if(cardCurrent())setTaskStatus('lookup','正在获取帮助',{busy:true});
+      const domain=await resolveTargetDomain(view.target,current);if(!domain||!current())return;
       const command={text:view.target.text,context:view.target.context,domain,kind:view.target.kind,level,detail};
       const previewPromise=!prepared&&!bypassCache?request('ASSIST_PREVIEW',command).catch(()=>null):Promise.resolve(null);
       const resultPromise=requestTargetAssistance(view.target,command,requestId,bypassCache,prepared);
@@ -1059,7 +1052,7 @@
       });
       const result=await resultPromise;receivedResult=result;fullFinished=true;
       if(lookupBusy())await waitForExplicitLookup();
-      if(!current()){reportResult(result,'cancelled');return;}view.assistFinished=true;const answer=level==='rescue'?result.translation:result.hint;
+      if(!current()){reportResult(result,'cancelled');return;}view.assistFinished=true;if(cardCurrent())setTaskStatus('lookup',null);const answer=level==='rescue'?result.translation:result.hint;
       if(answer===null){
         view.sentenceTranslation.textContent='上下文不足，未能获取本句翻译。';
         if(cardCurrent()){view.progressBackup=null;view.hasUnconfirmedProgress=false;view.confirmedDisplayed=false;view.explanation.replaceChildren();view.answer.textContent='上下文不足，请选择包含该表达的句子';view.note.textContent=result.cacheNotice||result.referenceNotice||'';reportResult(result,'ok');}
@@ -1086,7 +1079,7 @@
       if(record&&view.support){Object.assign(record.target,view.support);syncRecordPresentation(record);}
       if(cardCurrent()&&view.knownWordId())view.known.hidden=false;
       if(detail==='brief'&&confirmed&&prepared){if(cardCurrent())view.refreshPreparedOnClose=true;else void refreshPreparedNow().catch(()=>{});}if(detail==='brief'&&view.pendingDetails&&cardCurrent()&&view.sentence.open)void expandDetails(view);
-    }catch(error){reportResult(receivedResult,'error');fullFinished=true;if(cardCurrent()){view.assistFinished=true;if(view.hasUnconfirmedProgress)restoreProgressBackup(view);if(!view.confirmedDisplayed)view.sentenceTranslation.textContent='未能获取本句翻译，请重试。';if(view.confirmedDisplayed||view.referenceDisplayed)view.note.textContent=[view.note.textContent,error.message,view.confirmedDisplayed?'已确认内容保留；可重新请求解释。':'旧参考义保留，尚未按当前语境确认。'].filter(Boolean).join(' ');else{view.explanation.replaceChildren();view.answer.textContent=error.message;view.answer.classList.add('error');}view.retry.textContent=prepared?'重新请求解释':'重试';view.retry.hidden=view.retries>=2;view.repair.hidden=false;positionCard(view);}}
+    }catch(error){reportResult(receivedResult,'error');fullFinished=true;if(cardCurrent()){setTaskStatus('lookup',error.message||'获取帮助失败，请重试。',{error:true});view.assistFinished=true;if(view.hasUnconfirmedProgress)restoreProgressBackup(view);if(!view.confirmedDisplayed)view.sentenceTranslation.textContent='未能获取本句翻译，请重试。';if(view.confirmedDisplayed||view.referenceDisplayed)view.note.textContent=[view.note.textContent,error.message,view.confirmedDisplayed?'已确认内容保留；可重新请求解释。':'旧参考义保留，尚未按当前语境确认。'].filter(Boolean).join(' ');else{view.explanation.replaceChildren();view.answer.textContent=error.message;view.answer.classList.add('error');}view.retry.textContent=prepared?'重新请求解释':'重试';view.retry.hidden=view.retries>=2;view.repair.hidden=false;positionCard(view);}}
   }
   function markRequestedTarget(target){
       if(target.sourceKey||target.explicitDisplay||target.kind==='passage')return;
@@ -1129,9 +1122,10 @@
     const pending=[...state.passageRequests].find(view=>view.panel===previous);if(pending){pending.cancelled=true;state.passageRequests.delete(pending);updatePassageStatus();}previous.remove();return true;
   }
   function translateNavigationLink(link){
+    if(!link?.isConnected||!inReadingSurface(link))return;
     if(clearNavigationTranslation(link))return;
     const range=document.createRange();range.selectNodeContents(link);const target=passageTarget(range);
-    if(!target||target.kind!=='navigation'||target.error){setPageStatus('lookup',target?.error||'此链接没有可翻译的英文导航文字。',{error:true});return;}
+    if(!target||target.kind!=='navigation'||target.error){const message=target?.error||'此链接没有可翻译的英文导航文字。',feedback=localFeedbackTarget(link);if(feedback){showLocalFeedback(feedback,message,{showSource:false});setTaskStatus('lookup',message,{error:true});}return;}
     void translatePassage(target);
   }
   function clearLookupPreview(){cancelAnimationFrame(lookup.frame);lookup.frame=0;lookup.preview?.remove();lookup.preview=null;}
@@ -1177,7 +1171,7 @@
     nav.record=candidates[index];
     nav.record.marks[0].scrollIntoView({block:'center'});
     flashNavRecord(nav.record);
-    setPageStatus('lookup','已选中标记，按 '+lookupKey()+' 打开解释',{duration:1500});
+    setTaskStatus('lookup','已选中标记，按 '+lookupKey()+' 打开解释',{duration:1500});
   }
   function openNavRecord(){
     const record=nav.record;
@@ -1219,15 +1213,16 @@
     if(!lookup.held||!state.enabled&&!state.reader||state.paused&&!state.reader||event.shiftKey||event.ctrlKey||event.metaKey||event.altKey||lookupEditing(event)&&!explicitLookupElement(event)||!lookupElement(event)&&!explicitLookupElement(event))return;
     nav.record=null;
     // Own the whole pointer gesture before range validation, DOM changes, or service work.
-    consumeLookup(event);clearLookupPreview();lookup.press={pointerId:event.pointerId,target:null,error:'',cancelled:false};
+    consumeLookup(event);clearLookupPreview();lookup.press={pointerId:event.pointerId,target:null,error:'',cancelled:false,generation:state.generation,page:location.href,surface:readingScope()};
     try{lookup.press.target=pointHelpTarget(event,true);}catch(error){lookup.press.error=error.message;}
   }
   function onHelpPointerUp(event){if(event.isTrusted&&lookup.press?.pointerId===event.pointerId)consumeLookup(event);}
   function onHelpClick(event){
     if(!event.isTrusted||event.button!==0||!event.detail||!lookup.press||event.pointerId!==undefined&&event.pointerId!==lookup.press.pointerId)return;
-    const press=lookup.press;lookup.press=null;consumeLookup(event);deferLookupUpdates();if(press.cancelled)return;
+    const press=lookup.press;lookup.press=null;consumeLookup(event);deferLookupUpdates();if(press.cancelled||press.generation!==state.generation||press.page!==location.href||press.surface!==readingScope()||!isAlive()||state.paused&&!state.reader||!state.enabled&&!state.reader)return;
     removeSelectionTool();getSelection()?.removeAllRanges();
-    if(press.target){const link=press.target.displayLink?.element;if(link?.closest('nav,[role="navigation"]'))translateNavigationLink(link);else assistTarget(press.target);}else setPageStatus('lookup',press.error,{error:true,duration:3000});
+    if(press.target){const link=press.target.displayLink?.element;if(link?.closest('nav,[role="navigation"]'))translateNavigationLink(link);else assistTarget(press.target);}
+    else{const block=readingBlockFor(event.target)||explicitLookupElement(event),target=localFeedbackTarget(block,{left:event.clientX,bottom:event.clientY});if(target){const message=press.error||'请点击英文词语。';showLocalFeedback(target,message,{showSource:false});setTaskStatus('lookup',message,{error:true,duration:3000});}}
   }
   function onLookupBlur(event){if(event.target===window){resetLookup();lookup.point=null;}}
   function onLookupFocus(event){if(lookupEditing(event))resetLookup();}
@@ -1338,7 +1333,7 @@
     }
     const passage=target.kind==='passage',panel=document.createElement('details');panel.open=true;panel.setAttribute(OWN,'passage-translation');panel.lang='zh-CN';panel.setAttribute('aria-label',passage?'本段中文翻译':'所选范围中文翻译');
     const summary=document.createElement('summary'),brand=createBrandLabel(passage?'本段译文':'所选译文');brand.style.color='inherit';summary.append(brand);
-    const body=document.createElement('div');body.setAttribute('aria-live','polite');body.setAttribute('aria-busy','true');
+    const body=document.createElement('div');body.setAttribute('aria-live','polite');body.setAttribute('aria-busy','true');body.textContent='翻译中…';
     const cancel=document.createElement('button');cancel.type='button';cancel.textContent='取消';cancel.style.cssText='margin-top:var(--space-2);min-height:32px;padding:var(--space-1) var(--space-3);border:1px solid var(--line);border-radius:var(--radius-pill);background:transparent;color:var(--muted);cursor:pointer';
     panel.append(summary,body,cancel);insertRelatedTranslation(target.block,panel);inheritEmergencyStyle(target.block,panel);passageSources.set(panel,target);return {panel,body,cancel};
   }
@@ -1346,11 +1341,11 @@
     if(!Array.isArray(rows)||!rows.length||rows.length>view.items.length||complete&&rows.length!==view.items.length)return false;
     const values=new Map();for(const item of rows){if(!item||typeof item!=='object'||Object.keys(item).length!==2||!view.items.some(source=>source.id===item.id)||values.has(item.id)||typeof item.translation!=='string'||!item.translation.trim()||item.translation.length>8000||!item.translation.isWellFormed()||complete&&(item.translation!==item.translation.trim()||!/[\u3400-\u9fff\uf900-\ufaff]/u.test(item.translation)))return false;values.set(item.id,item.translation);}
     if(view.target.kind==='navigation'){view.body.textContent=values.get(view.items[0].id)||'翻译中…';return true;}
+    if(view.parts.size===0)view.body.textContent='';
     let next=null;for(let index=view.items.length-1;index>=0;index--){const id=view.items[index].id,value=values.get(id);let node=view.parts.get(id);if(value!==undefined){if(!node){node=document.createElement('p');view.parts.set(id,node);}if(node.textContent!==value)node.textContent=value;}if(node){if(node.parentNode!==view.body||node.nextSibling!==next)view.body.insertBefore(node,next);next=node;}}
     return true;
   }
   async function translatePassage(target){
-    pageStatus.dismissed.delete('passage');
     const requestId=crypto.randomUUID(),items=target.chunks.map((text,index)=>({id:'p'+(index+1),text})),view={requestId,target,items,parts:new Map(),cancelled:false,finished:false,...passagePanel(target)};state.passageRequests.add(view);updatePassageStatus();
     if(view.cancel)view.cancel.onclick=event=>{if(!event.isTrusted)return;view.cancelled=true;if(state.passageRequests.delete(view))updatePassageStatus();view.panel.remove();};
     let receivedResult=null,outcome='cancelled';
@@ -1366,19 +1361,24 @@
   function cancelPassageRequests(remove=true,preserveContent=false){
     removeSelectionTool();let changed=false;
     for(const view of state.passageRequests){if(preserveContent&&validPassageTarget(view.target))continue;view.cancelled=true;state.passageRequests.delete(view);changed=true;}
-    if(!preserveContent)setPageStatus('passage',null);else if(changed)updatePassageStatus();
+    if(!preserveContent)setTaskStatus('passage',null);else if(changed)updatePassageStatus();
     if(remove)for(const node of document.querySelectorAll('['+OWN+'="passage-translation"]')){const target=passageSources.get(node);if(!preserveContent||!target||!validPassageTarget(target))node.remove();}
   }
   async function decomposeSelection(target,x,y){
+    if(!sentenceGroups.enabled||!validPassageTarget(target))return;
     const part=target.blocks[0],sentence=part.text.trim(),start=part.start+part.text.indexOf(sentence);
     const job={id:'g'+(++nextSentence),key:blockId(part.block)+':'+start+':'+sentence,block:part.block,start,end:start+sentence.length,sentence,sourceText:part.sourceText};
-    const generation=sentenceGroups.generation,page=location.href,surface=readingScope();
+    const generation=sentenceGroups.generation,page=location.href,surface=readingScope(),feedback={text:part.text,context:'',kind:'passage',block:part.block,sourceText:part.sourceText,anchor:part.range.cloneRange(),generation:state.generation};
+    const view=showLocalFeedback(feedback,'正在解构所选句子…',{busy:true}),requestId=crypto.randomUUID();state.assistRequestId=requestId;
+    const current=()=>isAlive()&&document.visibilityState==='visible'&&state.card===view&&state.assistRequestId===requestId&&sentenceGroups.enabled&&generation===sentenceGroups.generation&&page===location.href&&surface===readingScope()&&validPassageTarget(target)&&validSentenceEntry(job);
+    feedback.onClose=()=>{if(state.assistRequestId===requestId)setTaskStatus('lookup',null);};setTaskStatus('lookup','正在解构所选句子',{busy:true});let received=null;
     try{
-      const result=await request('SENTENCE_GROUPS_BATCH',{items:[{id:job.id,sentence}],explicit:true});
-      if(!sentenceGroups.enabled||generation!==sentenceGroups.generation||page!==location.href||surface!==readingScope()||!validPassageTarget(target)||!validSentenceEntry(job)){reportResult(result,'cancelled');return;}
-      const item=result?.items?.[0];if(result.items.length!==1||!validSentenceGroups(item,job))throw new Error('阅读解构范围无效。');
-      sentenceGroups.entries.set(job.key,{...job,groups:item.groups});reportResult(result,'ok');removeStructureCard();openStructureCard(job.key,x,y);
-    }catch(error){setPageStatus('structure',error.message||'阅读解构失败。',{error:true});}
+      const result=await request('SENTENCE_GROUPS_BATCH',{items:[{id:job.id,sentence}],explicit:true});received=result;
+      if(!current()){reportResult(result,'cancelled');return;}
+      const item=result?.items?.[0];if(result?.items?.length!==1||!validSentenceGroups(item,job))throw new Error('阅读解构范围无效。');
+      sentenceGroups.entries.set(job.key,{...job,groups:item.groups});reportResult(result,'ok');closeCard();removeStructureCard();openStructureCard(job.key,x,y);
+    }catch(error){reportResult(received,current()?'error':'cancelled');if(current()){const message=error.message||'阅读解构失败。';view.answer.textContent=message;view.answer.classList.add('error');view.answer.setAttribute('aria-busy','false');view.retry.hidden=false;view.retry.onclick=()=>{if(current())void decomposeSelection(target,x,y);};positionCard(view);setTaskStatus('lookup',message,{error:true});}}
+    finally{if(state.card===view&&!current())closeCard();}
   }
   function showPassageAction(event){
     if(event.type==='keyup'&&!SELECTION_KEYS.has(event.key)&&!((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a'))return;
@@ -1463,16 +1463,16 @@
     cancelAnimationFrame(session.frame);session.frame=0;session.intersections?.disconnect();session.scrollTarget?.removeEventListener('scroll',session.onScroll,true);window.removeEventListener('resize',session.onScroll);clearTimeout(session.scanTimer);session.contentObserver?.disconnect();session.styleObserver?.disconnect();cancelAnimationFrame(session.styleFrame);window.removeEventListener('resize',session.syncStyles);document.removeEventListener('load',session.onStyleLoad,true);session.colorScheme?.removeEventListener('change',session.syncStyles);
   }
   function finishEmergency(remove=true,notify=true) {
-    const session=state.emergency;if(!session){if(remove){removeEmergencyTranslations();setPageStatus('emergency',null);}return;}
+    const session=state.emergency;if(!session){if(remove){removeEmergencyTranslations();setTaskStatus('emergency',null);}return;}
     session.active=false;session.generation++;session.phase='stopped';
     for(const unit of session.units)if(unit.state==='translating')unit.state='queued';
     if(notify&&session.token)void request('EMERGENCY_END',{token:session.token}).catch(()=>{});session.token='';
-    if(remove){stopEmergencyObservers(session);removeEmergencyTranslations(session.root);setPageStatus('emergency',null);state.emergency=null;if(notify)queueMicrotask(()=>{if(automatic())void rebuild();scheduleSentenceScan(0);});}
+    if(remove){stopEmergencyObservers(session);removeEmergencyTranslations(session.root);setTaskStatus('emergency',null);state.emergency=null;if(notify)queueMicrotask(()=>{if(automatic())void rebuild();scheduleSentenceScan(0);});}
     else updateEmergencyStatus(session);
   }
   function suspendPageEmergency(){
     if(!state.emergency)return null;
-    finishEmergency(false,true);const session=state.emergency;stopEmergencyObservers(session);session.near.clear();state.emergency=null;setPageStatus('emergency',null);return session;
+    finishEmergency(false,true);const session=state.emergency;stopEmergencyObservers(session);session.near.clear();state.emergency=null;setTaskStatus('emergency',null);return session;
   }
   function restorePageEmergency(session){
     if(!session)return;
@@ -1485,7 +1485,7 @@
     result.phase=!session.active?session.phase:session.running||session.units.some(unit=>unit.state==='queued'||unit.state==='translating')?'translating':result.failed?'partial':result.pending?'waiting':'complete';if(session.error)result.error=session.error;return result;
   }
   function updateEmergencyStatus(session){
-    if(state.emergency!==session)return;const value=emergencyStatus();setPageStatus('emergency','已译 '+value.completed+' / 已识别 '+value.total+' 段'+(value.failed?' · 失败 '+value.failed:'')+(value.pending?' · 待阅读 '+value.pending:'')+(value.skipped?' · 跳过 '+value.skipped:'')+(session.cacheHits?' · 缓存 '+session.cacheHits:'')+(!session.active?' · '+(session.error||'已停止'):''),{busy:value.phase==='translating',error:value.phase==='error'});
+    if(state.emergency!==session)return;const value=emergencyStatus();setTaskStatus('emergency','已译 '+value.completed+' / 已识别 '+value.total+' 段'+(value.failed?' · 失败 '+value.failed:'')+(value.pending?' · 待阅读 '+value.pending:'')+(value.skipped?' · 跳过 '+value.skipped:'')+(session.cacheHits?' · 缓存 '+session.cacheHits:'')+(!session.active?' · '+(session.error||'已停止'):''),{busy:value.phase==='translating',error:value.phase==='error'});
   }
   function retryEmergency(unit){
     const session=state.emergency;if(!session?.active)return status();for(const target of unit?[unit]:session.units){if(target.state!=='failed')continue;target.state='deferred';session.containers.get(target)?.error?.remove();const entry=session.containers.get(target);if(entry)entry.error=null;}void runEmergency(session);return status();
@@ -1686,7 +1686,7 @@
     state.card&&(state.card.refreshPreparedOnClose=false);closeCard();cancelPassageRequests(true);removeStructureCard();stopSentenceGroups(false);
     sentenceGroups.root=null;sentenceGroups.entries.clear();sentenceGroups.processed.clear();sentenceGroups.failed.clear();
     clearAutomatic();state.root=null;state.blocks=[];state.article=null;state.windowKey='';
-    nav.record=null;nav.flash?.remove();nav.flash=null;document.querySelectorAll('['+OWN+'="known-feedback"]').forEach(node=>node.remove());clearPageStatus();ShisuiReview.hide();getSelection()?.removeAllRanges();
+    nav.record=null;nav.flash?.remove();nav.flash=null;document.querySelectorAll('['+OWN+'="known-feedback"]').forEach(node=>node.remove());clearTaskStatus();ShisuiReview.hide();getSelection()?.removeAllRanges();
   }
   async function translateReader({translate,clearTranslation,notice}){
     if(!state.reader||translate.disabled)return;
@@ -1735,7 +1735,7 @@
   }
   async function enable(snapshot) { resetLookup(); const next=snapshot || await request('STATE_GET');if(!isAlive())return;
   resetLookup(); state.settings = next.settings;state.providerConfigured=Boolean(next.providerConfigured);state.domainResolved=false;state.domain=next.settings.domain!=='auto'?next.settings.domain:'general';state.enabled=true;state.paused=false;await rebuild();mountVideoTool();void startHistoryCapture();scheduleSentenceScan(0);return status(); }
-  function disable() { leaveReader({rebuildPage:false});resetLookup(); stopHistoryCapture();state.enabled=false;state.generation++;state.viewportGeneration++;state.observer?.disconnect();clearAutomatic();closeCard();cancelPassageRequests(true);finishEmergency(true,true);stopSentenceGroups(false);globalThis.ShisuiVideoSubtitles?.unmount();document.getElementById('shisui-content-style')?.remove(); }
+  function disable() { leaveReader({rebuildPage:false});resetLookup(); stopHistoryCapture();state.enabled=false;state.generation++;state.viewportGeneration++;state.observer?.disconnect();clearAutomatic();closeCard();cancelPassageRequests(true);finishEmergency(true,true);stopSentenceGroups(false);globalThis.ShisuiVideoSubtitles?.unmount();document.getElementById('shisui-content-style')?.remove(); clearTaskStatus(); }
   async function setManualEnabled(enabled){await request('PAGE_ACTIVITY_SET',{enabled});state.paused=!enabled;if(!enabled){disable();return status();}state.manual=true;state.videoAllowed=true;return enable();}
   async function refresh() { resetLookup(); const next=await request('STATE_GET'),wasConfigured=state.providerConfigured;if(state.emergency?.active&&!next.emergencyActive)finishEmergency(true,true);resetLookup(); state.knownWords.clear(); state.settings = next.settings;state.siteRule=null;state.siteRuleChecked=false;state.providerConfigured=Boolean(next.providerConfigured);state.domainResolved=false;state.domain=next.settings.domain!=='auto'?next.settings.domain:'general';if(!state.providerConfigured||state.settings.assistanceMode==='on-demand'){stopSentenceGroups(false);sentenceGroups.status=sentenceGroups.enabled?'idle':'off';sentenceGroups.error='';updateStructureControl();}else if(!wasConfigured&&sentenceGroups.enabled){sentenceGroups.generation++;sentenceGroups.status='idle';sentenceGroups.error='';scheduleSentenceScan(0);}if(state.enabled)await rebuild();mountVideoTool();void startHistoryCapture();return status(); }
   async function applyAutomation(message){
@@ -1751,8 +1751,8 @@
     if(state.videoAllowed){if(!state.settings.video){const snapshot=await request('STATE_GET');if(page!==location.href)return status();state.settings=snapshot.settings;}mountVideoTool();}
     scheduleSentenceRender();scheduleSentenceScan(0);return status();
   }
-  function onPageNavigation() { if(state.reader)leaveReader({restorePosition:false,rebuildPage:false});resetLookup(); nav.record=null;nav.flash?.remove();nav.flash=null; if(location.href===state.page)return;const emergencyToken=state.emergency?.token;finishEmergency(true,false);if(emergencyToken)void request('EMERGENCY_END',{token:emergencyToken}).catch(()=>{});stopHistoryCapture();stopSentenceGroups(true);state.page=location.href;state.manual=false;state.domainResolved=false;state.domain=state.settings.domain!=='auto'?state.settings.domain:'general';state.failed=false;state.article=null;state.siteRule=null;state.siteRuleChecked=false;state.assisted.clear();state.seen.clear();globalThis.ShisuiVideoSubtitles?.unmount();void rebuild().then(()=>startHistoryCapture());void restoreSentenceGroups();void ShisuiReview.refresh();void request('AUTO_BOOTSTRAP_CHECK').catch(()=>{}); }
-  function status(){return {enabled:state.enabled,paused:state.paused,domain:state.domain,assistanceMode:state.settings.assistanceMode,providerConfigured:state.providerConfigured,count:state.records.filter(record=>record.stage!=='quiet').length,reader:{active:Boolean(state.reader&&globalThis.ShisuiReader.active())},emergency:emergencyStatus(),sentenceGroups:{enabled:sentenceGroups.enabled,density:sentenceGroups.density,lineStyle:sentenceGroups.lineStyle,status:sentenceGroups.status,error:sentenceGroups.error,processed:sentenceGroups.entries.size}};}
+  function onPageNavigation() { if(state.reader)leaveReader({restorePosition:false,rebuildPage:false});resetLookup(); nav.record=null;nav.flash?.remove();nav.flash=null; if(location.href===state.page)return;const emergencyToken=state.emergency?.token;finishEmergency(true,false);if(emergencyToken)void request('EMERGENCY_END',{token:emergencyToken}).catch(()=>{});stopHistoryCapture();stopSentenceGroups(true);state.page=location.href;state.manual=false;state.domainResolved=false;state.domain=state.settings.domain!=='auto'?state.settings.domain:'general';state.failed=false;state.article=null;state.siteRule=null;state.siteRuleChecked=false;state.assisted.clear();state.seen.clear();globalThis.ShisuiVideoSubtitles?.unmount();void rebuild().then(()=>startHistoryCapture());void restoreSentenceGroups();void ShisuiReview.refresh();void request('AUTO_BOOTSTRAP_CHECK').catch(()=>{}); clearTaskStatus(); }
+  function status(){return {enabled:state.enabled,tasks:taskSnapshot(),paused:state.paused,domain:state.domain,assistanceMode:state.settings.assistanceMode,providerConfigured:state.providerConfigured,count:state.records.filter(record=>record.stage!=='quiet').length,reader:{active:Boolean(state.reader&&globalThis.ShisuiReader.active())},emergency:emergencyStatus(),sentenceGroups:{enabled:sentenceGroups.enabled,density:sentenceGroups.density,lineStyle:sentenceGroups.lineStyle,status:sentenceGroups.status,error:sentenceGroups.error,processed:sentenceGroups.entries.size}}}
   function onRuntimeMessage(message,_sender,respond){
    if(message?.type==='SS_READER_SET'){
      if(_sender?.id!==runtime.id||_sender.url!==runtime.getURL('ui/popup.html')||typeof message.enabled!=='boolean'||typeof message.pageUrl!=='string'||message.pageUrl!==location.href){respond({ok:false,error:'页面已变化，请重新打开扩展。'});return false;}
@@ -1806,11 +1806,11 @@
     if(document.visibilityState==='visible'&&state.enabled&&!capture.session)void startHistoryCapture();
     if(document.visibilityState==='visible'){if(state.emergency?.active)scheduleEmergency(state.emergency);state.windowKey='';if(automatic()&&!state.root)void rebuild();else void refreshViewport();scheduleSentenceRender();scheduleSentenceScan(0);void ShisuiReview.refresh();}
   }
-  function dispose(){if(disposed)return;disable();stopSentenceGroups(true);ShisuiReview.hide();disposed=true;clearTimeout(lookup.idleTimer);for(const resolve of lookup.waiters)resolve();lookup.waiters.clear();clearPageStatus();runtime.onMessage.removeListener(onRuntimeMessage);for(const [target,type,listener]of listeners)target.removeEventListener(type,listener,true);clearTimeout(state.scrollTimer);}
+  function dispose(){if(disposed)return;disable();stopSentenceGroups(true);ShisuiReview.hide();disposed=true;clearTimeout(lookup.idleTimer);for(const resolve of lookup.waiters)resolve();lookup.waiters.clear();clearTaskStatus();runtime.onMessage.removeListener(onRuntimeMessage);for(const [target,type,listener]of listeners)target.removeEventListener(type,listener,true);clearTimeout(state.scrollTimer);}
   const listeners=[[window,'keydown',onLookupKey],[window,'keyup',onLookupKey],[window,'keydown',onNavKey],[window,'pointerdown',onHelpPointerDown],[window,'pointerup',onHelpPointerUp],[window,'click',onHelpClick],[window,'pointermove',onLookupPointerMove],[window,'blur',onLookupBlur],[window,'focusin',onLookupFocus],[window,'compositionstart',resetLookup],[window,'pointercancel',onLookupCancel],[document,'pointerleave',onLookupLeave],[matchMedia('(prefers-color-scheme: dark)'),'change',onScroll],[document,'pointerdown',historyInteraction],[document,'keydown',historyInteraction],[window,'scroll',historyInteraction],[document,'pointerdown',onOutside],[document,'pointerup',showPassageAction],[document,'keyup',showPassageAction],[document,'keydown',onKey],[window,'pointermove',ShisuiCopy.onPointerTrack],[document,'contextmenu',onContextMenu],[document,'visibilitychange',onVisibilityChange],[document,'scroll',onScroll],[window,'scroll',onScroll],[window,'resize',onScroll],[window,'popstate',onPageNavigation],[window,'hashchange',onPageNavigation]];
   listeners.push([document,'click',onStructureClick],[document.fonts,'loadingdone',scheduleSentenceRender]);
   listeners.forEach(([target,type,listener])=>target.addEventListener(type,listener,true));
   // 子系统经内核钩子回调 content.js 的实现；注册发生在监听之前，模块只在运行时调用。
-  Kernel.register({request,setPageStatus,positionCard,consumeLookup,clearLookupPreview,status,passageTarget,translatePassage,enable,inViewport});
+  Kernel.register({request,setTaskStatus,positionCard,consumeLookup,clearLookupPreview,status,passageTarget,translatePassage,enable,inViewport});
   runtime.onMessage.addListener(onRuntimeMessage);window.__SHISUI_CONTENT__={isAlive,dispose};void restoreSentenceGroups();
 })();
