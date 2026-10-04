@@ -1,7 +1,10 @@
-import {expect,test} from 'bun:test';
+import {afterEach,beforeEach,expect,test} from 'bun:test';
 import {normalizeRouting} from '../extension/routing.js';
 import {isolatedChrome,isolatedSend} from './helpers/chrome-fixture.js';
 const chromeBefore=globalThis.chrome;
+let fetchBefore;
+beforeEach(()=>{fetchBefore=globalThis.fetch;});
+afterEach(()=>{globalThis.fetch=fetchBefore;});
 // 结构化输出能力探针：与 api-transport 的检测协议对应，未包装的 fetch 会让 responses 协议的请求失败。
 const withCapabilityProbe=handler=>async(url,options)=>{
   let body=null;try{body=JSON.parse(options?.body||'null');}catch{}

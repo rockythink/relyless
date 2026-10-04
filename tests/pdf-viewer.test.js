@@ -1,9 +1,9 @@
-import {expect,test} from 'bun:test';
+import {afterAll,expect,test} from 'bun:test';
 import {event,isolatedChrome,isolatedSend} from './helpers/chrome-fixture.js';
 
 // PDF 阅读页是扩展页：sender.tab.url 为 chrome-extension://…pdf-viewer.html?src=<文档>，
 // readingSource 应把它放行并把文档地址作为身份来源，其余扩展页仍被拒绝。
-const chromeBefore=globalThis.chrome;
+const chromeBefore=globalThis.chrome,fetchBefore=globalThis.fetch;
 const fixture=isolatedChrome({});
 fixture.api.webNavigation.onBeforeNavigate=event();
 const viewerUrl='chrome-extension://'+fixture.id+'/pdf-viewer.html?src='+encodeURIComponent('https://docs.example/paper.pdf');
@@ -68,4 +68,4 @@ test('a delayed PDF interception cannot overwrite a newer main-frame navigation'
   }finally{release();fixture.api.tabs.get=originalGet;fixture.api.tabs.update=originalUpdate;}
 });
 
-test.afterAll?.(()=>{globalThis.chrome=chromeBefore;});
+afterAll(()=>{globalThis.chrome=chromeBefore;globalThis.fetch=fetchBefore;});

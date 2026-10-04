@@ -80,7 +80,7 @@ test('native diagnostics sync emits framed stdout only and never invokes a model
   const configPath = join(directory, 'config.json');
   const dataDir = join(directory, 'data');
   const origin = 'chrome-extension://' + 'a'.repeat(32) + '/';
-  await writeFile(configPath, JSON.stringify({ codexPath: '/fixture/codex', dataDir, extensionOrigin: origin }));
+  await writeFile(configPath, JSON.stringify({ backend: 'chatgpt', dataDir, extensionOrigin: origin }));
   const input = new PassThrough();
   const output = new PassThrough();
   const messages = [];
@@ -137,7 +137,7 @@ test('diagnostic initialization does not start a client after native stdin alrea
   const configPath = join(directory, 'config.json');
   const dataDir = join(directory, 'data');
   const origin = 'chrome-extension://' + 'a'.repeat(32) + '/';
-  await writeFile(configPath, JSON.stringify({ codexPath: '/fixture/codex', dataDir, extensionOrigin: origin }));
+  await writeFile(configPath,JSON.stringify({backend:'chatgpt',dataDir,extensionOrigin:origin}));
   const input = new PassThrough();
   input.resume();
   input.end();
@@ -199,7 +199,7 @@ test('native assistance progress is framed without settling the pending request'
   const directory=await mkdtemp(join(tmpdir(),'shisui-host-progress-'));
   const configPath=join(directory,'config.json'),dataDir=join(directory,'data');
   const origin='chrome-extension://'+'a'.repeat(32)+'/';
-  await writeFile(configPath,JSON.stringify({codexPath:'/fixture/codex',dataDir,extensionOrigin:origin}));
+  await writeFile(configPath,JSON.stringify({backend:'chatgpt',dataDir,extensionOrigin:origin}));
   const input=new PassThrough(),output=new PassThrough(),messages=[];
   const decoder=new NativeMessageDecoder({onMessage:message=>messages.push(message),onError:()=>{}});
   output.on('data',chunk=>decoder.push(chunk));

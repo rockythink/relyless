@@ -67,7 +67,7 @@ function createConnector({host,label,cliName,loginHosts}) {
       const missing = /not found|not registered|forbidden/i.test(reason);
       disconnect(current,new Error(missing
         ? `未找到或未授权本地 ${label} 连接器。请按安装说明安装，然后点击“刷新连接”。`
-        : `本地 ${label} 连接器已断开。请确认 Node.js 和 ${cliName} 可用，再点击“刷新连接”。`));
+        : `本地 ${label} 连接器已断开。请确认 Node.js${cliName ? ` 和 ${cliName}` : ''} 可用，再点击“刷新连接”。`));
     });
     current.onMessage.addListener(message => {
       if (state.port !== current) return;
@@ -158,13 +158,11 @@ const connectors = {
   chatgpt: createConnector({
     host:'cc.ss_data.shisui_translate',
     label:'ChatGPT',
-    cliName:'Codex',
     loginHosts:new Set(['auth.openai.com']),
   }),
   grok: createConnector({
     host:'cc.ss_data.shisui_grok',
     label:'Grok',
-    cliName:'Grok CLI',
     loginHosts:new Set(['auth.x.ai','accounts.x.ai']),
   }),
   antigravity: createConnector({
@@ -241,7 +239,7 @@ export async function emergencyTranslateSubscription({scope,items,model='',trace
   return scope==='page'?normalizePageTranslationResult(result,selected):normalizeEmergencyResult(result,selected);
 }
 export async function sentenceGroupsSubscription(items,model='',traceId,kind) { const selected=normalizeSentenceGroupItems(items); const value=await connector(kind).send('sentenceGroups',{items:selected,model},traceId); return normalizeSentenceGroupsResult(value,selected); }
-// 订阅多轮追问：conversationId 映射到连接器保留的 thread；首轮携带 setup，历史由 thread 承载。
+// 订阅追问：ChatGPT 主机只在内存保留有界历史；重启后由 setup 中的有限已完成回合重建。
 export async function conversationTurnSubscription({conversationId,question,setup,model='',traceId,kind,onProgress}) {
   if(typeof conversationId!=='string'||!/^[0-9a-f-]{8,80}$/i.test(conversationId))throw new Error('追问会话无效。');
   if(typeof question!=='string'||!question.trim()||question.length>300)throw new Error('追问内容无效。');

@@ -901,7 +901,7 @@ details.history-event { padding: 0; }
 
 @media (max-width: 1024px) {
   .catalog-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0,1fr);
   }
 
   .service-rail {

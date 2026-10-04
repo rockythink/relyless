@@ -1,0 +1,65 @@
+# 开发记录：ChatGPT 订阅切换到 SIWC 开源 OAuth
+
+- 日期：2026-10-03
+- 状态：实现与本机验收完成；真实账户授权和 OpenAI 在线推理未验证
+- 相关 Issue：[#49](https://github.com/rockythink/relyless/issues/49)（发布前补充维护者对话决策追踪）
+- 相关 PR：[#50](https://github.com/rockythink/relyless/pull/50)
+- 相关 ADR：[0007：ChatGPT SIWC 开源 OAuth 与本机直接 Responses](../decisions/0007-chatgpt-siwc-native-host.md)
+
+## 背景
+
+用户要求 ChatGPT 订阅通道不再调用本机 Codex CLI，而使用官方 SIWC 开源 OAuth 的账户注册与授权，通过 OAuth Bearer 令牌直接调用 Responses API。既有浏览器扩展与 Node Native Messaging 主机的信任边界必须保留，不能把 token 写入浏览器，也不能用自备 API Key 或中转服务冒充订阅计划调用。
+
+## 目标
+
+- 本机只需 Node.js 20+ 与注册到实际扩展 ID 的 Native 主机，不要求 Codex 安装或登录。
+- 合资格的 ChatGPT Plus/Pro 用户从设置发起官方登录，在同机 loopback 回调中完成明确计划授权，随后刷新账户与可用模型。
+- 求助、领域识别、选段/本页翻译、摘要、个性化和追问继续使用原有任务与结构化结果契约。
+- 认证、额度、模型访问、网络、断流和结构化结果错误保持真实失败，不提交伪成功。
+- 文档区分 OAuth 凭证、主机临时会话、扩展主动追问记录与第三方数据保留。
+
+## 非目标
+
+- 不改 Grok/Google（Antigravity）的 CLI 适配或自备 API 通道。
+- 不导入 Codex 凭证、不提供新旧协议兼容层、不增加云端中转。
+- 不扩大阅读范围、改变按需模式或增加被动请求。
+- 不将 SIWC 实现为音视频、Files 上传、转录或通用代理工具平台。
+- 不改写旧 ADR、旧开发记录或已有用户工作区说明。
+
+## 实现边界
+
+- `connector/host.mjs` 仍负责 Native Messaging 来源、消息与生命周期；ChatGPT 客户端切换为 `connector/siwc.mjs`，Grok/Antigravity 继续由原有适配处理。
+- 主机内完成注册、state/nonce/PKCE、loopback 回调与身份校验、令牌交换/刷新/撤销。登录入口与脱敏状态可返回扩展；访问/刷新令牌、授权码及 PKCE verifier 不走扩展消息。
+- 安装程序不查找或验证 Codex 可执行文件；ChatGPT 安装与检查只验证所需 Node/Native 配置，其他 CLI 后端仍保留各自检查。
+- 直接 Responses 请求使用 OAuth Bearer、`store:false`、`stream:true`、`input` 数组。主机完整读取 SSE，并在明确完成后验证任务结果；不依赖 CLI thread、`conversation` 或 HTTP `previous_response_id`，也不发送 SIWC 预览不支持的参数。
+- HTTP 每轮重发必要历史。主机内存会话过期或主机重启后，通过扩展提供的有限已完成追问重建，而不是伪造可续接的服务端 thread。
+- 升级需要扩展与主机配套更新、用实际扩展 ID 重新运行安装命令并 SIWC 登录；旧 Codex 登录状态不迁移。
+
+## 数据、权限与费用
+
+- **主机凭证**：`dataDir/siwc.json` 保存主机 ID、签发的注册/账户映射与 OAuth 令牌；POSIX 文件模式 0600，Windows 依赖账户与目录访问控制。秘密不进入浏览器存储、网页、日志、诊断或导出。
+- **主机临时历史**：只在内存保留，闲置 30 分钟过期，最多 50 会话、每会话最近 12 组问答；退出登录、切换账户、主机退出清除，不落盘。
+- **扩展追问记录**：沿用本机 IndexedDB 最多 30 天/每会话 40 轮的主动问答记录与无痕不落盘边界；它不属于默认关闭的阅读记录，也不随阅读记录导出。模型仅接收所需有限历史。
+- **清理与撤销**：清理扩展阅读数据不等于 ChatGPT 退出；订阅面板退出清除本机账户令牌并尝试远程撤销，远程撤销未确认时提示用户在 ChatGPT 设置中断开应用。主机 ID 与非令牌注册信息可复用。
+- **远程处理**：认证与推理直接访问 OpenAI，不增加 RelyLess 服务器。`store:false` 不是第三方零保留承诺，正常账户/安全/网络元数据与内容处理仍受服务商条款约束。
+- **权限与费用**：继续使用已有 Native Messaging 边界，ChatGPT 不要求浏览器保管 OAuth 凭证或以 API Key 计费。计划授权与额度由 OpenAI 决定；扩展预算只是本机估算，不等于计划可用量。用户显式配置的故障转移按既有配置与确认边界执行。
+
+## 风险与回滚
+
+- Loopback 监听、回调校验、OIDC 身份或计划授权失败会阻断登录；不能绕过验证或仅凭模型目录宣布可用。
+- 凭证刷新/撤销、文件权限与账户切换需覆盖失败场景；不能把服务端原始敏感错误直接导出。
+- SSE 失败、incomplete、提前 EOF 与无效任务结果不能缓存为成功；停止后迟到结果不能覆盖已停止 UI，已发送请求仍可能计费。
+- 主机内历史与扩展持久追问记录寿命不同，删除/重启/无痕/账户切换需分别验收，避免串会话或误宣称远端持续存储。
+- 如 SIWC 不可用，用户可明确切换已配置的 API 或其他可用服务。整版回退必须同时回退匹配的扩展与主机；新实现不保留 Codex 兼容路径。
+
+## 验证证据
+
+- 官方协议资料：已查阅 [登录](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[模型与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)、[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)；资料约束与实现验收要求分开记录。
+- 自动检查：ChatGPT 切换时 `npm run check` 通过（503 pass、0 fail，45 个测试文件）；订阅专用夹具覆盖 state/nonce、缺失授权范围、OIDC 签名、刷新令牌轮换与并发、退出撤销、Responses Bearer 请求字段、额度失败、不完整流、提前 EOF、本页翻译错误及多轮追问。
+- 发布前全量检查：527 pass、0 fail，46 个测试文件。Ubuntu CI 暴露既有路由与 PDF 测试未还原全局 `fetch`、替换了真实 loopback 请求；已补充路由的每测试还原边界及 PDF 的有效 `afterAll` 清理，同时还原 PDF Chrome 夹具，未放宽 OAuth 校验。路由与 SIWC 两文件组合由 9 fail 修复至 23 pass、0 fail。
+- 本机主机冒烟：实际启动 `connector/host.mjs`，发送 Native Messaging 帧；未登录 `status` 返回已连接/未认证，`models` 返回 `AUTH`；凭证文件初始化为无账户的主机 ID。隔离 HOME 安装后从 Native manifest 的启动器再次收到上述未登录状态，覆盖 macOS `/var` 软链接路径；安装/升级/卸载由回归测试覆盖。
+- 浏览器/视觉：Chrome for Testing 加载解包扩展，设置中的 ChatGPT 卡片显示“本机连接器未连接”和安装指引；卡片截图与 axe-core 检查（0 违反）通过。没有安装测试浏览器对应的 Native Host，也未使用真实 Plus/Pro 账户完成官方登录或在线 Responses；已授权、停止和退出状态未进行真实浏览器演练。
+
+## 后续事项
+
+无已确认的额外范围；上述集成验收属于本次切换的交付要求，不是额外功能。
