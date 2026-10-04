@@ -56,7 +56,7 @@
 
 - 官方协议资料：已查阅 [登录](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[模型与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)、[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)；资料约束与实现验收要求分开记录。
 - 自动检查：ChatGPT 切换时 `npm run check` 通过（503 pass、0 fail，45 个测试文件）；订阅专用夹具覆盖 state/nonce、缺失授权范围、OIDC 签名、刷新令牌轮换与并发、退出撤销、Responses Bearer 请求字段、额度失败、不完整流、提前 EOF、本页翻译错误及多轮追问。
-- 发布前全量检查：527 pass、0 fail，46 个测试文件。Ubuntu CI 暴露既有路由测试未还原全局 `fetch`、替换了真实 loopback 请求；已补充每个测试的还原边界，路由与 SIWC 两文件组合由 9 fail 修复至 23 pass、0 fail，未放宽 OAuth 校验。
+- 发布前全量检查：527 pass、0 fail，46 个测试文件。Ubuntu CI 暴露既有路由与 PDF 测试未还原全局 `fetch`、替换了真实 loopback 请求；已补充路由的每测试还原边界及 PDF 的有效 `afterAll` 清理，同时还原 PDF Chrome 夹具，未放宽 OAuth 校验。路由与 SIWC 两文件组合由 9 fail 修复至 23 pass、0 fail。
 - 本机主机冒烟：实际启动 `connector/host.mjs`，发送 Native Messaging 帧；未登录 `status` 返回已连接/未认证，`models` 返回 `AUTH`；凭证文件初始化为无账户的主机 ID。隔离 HOME 安装后从 Native manifest 的启动器再次收到上述未登录状态，覆盖 macOS `/var` 软链接路径；安装/升级/卸载由回归测试覆盖。
 - 浏览器/视觉：Chrome for Testing 加载解包扩展，设置中的 ChatGPT 卡片显示“本机连接器未连接”和安装指引；卡片截图与 axe-core 检查（0 违反）通过。没有安装测试浏览器对应的 Native Host，也未使用真实 Plus/Pro 账户完成官方登录或在线 Responses；已授权、停止和退出状态未进行真实浏览器演练。
 
