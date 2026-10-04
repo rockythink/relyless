@@ -20,7 +20,7 @@ async function withContent(run,{structure=false,lookupDisplay='annotation'}={}){
   const settings={assistanceMode:'on-demand',domain:'general',helpLanguage:'en',lookupDisplay,hintDisplay:'direct',rulePacks:[]};
   let listener;
   globalThis.chrome={runtime:{id:'abc',getURL:path=>'chrome-extension://abc/'+path,sendMessage:(message,callback)=>{
-    if(['ASSIST','WORD_PREFERENCE_SET','SENTENCE_GROUPS_BATCH','EMERGENCY_TRANSLATE'].includes(message.type)){pending.push({message,reply:callback});return;}
+    if(['ASSIST','WORD_PREFERENCE_SET','PASSAGE_TRANSLATE','SENTENCE_GROUPS_BATCH','EMERGENCY_TRANSLATE'].includes(message.type)){pending.push({message,reply:callback});return;}
     callback({ok:true,data:message.type==='STATE_GET'?{settings,providerConfigured:true}:message.type==='SENTENCE_GROUPS_GET'?{enabled:structure,density:'medium',lineStyle:'solid'}:{}});
   },onMessage:{addListener:callback=>listener=callback,removeListener(){}}}};
   const capture=target=>{const add=target.addEventListener.bind(target);target.addEventListener=(type,callback,options)=>{handlers.set(callback.name,callback);add(type,callback,options);};};
@@ -218,4 +218,61 @@ test('model help failures persist beyond informational timers and clear through 
     state.card.card.querySelector('.dismiss').click();expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='lookup')).toBe(false);
     pending.shift().reply({ok:false,error:'已关闭的重试失败'});await new Promise(resolve=>setTimeout(resolve,200));expect((await send({type:'SS_STATUS'})).data.tasks).toEqual([]);
   },{lookupDisplay:'card'});
+});
+
+test('closing a failed passage panel clears its error task',async()=>{
+  await withContent(async({paragraph,pending,send,click})=>{
+    const range=document.createRange();range.selectNodeContents(paragraph);
+    const operation=ShisuiContent.hooks.translatePassage(ShisuiContent.hooks.passageTarget(range));
+    await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:'段落翻译失败'});await operation;
+    const panel=document.querySelector('[data-shisui-ui="passage-translation"]');
+    expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='passage')?.error).toBe(true);
+    click(panel.querySelector('button'));expect(panel.isConnected).toBe(false);
+    expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='passage')).toBe(false);
+  });
+});
+
+for(const phase of ['pending','failed'])test('closing an older failed passage preserves a newer '+phase+' translation',async()=>{
+  await withContent(async({paragraph,pending,send,click})=>{
+    const translate=()=>{const range=document.createRange();range.selectNodeContents(paragraph);return ShisuiContent.hooks.translatePassage(ShisuiContent.hooks.passageTarget(range));};
+    const first=translate();await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:'第一次翻译失败'});await first;
+    const old=document.querySelector('[data-shisui-ui="passage-translation"]');
+    const second=translate();await waitFor(()=>pending.length===1);const request=pending.shift();
+    if(phase==='failed'){request.reply({ok:false,error:'当前翻译失败'});await second;}
+    click(old.querySelector('button'));
+    const active=(await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='passage');
+    expect(phase==='pending'?active?.busy:active?.error).toBe(true);
+    if(phase==='pending'){request.reply({ok:false,error:'当前翻译失败'});await second;}
+    click(document.querySelector('[data-shisui-ui="passage-translation"] button'));
+    expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='passage')).toBe(false);
+  });
+});
+
+test('dismissing failed known-word undo clears its task',async()=>{
+  await withContent(async({state,pending,lookup,send,shadows})=>{
+    lookup();await waitFor(()=>pending.length===1);pending.shift().reply({ok:true,data:{hint:'try again',sense:'repeat an attempt',source:'provider',support:{wordId:'retry-word',senseKey:'retry-sense'}}});
+    await waitFor(()=>state.card?.knownWordId());state.card.known.click();await waitFor(()=>pending.length===1);pending.shift().reply({ok:true,data:{wordId:'retry-word',term:'retries'}});
+    await waitFor(()=>document.querySelector('[data-shisui-ui="known-feedback"]'));
+    const host=document.querySelector('[data-shisui-ui="known-feedback"]'),shadow=shadows.get(host);
+    [...shadow.querySelectorAll('button')].find(button=>button.textContent==='撤销').click();
+    await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:'撤销保存失败'});
+    await waitFor(()=>shadow.querySelector('[role="alert"]'));
+    expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='known')?.error).toBe(true);
+    [...shadow.querySelectorAll('button')].find(button=>button.textContent==='关闭').click();expect(host.isConnected).toBe(false);
+    expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='known')).toBe(false);
+  },{lookupDisplay:'card'});
+});
+
+test('repeating a transient notice restarts its expiry without discarding its error',async()=>{
+  await withContent(async({send})=>{
+    const now=Date.now,base=now();let elapsed=0;Date.now=()=>base+elapsed;
+    try{
+      ShisuiContent.hooks.setTaskStatus('lookup','请点击英文词语',{error:true,duration:3000});elapsed=2000;
+      ShisuiContent.hooks.setTaskStatus('lookup','请点击英文词语',{error:true,duration:3000});elapsed=3100;
+      ShisuiContent.hooks.setTaskStatus('copy','原文已复制',{duration:1});
+      expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='lookup')?.error).toBe(true);
+      elapsed=5100;ShisuiContent.hooks.setTaskStatus('copy','再次复制',{duration:1});
+      expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='lookup')).toBe(false);
+    }finally{Date.now=now;}
+  });
 });
