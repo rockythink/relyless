@@ -21,7 +21,7 @@ const string = (value, max = 8192) => typeof value === 'string' && value.length 
 const CLASSIFIER_INSTRUCTIONS = `${SOURCE_DATA_INSTRUCTIONS}\nClassify the supplied page title and excerpt as exactly one of general, tech, data, finance, medical, legal, design. Return only JSON {"domain":"..."}.`;
 const OAUTH_ERRORS = new Set(['authorization_pending','slow_down','expired_token','access_denied','invalid_grant']);
 const error = (message, code = 'OUTPUT_INVALID') => Object.assign(new Error(message), { code });
-const headers = () => ({ 'User-Agent': 'RelyLess/0.7.0', 'x-grok-client-identifier': 'relyless', 'x-grok-client-version': '0.7.0', 'x-grok-client-mode': 'headless', 'X-XAI-Token-Auth': 'xai-grok-cli', 'x-authenticateresponse': 'authenticate-response' });
+const headers = () => ({ 'User-Agent': 'RelyLess/0.7.1', 'x-grok-client-identifier': 'relyless', 'x-grok-client-version': '0.7.1', 'x-grok-client-mode': 'headless', 'X-XAI-Token-Auth': 'xai-grok-cli', 'x-authenticateresponse': 'authenticate-response' });
 const prefs = value => { if (value == null) return undefined; if (!object(value) || Object.keys(value).length !== 3 || !['concise','standard'].includes(value.detail) || !['consistent','contextual'].includes(value.terminology) || !['meaning','usage'].includes(value.focus)) throw error('个性化翻译偏好无效。'); return value; };
 async function body(response, maximum) {
   if (!response.body) return '';
@@ -116,7 +116,7 @@ export class GrokClient extends EventEmitter {
     const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
     try {
       const metadata = payload ? { Accept: 'text/event-stream', 'x-grok-conv-id': randomUUID(), 'x-grok-req-id': randomUUID(), 'x-grok-model-override': payload.model, 'x-grok-session-id': randomUUID() } : {};
-      const response = await this.fetch(url, { method, redirect: 'error', signal: combined, headers: { Accept: 'application/json', 'User-Agent': 'RelyLess/0.7.0', ...(form ? { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Grok-Client-Surface': 'ui', 'X-Grok-Client-Version': '0.7.0' } : {}), ...(url.startsWith(PROXY + '/') ? headers() : {}), ...metadata, ...(payload ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) }, ...(form ? { body: new URLSearchParams(form).toString() } : payload ? { body: JSON.stringify(payload) } : {}) });
+      const response = await this.fetch(url, { method, redirect: 'error', signal: combined, headers: { Accept: 'application/json', 'User-Agent': 'RelyLess/0.7.1', ...(form ? { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Grok-Client-Surface': 'ui', 'X-Grok-Client-Version': '0.7.1' } : {}), ...(url.startsWith(PROXY + '/') ? headers() : {}), ...metadata, ...(payload ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) }, ...(form ? { body: new URLSearchParams(form).toString() } : payload ? { body: JSON.stringify(payload) } : {}) });
       if (!response.ok) {
         const fail = (message, code) => Object.assign(error(message, code), { detail: { httpStatus: response.status } });
         let code; try { code = JSON.parse(await body(response, maximum)).error; } catch {}
