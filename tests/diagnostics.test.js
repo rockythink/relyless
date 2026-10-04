@@ -109,3 +109,36 @@ test('support validation identifies the failing item and field without retaining
   expect(failure).toMatchObject({code:'OUTPUT_INVALID',itemIndex:1,fields:['target','hint']});
   expect(JSON.stringify(snapshot)).not.toMatch(/Private source|Another private|秘密|私密|not public/);
 });
+
+
+test('a failed native opt-out is not confirmed and preserves the desired setting for reconnection',async()=>{
+  const storage=memory(),session=memory();let fail=true;
+  const options={storage,session,nativeStatus:()=>({connected:true}),sync:async()=>!fail};
+  const service=createDiagnostics(options);
+  await expect(service.configure(false)).rejects.toMatchObject({code:'NATIVE_RPC'});
+  expect((await service.snapshot()).enabled).toBe(false);
+  const restarted=createDiagnostics(options);expect((await restarted.snapshot()).enabled).toBe(false);
+  fail=false;await restarted.connected();expect((await restarted.snapshot()).native.mirror).toBe(true);
+});
+
+test('diagnostic deletion stays pending until every connected host acknowledges cleanup',async()=>{
+  const previousChrome=globalThis.chrome,logs={chatgpt:['old-chatgpt'],grok:['old-grok']};let fail=true;
+  globalThis.chrome={runtime:{lastError:null,connectNative:host=>{const kind=host.endsWith('grok')?'grok':'chatgpt';let listener;return{onDisconnect:{addListener:()=>{}},onMessage:{addListener:fn=>{listener=fn;}},postMessage:message=>queueMicrotask(()=>{
+    if(message.type==='diagnostics'&&message.payload.action==='clear'){
+      if(kind==='chatgpt'&&fail)return listener({id:message.id,ok:false,code:'STORAGE_ERROR',error:'无法清空连接器诊断。'});
+      logs[kind]=[];
+    }
+    listener({id:message.id,ok:true,data:message.type==='diagnostics'?{enabled:true,storageError:false}:{connected:true,authenticated:false}});
+  })};}}};
+  try{
+    const subscription=await import('../extension/subscription.js?diagnostics-all-hosts');
+    await subscription.ensureSubscription('chatgpt');await subscription.ensureSubscription('grok');
+    const storage=memory(),session=memory(),options={storage,session,sync:subscription.syncNativeDiagnostics,nativeStatus:()=>subscription.subscriptionStatus('chatgpt')};
+    const service=createDiagnostics(options);
+    await expect(service.clear()).rejects.toMatchObject({code:'NATIVE_RPC'});
+    expect(logs).toEqual({chatgpt:['old-chatgpt'],grok:[]});
+    expect((await service.snapshot()).native.pendingClear).toBe(true);
+    const restarted=createDiagnostics(options);expect((await restarted.snapshot()).native.pendingClear).toBe(true);
+    fail=false;await restarted.connected();expect(logs).toEqual({chatgpt:[],grok:[]});expect((await restarted.snapshot()).native.pendingClear).toBe(false);
+  }finally{if(previousChrome===undefined)delete globalThis.chrome;else globalThis.chrome=previousChrome;}
+});

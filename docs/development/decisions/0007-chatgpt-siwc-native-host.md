@@ -38,11 +38,13 @@ ChatGPT 订阅通道原先依赖本机安装并登录 Codex CLI，由 Native Mes
 
 1. `connector/host.mjs` 继续作为 Node Native Messaging 入口；ChatGPT 由 `connector/siwc.mjs` 实现官方开源 SIWC，直接访问 OpenAI Models 与 Responses API。不保留 Codex CLI 回退或旧凭证导入路径。
 2. 登录由主机启动临时 loopback 监听器，生成独立 state、nonce、PKCE S256；回调与身份验证、授权范围检查及令牌交换在主机完成。浏览器只接收登录入口、账户状态、模型列表及任务结果，不接收令牌、授权码或 PKCE verifier。
-3. 主机数据目录的 `siwc.json` 保存主机 ID、签发的客户端注册、账户映射及凭证；POSIX 文件模式为 0600。Windows 的访问控制依赖系统账户及目录权限，不把 POSIX 模式包装成跨平台安全保证。日志、诊断、导出不得包含秘密。退出登录清除当前账户令牌，并尝试远程撤销；撤销未确认时如实提示在 ChatGPT 设置中断开应用。主机身份与非令牌注册信息可复用。
+3. 主机数据目录的 `siwc.json` 保存主机 ID、签发的客户端注册、账户映射及凭证；POSIX 文件模式为 0600。Windows 的访问控制依赖系统账户及目录权限，不把 POSIX 模式包装成跨平台安全保证。日志、诊断、导出不得包含秘密。退出在锁内重读共享记录，清除当前账户与捕获的旧账户令牌，保留主机身份及非令牌注册。内存/磁盘捕获的不同刷新授权逐一尝试撤销，同一 client_id 下的不同轮换授权也不合并；撤销未确认时如实提示在 ChatGPT 设置中断开应用，不恢复已清除的本机授权。
 4. 推理携带 OAuth `Authorization: Bearer` 直接请求 `https://api.openai.com/v1/responses`，固定 `store:false`、`stream:true`、`input` 数组。主机读取 SSE 到 `response.completed`，再接受结构化结果；`response.failed`、`response.incomplete`、提前断流不能成为成功缓存。
 5. HTTP 不发送 `previous_response_id`、`conversation` 或预览不支持的 `temperature`、`max_output_tokens` 等参数。当前任务与所需有界历史随每轮 `input` 发送，不依赖远端持久会话；不扩展到音视频、Files 上传、转录或完整代理工具能力。
 6. 主机追问历史只在内存，闲置 30 分钟过期，最多 50 会话、每会话最近 12 组问答；退出登录、切换账户或主机退出清除。扩展最多 30 天/每会话 40 轮的主动追问记录是独立本机数据，重启主机后可用有限已完成回合重建；无痕不写入此持久记录。
 7. 扩展与主机一起更新并重新运行安装命令，再完成 SIWC 登录。保留实际扩展 ID 与来源校验；不要求安装 Codex。Grok/Google 仍检查各自 CLI，自备 API 的凭证与调用路径不迁移。
+8. 凭证修改使用跨进程互斥：先完成含 PID 的私有 owner 文件，再以原子硬链接发布完整所有者 inode。活进程或空/无效 PID 锁不按年龄回收；仅确认 PID 已死才在每个旧 inode 的独立 recovery 互斥下重新核对并回收。中断或无法验证的恢复保守失败，不通过抢锁继续写凭证，错误不泄露私有路径。
+9. Native 诊断开关和清空必须明确确认：configure(false) 先停当前进程记录再持久化，失败返回安全的 STORAGE_ERROR；扩展保存期望设置并报告 NATIVE_RPC，而不是成功。写入失败后重启可能读到旧开启配置，下次连接重试同步。清空标记仅在所有当前已连接主机明确确认后移除，任一失败保留请求；断开后下次连接重试，不为诊断暗中启动主机，不承诺清理未参与连接的独立主机。
 
 ## 结果
 

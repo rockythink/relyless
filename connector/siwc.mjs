@@ -1,7 +1,7 @@
 import {EventEmitter} from 'node:events';
 import {createHash,createPublicKey,randomBytes,randomUUID,verify} from 'node:crypto';
 import {createServer} from 'node:http';
-import {chmod,mkdir,open,readFile,rename,rm,stat,writeFile} from 'node:fs/promises';
+import {chmod,link,mkdir,open,readFile,rename,rm,stat,writeFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {
   SOURCE_DATA_INSTRUCTIONS,SUPPORT_INSTRUCTIONS,SUPPORT_CORRECTION_INSTRUCTIONS,normalizeSupportProviderItems,inspectSupportResponse,normalizeSupportCorrections,normalizePreparationContext,
@@ -72,25 +72,42 @@ export class SiwcClient extends EventEmitter {
   }
   #checkGeneration(generation){if(generation!==this.generation||this.stopping)throw authError('ChatGPT 请求已取消。','CANCELLED');}
   async #locked(action){
-    const path=this.credentialsPath+'.lock',deadline=Date.now()+65_000;let handle;
-    while(!handle){
-      try{handle=await open(path,'wx',0o600);await handle.writeFile(JSON.stringify({pid:process.pid}));}
-      catch(error){
-        if(handle){await handle.close().catch(()=>{});await rm(path,{force:true}).catch(()=>{});throw authError('无法锁定本机 ChatGPT 授权记录。','STORAGE_ERROR');}
-        if(error.code!=='EEXIST')throw authError('无法锁定本机 ChatGPT 授权记录。','STORAGE_ERROR');
-        try{
-          const info=await stat(path);let owner;try{owner=JSON.parse(await readFile(path,'utf8'));}catch{}
-          let abandoned=false;
-          if(Number.isSafeInteger(owner?.pid)&&owner.pid>0){try{process.kill(owner.pid,0);}catch(error){abandoned=error.code==='ESRCH';}}
-          // Allow a PID write to settle, but recover a crashed owner within this acquisition deadline.
-          else abandoned=Date.now()-info.mtimeMs>5_000;
-          if(abandoned){const current=await stat(path);if(current.ino===info.ino&&current.mtimeMs===info.mtimeMs){await rm(path,{force:true});continue;}}
-        }catch{}
-        if(Date.now()>=deadline)throw authError('ChatGPT 登录数据正由另一连接器更新，请稍后重试。','STORAGE_ERROR');
-        await new Promise(done=>setTimeout(done,50));
+    const path=this.credentialsPath+'.lock',ownerPath=path+`.${process.pid}.${randomUUID()}`,deadline=Date.now()+65_000;
+    let handle,ownerInfo,acquired=false,cleanupFailed=false;
+    try{
+      try{handle=await open(ownerPath,'wx',0o600);await handle.writeFile(JSON.stringify({pid:process.pid}));ownerInfo=await handle.stat({bigint:true});}
+      catch{throw authError('无法创建本机 ChatGPT 授权锁。','STORAGE_ERROR');}
+      // Publish the completed owned inode atomically; an empty or suspended write is never a lock.
+      while(!acquired){
+        try{await link(ownerPath,path);acquired=true;}
+        catch(error){
+          if(error.code!=='EEXIST')throw authError('无法锁定本机 ChatGPT 授权记录。','STORAGE_ERROR');
+          try{
+            const info=await stat(path,{bigint:true}),owner=JSON.parse(await readFile(path,'utf8'));
+            if(!Number.isSafeInteger(owner?.pid)||owner.pid<1)throw authError('ChatGPT 授权锁无法验证，请检查连接器数据。','STORAGE_ERROR');
+            let dead=false;try{process.kill(owner.pid,0);}catch(error){dead=error.code==='ESRCH';}
+            if(dead){
+              // One reaper per dead inode. Never time-reclaim an active or unverifiable recovery owner.
+              const recovery=path+'.recovery.'+info.ino;let reclaiming=false;
+              try{await link(ownerPath,recovery);reclaiming=true;
+                const current=await stat(path,{bigint:true});if(current.ino===info.ino&&current.mtimeMs===info.mtimeMs)await rm(path,{force:true});
+              }catch(error){if(error.code!=='ENOENT'&&error.code!=='EEXIST')throw error;}
+              finally{if(reclaiming)await rm(recovery,{force:true});}
+              if(reclaiming)continue;
+            }
+          }catch(error){if(error.code==='ENOENT')continue;if(error.code==='STORAGE_ERROR')throw error;throw authError('ChatGPT 授权锁无法验证，请检查连接器数据。','STORAGE_ERROR');}
+          if(Date.now()>=deadline)throw authError('ChatGPT 登录数据正由另一连接器更新，请稍后重试。','STORAGE_ERROR');
+          await new Promise(done=>setTimeout(done,50));
+        }
       }
+      return await action();
+    }finally{
+      if(handle){try{await handle.close();}catch{cleanupFailed=true;}
+        if(acquired){try{const current=await stat(path,{bigint:true});if(current.ino!==ownerInfo.ino)throw new Error('Lost ownership');await rm(path,{force:true});}catch{cleanupFailed=true;}}
+        try{await rm(ownerPath,{force:true});}catch{cleanupFailed=true;}
+      }
+      if(cleanupFailed)throw authError('无法释放本机 ChatGPT 授权记录锁。','STORAGE_ERROR');
     }
-    try{return await action();}finally{try{await handle.close();await rm(path,{force:true});}catch{throw authError('无法释放本机 ChatGPT 授权记录锁。','STORAGE_ERROR');}}
   }
   async start(){
     if(this.started)return this.started;
@@ -200,9 +217,16 @@ export class SiwcClient extends EventEmitter {
     this.conversations.clear();this.modelCache=null;
     if(previous){this.state={...this.state,accounts:{...this.state.accounts,[previous.client_id]:this.#registration(previous)}};this.emit('status',this.status());}
     await this.cancelLogin();
-    const account=await this.#locked(async()=>{const saved=await this.#readState(),current=saved.accounts[saved.active];if(current)saved.accounts[saved.active]=this.#registration(current);await savePrivate(this.credentialsPath,saved);this.state=saved;this.emit('status',this.status());return current;});
+    const accounts=await this.#locked(async()=>{const saved=await this.#readState(),revocations=[];
+      const clear=id=>{const account=saved.accounts[id];if(account){saved.accounts[id]=this.#registration(account);if(account.refresh_token)revocations.push(account);}};
+      clear(saved.active);if(previous&&previous.client_id!==saved.active)clear(previous.client_id);
+      if(previous?.refresh_token&&!revocations.some(account=>account.client_id===previous.client_id&&account.refresh_token===previous.refresh_token))revocations.push(previous);
+      await savePrivate(this.credentialsPath,saved);this.state=saved;this.emit('status',this.status());return revocations;
+    });
     let revoked=true;
-    if(account?.refresh_token){try{const doc=await this.#discovery();if(!doc.revocation_endpoint)throw new Error('No revocation endpoint');const response=await this.#request(doc.revocation_endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:account.refresh_token,token_type_hint:'refresh_token',client_id:account.client_id}),signal:AbortSignal.timeout(15_000)});revoked=response.ok;}catch{revoked=false;}}
+    if(accounts.length){try{const doc=await this.#discovery();if(!doc.revocation_endpoint)throw new Error('No revocation endpoint');
+      for(const account of accounts){try{const response=await this.#request(doc.revocation_endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:account.refresh_token,token_type_hint:'refresh_token',client_id:account.client_id}),signal:AbortSignal.timeout(15_000)});if(!response.ok)revoked=false;}catch{revoked=false;}}
+    }catch{revoked=false;}}
     if(!revoked)throw authError('本机已退出 ChatGPT；远程撤销未确认。请在 ChatGPT 设置中断开此应用。');
     return this.status();
   }

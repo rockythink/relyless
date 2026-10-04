@@ -17,8 +17,8 @@ export function onNativeDiagnostic(listener){diagnosticListeners.add(listener);}
 export async function syncNativeDiagnostics(payload,kind){
   const targets=kind? [connector(kind)] : [connectors.chatgpt, connectors.grok, connectors.antigravity].filter(item=>item.state.port);
   if(!targets.length)return false;
-  const results=await Promise.all(targets.map(item=>item.send('diagnostics',payload).then(result=>result?.storageError!==true).catch(()=>false)));
-  return results.some(Boolean);
+  const results=await Promise.all(targets.map(item=>item.send('diagnostics',payload).then(result=>typeof result?.enabled==='boolean'&&result.storageError===false).catch(()=>false)));
+  return results.every(Boolean);
 }
 
 const DISCONNECTED = {connected:false,authenticated:false,email:null,plan:null,loginPending:false,userCode:null,error:null,features:[]};

@@ -1,9 +1,10 @@
 import {test,expect} from 'bun:test';
 import {generateKeyPairSync,sign} from 'node:crypto';
 import {chmod,mkdtemp,readFile,rm,stat,writeFile} from 'node:fs/promises';
-import {spawnSync} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join,resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {SiwcClient} from '../connector/siwc.mjs';
 
 const {publicKey,privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});
@@ -249,12 +250,31 @@ for(const action of ['cancelLogin','logout','close'])test('SIWC '+action+' while
 
 test('logout resolves the shared active account under the credential lock',async()=>{
   const f=await fixture();let restored;
-  try{await f.authorize();const path=join(f.dir,'siwc.json'),saved=JSON.parse(await readFile(path,'utf8')),otherId='oaiapp_other456';saved.accounts[otherId]={...saved.accounts[clientId],client_id:otherId,subject:'user-2',email:'other@example.test',access_token:'other-access',refresh_token:'other-refresh'};saved.active=otherId;await writeFile(path,JSON.stringify(saved),{mode:0o600});expect((await f.client.logout()).authenticated).toBe(false);const after=JSON.parse(await readFile(path,'utf8'));expect(after.accounts[otherId].access_token).toBeUndefined();expect(after.accounts[otherId].client_id).toBe(otherId);expect(f.requests.find(item=>item.url==='/revoke').init.body.get('client_id')).toBe(otherId);restored=new SiwcClient({dataDir:f.dir});await restored.start();expect(restored.status().authenticated).toBe(false);}
+  try{await f.authorize();const path=join(f.dir,'siwc.json'),saved=JSON.parse(await readFile(path,'utf8')),otherId='oaiapp_other456';saved.accounts[otherId]={...saved.accounts[clientId],client_id:otherId,subject:'user-2',email:'other@example.test',access_token:'other-access',refresh_token:'other-refresh'};saved.active=otherId;await writeFile(path,JSON.stringify(saved),{mode:0o600});expect((await f.client.logout()).authenticated).toBe(false);const after=JSON.parse(await readFile(path,'utf8'));expect(after.accounts[otherId].access_token).toBeUndefined();expect(after.accounts[clientId].access_token).toBeUndefined();expect(after.accounts[clientId].refresh_token).toBeUndefined();expect(new Set(f.requests.filter(item=>item.url==='/revoke').map(item=>item.init.body.get('client_id')))).toEqual(new Set([otherId,clientId]));expect(after.accounts[otherId].client_id).toBe(otherId);expect(f.requests.find(item=>item.url==='/revoke').init.body.get('client_id')).toBe(otherId);restored=new SiwcClient({dataDir:f.dir});await restored.start();expect(restored.status().authenticated).toBe(false);}
   finally{await restored?.close();await f.close();}
 });
 
-test('first refresh recovers a freshly crashed ownerless lock',async()=>{
-  const f=await fixture();try{await f.authorize();await expire(f);const path=join(f.dir,'siwc.json.lock');const owner=spawnSync('node',['-e',"require('node:fs').openSync(process.argv[1],'wx',0o600);process.exit(0)",path]);expect(owner.status).toBe(0);expect(await f.client.classify({text:'Flink streams.'})).toEqual({domain:'tech',source:'chatgpt'});expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBe('refresh-2');}
-  finally{await f.close();}
+test('logout revokes a stale captured grant as well as a replacement for the same client',async()=>{
+  const f=await fixture();
+  try{
+    await f.authorize();const path=join(f.dir,'siwc.json'),saved=JSON.parse(await readFile(path,'utf8'));
+    saved.accounts[clientId]={...saved.accounts[clientId],subject:'user-2',access_token:'replacement-access',refresh_token:'replacement-refresh'};
+    await writeFile(path,JSON.stringify(saved),{mode:0o600});
+    expect((await f.client.logout()).authenticated).toBe(false);
+    const after=JSON.parse(await readFile(path,'utf8'));
+    expect(after.accounts[clientId].access_token).toBeUndefined();expect(after.accounts[clientId].refresh_token).toBeUndefined();
+    expect(new Set(f.requests.filter(item=>item.url==='/revoke').map(item=>new URLSearchParams(item.init.body).get('token')))).toEqual(new Set(['refresh-1','replacement-refresh']));
+  }finally{await f.close();}
+});
+
+test('a suspended ownership write is never published or reclaimed as a live lock',async()=>{
+  const f=await fixture();let child,exit,timer;
+  try{await f.authorize();await expire(f);child=spawn('node',['-e',"const fs=require('node:fs/promises');const open=fs.open.bind(fs);let release;const gate=new Promise(r=>release=r);process.on('message',()=>release());fs.open=async(...args)=>{const handle=await open(...args);if(String(args[0]).includes('siwc.json.lock')){const write=handle.writeFile.bind(handle);handle.writeFile=async(...values)=>{process.send('paused');await gate;return write(...values);};}return handle;};(async()=>{const {SiwcClient}=await import(process.argv[1]);const client=new SiwcClient({dataDir:process.argv[2],fetchImpl:async url=>new URL(url).pathname==='/.well-known/openid-configuration'?Response.json({issuer:'https://auth.openai.com',jwks_uri:'https://auth.openai.com/keys',revocation_endpoint:'https://auth.openai.com/revoke'}):new Response(null,{status:200})});try{await client.start();await client.logout();}finally{await client.close();process.disconnect();}})().catch(error=>{console.error(error);process.exit(1);});",pathToFileURL(resolve('connector/siwc.mjs')).href,f.dir],{stdio:['ignore','ignore','pipe','ipc']});let stderr='';child.stderr.on('data',chunk=>{stderr+=chunk;});exit=new Promise(done=>child.once('exit',done));
+    await new Promise((done,fail)=>{timer=setTimeout(()=>fail(new Error('Ownership writer did not pause')),5000);child.once('message',value=>{clearTimeout(timer);expect(value).toBe('paused');done();});});
+    let published;try{published=JSON.parse(await readFile(join(f.dir,'siwc.json.lock'),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
+    if(published)expect(Number.isSafeInteger(published.pid)&&published.pid>0).toBe(true);
+    expect(await f.client.classify({text:'Flink streams.'})).toEqual({domain:'tech',source:'chatgpt'});
+    child.send('release');expect(await exit).toBe(0);expect(stderr).toBe('');expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBeUndefined();
+  }finally{clearTimeout(timer);if(child?.exitCode===null){child.kill();await exit;}await f.close();}
 },15000);
 

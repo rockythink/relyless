@@ -71,22 +71,35 @@ export class DiagnosticStore extends EventEmitter {
 
   clear() {
     return this.#serialize(async () => {
-      await Promise.all([rm(this.path, { force: true }), rm(this.rotatedPath, { force: true })]);
-      this.storageError = false;
+      try {
+        await Promise.all([rm(this.path, { force: true }), rm(this.rotatedPath, { force: true })]);
+        this.storageError = false;
+      } catch {
+        this.storageError = true;
+        throw Object.assign(new Error("连接器诊断文件无法清空；删除请求尚未完成。"), { code: "STORAGE_ERROR" });
+      }
     });
-  }
+  } 
 
   configure(enabled) {
     if (typeof enabled !== "boolean") throw new Error("诊断配置无效");
     return this.#serialize(async () => {
+      // Opt-out takes effect in this host even if durable configuration fails.
+      if (!enabled) this.enabled = false;
       const temporary = `${this.configPath}.${process.pid}.tmp`;
-      await writeFile(temporary, `${JSON.stringify({ enabled })}\n`, { mode: 0o600 });
-      await chmod(temporary, 0o600);
-      await rename(temporary, this.configPath);
-      this.enabled = enabled;
-      this.storageError = false;
+      try {
+        await writeFile(temporary, `${JSON.stringify({ enabled })}\n`, { mode: 0o600 });
+        await chmod(temporary, 0o600);
+        await rename(temporary, this.configPath);
+        this.enabled = enabled;
+        this.storageError = false;
+      } catch {
+        await rm(temporary, { force: true }).catch(() => {});
+        this.storageError = true;
+        throw Object.assign(new Error("连接器诊断设置无法保存；请修复本机存储后重新同步。"), { code: "STORAGE_ERROR" });
+      }
     });
-  }
+  } 
 
   idle() { return this.queue.catch(() => {}); }
 
