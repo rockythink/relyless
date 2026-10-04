@@ -73,6 +73,20 @@ content/reader.js 在当前主框架中做有上限的本地正文筛选和白�
 
 用户授权的是符合 SIWC 资格的 ChatGPT Plus/Pro 计划，不是浏览器内保存的 API Key。主机启动临时 loopback 监听器，用每次登录独立的 state、nonce 与 PKCE S256 完成官方 OAuth 流程；在主机验证回调和 ID token 后保留注册身份及凭证，浏览器只获得登录地址、脱敏账户状态和模型信息。OAuth 访问/刷新令牌只在主机持有，既不走扩展消息，也不写入扩展存储、诊断或导出。旧 Codex 凭证不导入，升级需重新安装主机并登录；不保留 CLI 兼容路径。
 
+SIWC 凭证修改复用跨进程互斥：先写完含 PID 的私有 owner 文件，再以原子硬链接发布完整的所有者 inode；不让空文件或未完成写入成为有效锁。活进程锁不按年龄回收，空/无效 PID 或无法验证的锁返回安全的 STORAGE_ERROR。仅确认 PID 已死后才尝试回收，并以每个旧 inode 独立的 recovery 硬链接互斥、再次核对旧 inode 后删除；中断后无法证明安全的恢复不强抢、不按年龄清理，等待受限并保守失败。
+
+锁发布成功后立即移除私有 owner 名称，锁本身继续引用已验证 inode。主机启动仅清理严格匹配凭证锁或刷新锁命名、且 PID 已确认死亡的普通私有文件，包括尚未发布的空文件；保留活进程、无法验证的 PID、符号链接、规范锁与 recovery guard，不按年龄猜测所有权。
+
+退出登录在锁内重读共享记录，清除当前账户及本次退出捕获的旧账户令牌，保留非令牌注册；同时换新并持久化 authorizationEpoch（非秘密 UUID），即使没有账户也留下授权取消墓碑。登录启动在锁内捕获当前世代，OAuth 回调每次提交在锁内重读核对；其他主机退出前发起的回调不能写回令牌，退出后主动发起的新登录可成功。首次初始化与旧记录补写世代也使用同一锁，保留主机身份及已有字段；无效记录不覆盖。刷新在锁内拒绝旧世代请求，其余刷新与回滚写入保留世代，不重置退出墓碑；既有本地取消与 generation 仍生效。捕获的内存/磁盘刷新授权按 client_id 与刷新令牌组合去重，逐一尝试撤销；同一 client_id 的不同轮换授权不能合并成一次撤销。远端撤销未确认报告真实失败，但不恢复已清除的本机授权。
+
+复用有效访问令牌或模型目录缓存前同样在锁内重读共享授权世代；不让未过期令牌绕过退出墓碑。状态查询重读持久记录，世代或账户改变会清空本机模型缓存和会话并取消旧请求。多个相关 grant 并发撤销，发现和撤销各有既有 15 秒上限，网络阶段不按 grant 数串行累积；任何远端未确认仍报告本机已退出、远端未确认。
+
+刷新轮换另用 `siwc.json.refresh.lock` 跨主机串行化，网络不持有凭证锁。凭证锁只保护读取快照、提交前复核及原子写入；提交与终止认证清理均须匹配捕获的世代、账户身份和刷新 grant。退出不等待刷新网络才能清除本机授权；退出期间新签发但未提交的刷新 grant 在凭证锁外尝试撤销，失败安全提示，不覆盖新登录。
+
+回调取得令牌但未成功提交时，在释放凭证锁后使用共同的有界撤销流程清理该 grant；包括本地取消、共享世代拒绝、验证或提交失败。未确认撤销在回调页面和适用的当前账户状态中明确提示，不持久保存丢弃的令牌、不覆盖新的登录尝试。
+
+每次已进入处理的回调持有自己的 cleanup completion/outcome。取消分离尝试后等待其清理；关闭等待已分离的回调清理，退出则将此等待与本机清除及既有 grant 撤销并发执行。35 秒共享清理预算及中止信号约束网络和锁等待，失败不伪报成功；完成/计时器错误都按尝试归属更新状态，不覆盖后续登录。
+
 主机向 `https://api.openai.com/v1/models` 查询目录，并以 `Authorization: Bearer <OAuth access token>` 直接请求 `https://api.openai.com/v1/responses`。模型目录不代表保证可用；实际权限、额度和同意状态决定推理能否完成。HTTP 推理固定 `store:false`、`stream:true`，逐条消费 SSE，只有 `response.completed` 确认成功；失败、incomplete 或提前断流如实报告，不提交未完成的结构化结果。
 
 SIWC HTTP 预览不支持 `previous_response_id` 或 `conversation`；每轮 `input` 数组带当前任务与所需有界历史，不依赖远端持久会话。主机内的临时历史与扩展本机最多 30 天的追问记录是两层不同生命周期；主机重启后，继续追问须从扩展提供的有限历史重建。请求不发送此流程不支持的 `temperature`、`max_output_tokens` 等 API 参数，也不把 SIWC 扩为音视频或完整代理工具接口。协议、隐私与迁移依据见 [ADR 0007](decisions/0007-chatgpt-siwc-native-host.md)。
@@ -86,6 +100,14 @@ Native 主机在 `grok-oauth.json` 独占持有访问/轮换刷新令牌和账�
 账户身份来自 `https://auth.x.ai/oauth2/userinfo`；若服务返回 ID token，先校验其 ES256 签名及 claims，再与 userinfo subject 核对。模型目录 `/models-v2` 与推理 `/responses` 位于 `https://cli-chat-proxy.grok.com/v1`。只暴露适用的 Responses 模型，不把隐藏/API-key-only 项当作订阅权益。请求标识、版本与 User-Agent 如实标识 RelyLess；`X-XAI-Token-Auth: xai-grok-cli` 是兼容的令牌认证方案，不是冒充 CLI 来源。请求 `store:false`，但 xAI 仍接收账户、所需文本和正常网络元数据，正常保留依服务商政策；不承诺零保留。HTTP/SSE 必须明确完成，失败/incomplete/断流或无效结构化结果不算成功。认证、权益/套餐、额度和权限失败如实报告；不新增自动推理重试或 API Key 消费回退。现有用户显式配置的路由与故障转移边界不变。
 
 ChatGPT SIWC 不变；Google 保留现有 Antigravity CLI 和用户配置，不迁移、不删除。[Antigravity 官方 FAQ](https://antigravity.google/docs/faq/) 警告第三方访问违反其服务条款且可能导致账户暂停或终止；保留通道不是官方支持声明。来源、风险和退出条件见 [ADR 0008](decisions/0008-grok-oauth-direct.md)。
+
+### 本机诊断同步与失败边界
+
+`connector/diagnostics.mjs` 处理 `configure(false)` 时先停止进程内记录，再原子持久化配置；磁盘失败返回不含私有路径或令牌的 `STORAGE_ERROR`。扩展先持久保存期望设置，已连接主机未明确确认时向操作方报告 `NATIVE_RPC`，不把进程内关闭当作持久成功；原生配置写入失败后重启可能仍读取旧的 `enabled:true`，下一次连接重试同步。
+
+`extension/diagnostic-service.js` 沿用同一串行 Native 同步队列，但按操作独立处理确认：仅 `configure` 的结果更新配置同步状态 `native.mirror`，`clear` 与 `append` 的结果不能替代配置确认。重连或并发配置/清空时，即使清空成功并移除待清空标记，失败的配置仍保持未同步和原有期望设置；后续配置确认成功才恢复就绪。
+
+诊断清空先删除扩展日志并保存 `diagnosticNativeClear`；仅所有当前已连接主机显式确认成功后移除该标记。任一失败保留待清空请求并报告 `NATIVE_RPC`，已成功主机的删除不回滚；无连接时保留请求到下次连接。同步只使用现有 Native Messaging 连接，不为查看、开关或清空启动主机、连接账户或调用模型；未参与连接的其他独立主机不在本次删除范围内。
 
 ### 构建与验证
 
@@ -102,7 +124,7 @@ ChatGPT SIWC 不变；Google 保留现有 Antigravity CLI 和用户配置，不�
 | 无痕窗口上下文 | 内存/会话 | 不写入普通窗口持久记录 |
 | API Key 和连接配置 | 扩展本机存储 | 不写日志、不进入诊断导出、错误脱敏 |
 | 页面正文与 URL | 默认不持久化 | 只为明确任务发送最小必要内容 |
-| ChatGPT OAuth 注册信息与访问/刷新令牌 | Native 主机数据目录的 `siwc.json` | POSIX 0600；不进入浏览器；不复用 Codex 凭证；退出登录清除账户令牌，保留可复用注册信息 |
+| ChatGPT OAuth 注册信息与访问/刷新令牌 | Native 主机数据目录的 `siwc.json` | POSIX 0600；不进入浏览器；不复用 Codex 凭证；退出清除当前及捕获的旧账户令牌，保留可复用注册信息并逐一尝试撤销不同刷新授权 |
 | ChatGPT 当前推理会话历史 | Native 主机有界内存 | 闲置 30 分钟失效、最多 50 会话/每会话 12 组问答；退出登录、切换账户或主机退出清除 |
 | Grok OAuth 访问/轮换刷新令牌与账户记录 | Native 主机数据目录的 `grok-oauth.json` | POSIX 0600；原子刷新；不进入浏览器；不导入旧 CLI 凭证；退出清本机授权并尝试远端撤销 |
 | 主动追问记录 | 扩展本机 IndexedDB | 最多 30 天、每会话 40 轮；无痕不落盘；继续追问只取有限已完成回合 |

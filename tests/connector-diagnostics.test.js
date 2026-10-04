@@ -184,6 +184,16 @@ test('corrupt native configuration fails closed until explicitly configured',asy
   }finally{await rm(directory,{recursive:true,force:true});}
 });
 
+test('native opt-out stops logging even when its configuration cannot be persisted',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'relyless-diagnostic-optout-'));
+  try{const store=await DiagnosticStore.create(directory);await store.append(event());const before=await readFile(store.path,'utf8');await mkdir(store.configPath);
+    let failure;try{await store.configure(false);}catch(error){failure=error;}
+    expect(failure?.code).toBe('STORAGE_ERROR');expect(failure?.message).not.toContain(directory);expect(store.enabled).toBe(false);expect(store.storageError).toBe(true);
+    expect(await store.append(event({code:'STDERR_TIMEOUT'}))).toBe(false);expect(await readFile(store.path,'utf8')).toBe(before);
+    await rm(store.configPath,{recursive:true});await store.configure(false);expect((await DiagnosticStore.create(directory)).enabled).toBe(false);
+  }finally{await rm(directory,{recursive:true,force:true});}
+});
+
 test('native startup removes expired events and sanitizes retained disk records',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'shisui-diagnostic-retention-'));
   try{

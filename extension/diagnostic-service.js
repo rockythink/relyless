@@ -11,7 +11,12 @@ export function createDiagnostics({storage,session,sync,nativeStatus}) {
   const mirrorToNative=payload=>{
     if(!nativeStatus().connected||mirrorPending>=64||(payload.action==='append'&&!mirror))return Promise.resolve(false);
     mirrorPending++;
-    const work=mirrorWrites.then(async()=>{try{mirror=await sync(payload);return mirror;}catch{mirror=false;return false;}}).finally(()=>{mirrorPending--;});
+    const work=mirrorWrites.then(async()=>{
+      let acknowledged=false;try{acknowledged=await sync(payload);}catch{}
+      // Cleanup and append acknowledgements cannot confirm durable configuration.
+      if(payload.action==='configure')mirror=acknowledged;
+      return acknowledged;
+    }).finally(()=>{mirrorPending--;});
     mirrorWrites=work;return work;
   };
   const record=async(value,epoch=store.epoch,copy=true)=>{
@@ -52,8 +57,8 @@ export function createDiagnostics({storage,session,sync,nativeStatus}) {
     async fromNative(value){await record(value,store.epoch,false);},
     connected(){connectionSync=connectionSync.then(async()=>{try{const state=await store.snapshot(),pending=(await storage.get('diagnosticNativeClear')).diagnosticNativeClear;await mirrorToNative({action:'configure',enabled:state.enabled});if(pending&&await mirrorToNative({action:'clear'}))await storage.remove('diagnosticNativeClear');}catch{await store.record({operation:'CONNECTION',stage:'connection',status:'error',code:'STORAGE_ERROR'});}});return connectionSync;},
     async snapshot(){const state=await store.snapshot(),pendingClear=(await storage.get('diagnosticNativeClear').catch(()=>({}))).diagnosticNativeClear===true;return {...state,native:{connected:nativeStatus().connected,mirror:nativeStatus().connected&&mirror,pendingClear}};},
-    async configure(enabled){await store.configure(enabled);await receiptChange(()=>session.remove(RECEIPTS));await mirrorToNative({action:'configure',enabled});return this.snapshot();},
-    async clear(){await store.clear();await receiptChange(()=>session.remove(RECEIPTS));await storage.set({diagnosticNativeClear:true});if(await mirrorToNative({action:'clear'}))await storage.remove('diagnosticNativeClear');return this.snapshot();},
+    async configure(enabled){await store.configure(enabled);await receiptChange(()=>session.remove(RECEIPTS));const connected=nativeStatus().connected;if(!await mirrorToNative({action:'configure',enabled})&&connected)throw Object.assign(new Error('扩展诊断设置已保存；仍有连接器未确认开关，请重新连接后同步。'),{code:'NATIVE_RPC'});return this.snapshot();}, 
+    async clear(){await store.clear();await receiptChange(()=>session.remove(RECEIPTS));await storage.set({diagnosticNativeClear:true});const connected=nativeStatus().connected;if(await mirrorToNative({action:'clear'}))await storage.remove('diagnosticNativeClear');else if(connected)throw Object.assign(new Error('扩展诊断已清空；仍有连接器未确认删除，请求保留到下次连接。'),{code:'NATIVE_RPC'});return this.snapshot();},
   };
   return service;
 }
