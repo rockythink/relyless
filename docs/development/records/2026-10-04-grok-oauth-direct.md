@@ -3,7 +3,7 @@
 - 日期：2026-10-04
 - 状态：实现完成，自动检查、Native 夹具与真实设置页验收通过；真实订阅授权未执行
 - 相关 Issue：[#49](https://github.com/rockythink/relyless/issues/49)（发布前补充维护者对话决策追踪）
-- 相关 PR：未创建
+- 相关 PR：[#50](https://github.com/rockythink/relyless/pull/50)
 - 相关 ADR：[ADR 0008](../decisions/0008-grok-oauth-direct.md)
 
 ## 背景
