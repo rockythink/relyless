@@ -126,7 +126,7 @@ export class SiwcClient extends EventEmitter {
   }
   #account(){return this.state?.accounts?.[this.state.active]??null;}
   status(){const account=this.#account();return{connected:!this.stopping,authenticated:Boolean(account?.access_token&&account?.scopes?.includes('chatgpt.tokens.use.direct')),email:account?.email??null,plan:null,loginPending:Boolean(this.pending||this.openingLogin),error:this.loginError,features:['conversation']};}
-  async refreshStatus(){await this.start();this.emit('status',this.status());return this.status();}
+  async refreshStatus(){await this.start();await this.#locked(async()=>{const saved=await this.#readState();if(saved.authorizationEpoch!==this.state.authorizationEpoch||saved.active!==this.state.active){this.generation++;this.refreshController?.abort();for(const controller of this.activeRequests)controller.abort();this.modelCache=null;this.conversations.clear();}this.state=saved;});this.emit('status',this.status());return this.status();}
   async #request(url,options={}){return this.fetch(url,{redirect:'error',...options});}
   async #discovery(signal){
     const response=await this.#request(`${AUTH}/.well-known/openid-configuration`,{signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15_000)]):AbortSignal.timeout(15_000)});
@@ -234,7 +234,7 @@ export class SiwcClient extends EventEmitter {
     });
     let revoked=true;
     if(accounts.length){try{const doc=await this.#discovery();if(!doc.revocation_endpoint)throw new Error('No revocation endpoint');
-      for(const account of accounts){try{const response=await this.#request(doc.revocation_endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:account.refresh_token,token_type_hint:'refresh_token',client_id:account.client_id}),signal:AbortSignal.timeout(15_000)});if(!response.ok)revoked=false;}catch{revoked=false;}}
+      revoked=(await Promise.all(accounts.map(async account=>{try{const response=await this.#request(doc.revocation_endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:account.refresh_token,token_type_hint:'refresh_token',client_id:account.client_id}),signal:AbortSignal.timeout(15_000)});return response.ok;}catch{return false;}}))).every(Boolean);
     }catch{revoked=false;}}
     if(!revoked)throw authError('本机已退出 ChatGPT；远程撤销未确认。请在 ChatGPT 设置中断开此应用。');
     return this.status();
@@ -242,12 +242,12 @@ export class SiwcClient extends EventEmitter {
   async #accessToken(){
     await this.start();const initial=this.#account(),generation=this.generation;this.#checkGeneration(generation);
     if(!initial?.scopes?.includes('chatgpt.tokens.use.direct')||!initial.access_token)throw authError('请先登录并授权 ChatGPT 订阅用量。');
-    if(initial.expires_at>Date.now()+60_000)return initial.access_token;
+    // Even a valid token must observe a sign-out committed by another host.
     if(!this.refreshing){
       const controller=new AbortController();this.refreshController=controller;
       this.refreshing=this.#locked(async()=>{
         this.#checkGeneration(generation);const saved=await this.#readState(),clientId=initial.client_id,account=saved.accounts[clientId];this.#checkGeneration(generation);
-        if(saved.authorizationEpoch!==this.state.authorizationEpoch){this.state=saved;this.modelCache=null;this.conversations.clear();throw authError('ChatGPT 请求已取消。','CANCELLED');}
+        if(saved.authorizationEpoch!==this.state.authorizationEpoch){this.state=saved;this.generation++;this.modelCache=null;this.conversations.clear();for(const active of this.activeRequests)active.abort();throw authError('ChatGPT 请求已取消。','CANCELLED');}
         if(saved.active!==clientId||!account?.refresh_token)throw authError('账户已切换，请重新请求。');
         if(account.expires_at>Date.now()+60_000){this.state=saved;return account.access_token;}
         try{
@@ -269,8 +269,8 @@ export class SiwcClient extends EventEmitter {
     return this.refreshing;
   }
   async listModels({refresh=false}={}){
-    if(!refresh&&this.modelCache)return this.modelCache.map(item=>({...item}));
     const token=await this.#accessToken();
+    if(!refresh&&this.modelCache)return this.modelCache.map(item=>({...item}));
     const response=await this.#request(`${API}/models`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(20_000)});
     if(!response.ok)throw await httpFailure(response);
     const body=await jsonResponse(response);

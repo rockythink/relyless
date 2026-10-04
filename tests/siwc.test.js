@@ -240,6 +240,25 @@ test('refresh preserves the shared logout epoch and rejects an older process aft
     await expect(stale.listModels()).rejects.toMatchObject({code:'CANCELLED'});expect(f.requests.filter(item=>item.url==='/api/accounts/oauth/token')).toHaveLength(tokens);expect(await readFile(path,'utf8')).toBe(fresh);expect(stale.state.authorizationEpoch).toBe(JSON.parse(fresh).authorizationEpoch);
   }finally{await stale?.close();await other?.close();await f.close();}
 });
+for(const surface of ['cached-models','inference','status'])test('shared logout blocks unexpired authorization on '+surface,async()=>{
+  const f=await fixture();let other;
+  try{await f.authorize();await f.client.listModels();expect(f.client.state.accounts[clientId].expires_at).toBeGreaterThan(Date.now()+60000);
+    other=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});await other.start();await other.logout();const calls=f.requests.filter(item=>item.url.startsWith('/v1/')).length;
+    if(surface==='status')expect((await f.client.refreshStatus()).authenticated).toBe(false);
+    else await expect(surface==='cached-models'?f.client.listModels():f.client.classify({text:'Flink streams.'})).rejects.toMatchObject({code:'CANCELLED'});
+    expect(f.requests.filter(item=>item.url.startsWith('/v1/'))).toHaveLength(calls);expect(f.client.status().authenticated).toBe(false);expect(f.client.modelCache).toBeNull();
+  }finally{await other?.close();await f.close();}
+});
+
+test('logout revokes captured grants concurrently before completing local sign-out',async()=>{
+  const entered=deferred(),gate=deferred(),tokens=[];const f=await fixture({override:async(target,init)=>{if(target.pathname==='/revoke'){tokens.push(new URLSearchParams(init.body).get('token'));entered.resolve();await gate.promise;return new Response(null,{status:200});}}});let outcome;
+  try{await f.authorize();const path=join(f.dir,'siwc.json'),saved=JSON.parse(await readFile(path,'utf8'));saved.accounts[clientId].refresh_token='replacement-refresh';await writeFile(path,JSON.stringify(saved),{mode:0o600});
+    outcome=f.client.logout().then(value=>({value}),error=>({error}));await entered.promise;
+    expect(new Set(tokens)).toEqual(new Set(['refresh-1','replacement-refresh']));expect(JSON.parse(await readFile(path,'utf8')).accounts[clientId].refresh_token).toBeUndefined();
+    gate.resolve();const result=await outcome;expect(result.error).toBeUndefined();expect(result.value.authenticated).toBe(false);
+  }finally{gate.resolve();await outcome;await f.close();}
+});
+
 
 for(const stage of ['/api/accounts/oauth/token','/keys'])for(const action of ['cancelLogin','logout','close'])test('SIWC '+action+' during '+stage+' cannot persist a late login',async()=>{
   const entered=deferred(),gate=deferred();const f=await fixture({override:async target=>{if(target.pathname===stage){entered.resolve();await gate.promise;}}});
