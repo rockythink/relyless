@@ -1125,7 +1125,7 @@
     if(!link?.isConnected||!inReadingSurface(link))return;
     if(clearNavigationTranslation(link))return;
     const range=document.createRange();range.selectNodeContents(link);const target=passageTarget(range);
-    if(!target||target.kind!=='navigation'||target.error){const message=target?.error||'此链接没有可翻译的英文导航文字。',feedback=localFeedbackTarget(link);if(feedback){showLocalFeedback(feedback,message,{showSource:false});setTaskStatus('lookup',message,{error:true});}return;}
+    if(!target||target.kind!=='navigation'||target.error){const message=target?.error||'此链接没有可翻译的英文导航文字。',feedback=localFeedbackTarget(link);if(feedback){showLocalFeedback(feedback,message,{showSource:false});setTaskStatus('lookup',message,{error:true,duration:3000});}return;}
     void translatePassage(target);
   }
   function clearLookupPreview(){cancelAnimationFrame(lookup.frame);lookup.frame=0;lookup.preview?.remove();lookup.preview=null;}
@@ -1222,7 +1222,7 @@
     const press=lookup.press;lookup.press=null;consumeLookup(event);deferLookupUpdates();if(press.cancelled||press.generation!==state.generation||press.page!==location.href||press.surface!==readingScope()||!isAlive()||state.paused&&!state.reader||!state.enabled&&!state.reader)return;
     removeSelectionTool();getSelection()?.removeAllRanges();
     if(press.target){const link=press.target.displayLink?.element;if(link?.closest('nav,[role="navigation"]'))translateNavigationLink(link);else assistTarget(press.target);}
-    else{const block=readingBlockFor(event.target)||explicitLookupElement(event),target=localFeedbackTarget(block,{left:event.clientX,bottom:event.clientY});if(target){const message=press.error||'请点击英文词语。';showLocalFeedback(target,message,{showSource:false});setTaskStatus('lookup',message,{error:true});}}
+    else{const block=readingBlockFor(event.target)||explicitLookupElement(event),target=localFeedbackTarget(block,{left:event.clientX,bottom:event.clientY});if(target){const message=press.error||'请点击英文词语。';showLocalFeedback(target,message,{showSource:false});setTaskStatus('lookup',message,{error:true,duration:3000});}}
   }
   function onLookupBlur(event){if(event.target===window){resetLookup();lookup.point=null;}}
   function onLookupFocus(event){if(lookupEditing(event))resetLookup();}
