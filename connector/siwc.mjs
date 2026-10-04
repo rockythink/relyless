@@ -1,7 +1,7 @@
 import {EventEmitter} from 'node:events';
 import {createHash,createPublicKey,randomBytes,randomUUID,verify} from 'node:crypto';
 import {createServer} from 'node:http';
-import {chmod,mkdir,open,readFile,rename,rm,writeFile} from 'node:fs/promises';
+import {chmod,mkdir,open,readFile,rename,rm,stat,writeFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {
   SOURCE_DATA_INSTRUCTIONS,SUPPORT_INSTRUCTIONS,SUPPORT_CORRECTION_INSTRUCTIONS,normalizeSupportProviderItems,inspectSupportResponse,normalizeSupportCorrections,normalizePreparationContext,
@@ -42,6 +42,7 @@ function errorFor(response,body) {
   if(response.status===400)return requestError('ChatGPT 不支持此请求或模型，请刷新模型列表。','OUTPUT_INVALID',response.status);
   return requestError('ChatGPT 服务暂时不可用，请稍后重试。',response.status>=500?'HTTP':'NATIVE_RPC',response.status);
 }
+async function httpFailure(response){let body;try{body=await jsonResponse(response);}catch{}return errorFor(response,body);}
 function preferences(value){
   if(value==null)return null;
   if(!object(value)||Object.keys(value).length!==3||!['concise','standard'].includes(value.detail)||!['consistent','contextual'].includes(value.terminology)||!['meaning','usage'].includes(value.focus))throw new Error('个性化翻译偏好无效。');
@@ -49,7 +50,7 @@ function preferences(value){
 }
 async function savePrivate(path,value){
   const temporary=`${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
-  try {await writeFile(temporary,JSON.stringify(value),{mode:0o600});await chmod(temporary,0o600);await rename(temporary,path);}catch(error){await rm(temporary,{force:true}).catch(()=>{});throw error;}
+  try {await writeFile(temporary,JSON.stringify(value),{mode:0o600});await chmod(temporary,0o600);await rename(temporary,path);}catch{await rm(temporary,{force:true}).catch(()=>{});throw authError('无法保存本机 ChatGPT 授权，请检查连接器数据目录。','STORAGE_ERROR');}
 }
 function decodeJwtPart(value){try{return JSON.parse(Buffer.from(value,'base64url').toString('utf8'));}catch{throw authError('ChatGPT 身份令牌格式无效。');}}
 
@@ -59,14 +60,41 @@ export class SiwcClient extends EventEmitter {
     if(!dataDir)throw new TypeError('dataDir 为必填项');
     this.dataDir=resolve(dataDir);this.credentialsPath=join(this.dataDir,'siwc.json');
     this.fetch=fetchImpl;this.timeoutMs=timeoutMs;this.diagnostic=diagnostic;this.serverFactory=serverFactory;
-    this.state=null;this.started=null;this.pending=null;this.refreshing=null;this.generation=0;
+    this.state=null;this.started=null;this.pending=null;this.refreshing=null;this.refreshController=null;this.generation=0;
     this.activeRequests=new Set();this.conversations=new Map();this.modelCache=null;this.stopping=false;this.loginError=null;
   }
   #record(operation,stage,status,code,detail={}){try{Promise.resolve(this.diagnostic?.({at:Date.now(),provider:'chatgpt',operation,stage,status,code,...detail})).catch(()=>{});}catch{}}
+  #registration(account){return{client_id:account.client_id,subject:account.subject,email:account.email};}
+  async #readState(){
+    let saved;try{saved=JSON.parse(await readFile(this.credentialsPath,'utf8'));}catch{throw authError('无法读取本机 ChatGPT 授权记录。','STORAGE_ERROR');}
+    if(!object(saved)||!/^urn:uuid:[0-9a-f-]{36}$/.test(saved.hostId)||!object(saved.accounts)||typeof saved.active!=='string')throw authError('本机 ChatGPT 授权记录无效。');
+    return saved;
+  }
+  #checkGeneration(generation){if(generation!==this.generation||this.stopping)throw authError('ChatGPT 请求已取消。','CANCELLED');}
+  async #locked(action){
+    const path=this.credentialsPath+'.lock',deadline=Date.now()+65_000;let handle;
+    while(!handle){
+      try{handle=await open(path,'wx',0o600);await handle.writeFile(JSON.stringify({pid:process.pid}));}
+      catch(error){
+        if(handle){await handle.close().catch(()=>{});await rm(path,{force:true}).catch(()=>{});throw authError('无法锁定本机 ChatGPT 授权记录。','STORAGE_ERROR');}
+        if(error.code!=='EEXIST')throw authError('无法锁定本机 ChatGPT 授权记录。','STORAGE_ERROR');
+        try{
+          const info=await stat(path);let owner;try{owner=JSON.parse(await readFile(path,'utf8'));}catch{}
+          let abandoned=false;
+          if(Number.isSafeInteger(owner?.pid)&&owner.pid>0){try{process.kill(owner.pid,0);}catch(error){abandoned=error.code==='ESRCH';}}
+          else abandoned=Date.now()-info.mtimeMs>120_000;
+          if(abandoned){const current=await stat(path);if(current.ino===info.ino&&current.mtimeMs===info.mtimeMs){await rm(path,{force:true});continue;}}
+        }catch{}
+        if(Date.now()>=deadline)throw authError('ChatGPT 登录数据正由另一连接器更新，请稍后重试。','STORAGE_ERROR');
+        await new Promise(done=>setTimeout(done,50));
+      }
+    }
+    try{return await action();}finally{try{await handle.close();await rm(path,{force:true});}catch{throw authError('无法释放本机 ChatGPT 授权记录锁。','STORAGE_ERROR');}}
+  }
   async start(){
     if(this.started)return this.started;
     this.started=(async()=>{
-      await mkdir(this.dataDir,{recursive:true,mode:0o700});
+      try{await mkdir(this.dataDir,{recursive:true,mode:0o700});}catch{throw authError('无法创建本机 ChatGPT 授权目录。','STORAGE_ERROR');}
       let saved;
       try{saved=JSON.parse(await readFile(this.credentialsPath,'utf8'));}catch(error){if(error.code!=='ENOENT')throw authError('本机 ChatGPT 授权记录不可读取；请检查连接器数据。');}
       if(saved!==undefined&&(!object(saved)||!/^urn:uuid:[0-9a-f-]{36}$/.test(saved.hostId)||!object(saved.accounts)||typeof saved.active!=='string'))throw authError('本机 ChatGPT 授权记录无效；请检查连接器数据。');
@@ -80,34 +108,35 @@ export class SiwcClient extends EventEmitter {
   status(){const account=this.#account();return{connected:!this.stopping,authenticated:Boolean(account?.access_token&&account?.scopes?.includes('chatgpt.tokens.use.direct')),email:account?.email??null,plan:null,loginPending:Boolean(this.pending),error:this.loginError,features:['conversation']};}
   async refreshStatus(){await this.start();this.emit('status',this.status());return this.status();}
   async #request(url,options={}){return this.fetch(url,{redirect:'error',...options});}
-  async #discovery(){
-    const response=await this.#request(`${AUTH}/.well-known/openid-configuration`,{signal:AbortSignal.timeout(15_000)});
+  async #discovery(signal){
+    const response=await this.#request(`${AUTH}/.well-known/openid-configuration`,{signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15_000)]):AbortSignal.timeout(15_000)});
     if(!response.ok)throw authError('无法验证 ChatGPT 身份服务。');
     const doc=await jsonResponse(response);
     if(doc.issuer!==AUTH||typeof doc.jwks_uri!=='string'||!doc.jwks_uri.startsWith(AUTH+'/')||doc.revocation_endpoint!=null&&(typeof doc.revocation_endpoint!=='string'||!doc.revocation_endpoint.startsWith(AUTH+'/')))throw authError('ChatGPT 身份服务配置无效。');
     return doc;
   }
-  async #identity(token,clientId,nonce){
+  async #identity(token,clientId,nonce,signal){
     if(typeof token!=='string'||token.length>20_000)throw authError('ChatGPT 身份令牌无效。');
     const parts=token.split('.');if(parts.length!==3)throw authError('ChatGPT 身份令牌无效。');
     const header=decodeJwtPart(parts[0]),claims=decodeJwtPart(parts[1]);
     if(header.alg!=='RS256'||typeof header.kid!=='string'||!header.kid||claims.iss!==AUTH||!(claims.aud===clientId||Array.isArray(claims.aud)&&claims.aud.includes(clientId))||nonce!=null&&claims.nonce!==nonce||typeof claims.sub!=='string'||!claims.sub||!Number.isSafeInteger(claims.exp)||claims.exp<=Date.now()/1000-60)throw authError('ChatGPT 身份验证失败。');
-    const discovery=await this.#discovery();
-    const response=await this.#request(discovery.jwks_uri,{signal:AbortSignal.timeout(15_000)});
+    const discovery=await this.#discovery(signal);
+    const response=await this.#request(discovery.jwks_uri,{signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15_000)]):AbortSignal.timeout(15_000)});
     if(!response.ok)throw authError('无法获取 ChatGPT 身份公钥。');
     const jwks=await jsonResponse(response),jwk=jwks.keys?.find(key=>key.kid===header.kid&&key.kty==='RSA'&&(!key.use||key.use==='sig'));
     if(!jwk||!verify('RSA-SHA256',Buffer.from(`${parts[0]}.${parts[1]}`),createPublicKey({key:jwk,format:'jwk'}),Buffer.from(parts[2],'base64url')))throw authError('ChatGPT 身份签名无效。');
     return claims;
   }
-  async #token(form){
-    const response=await this.#request(`${AUTH}/api/accounts/oauth/token`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(form),signal:AbortSignal.timeout(20_000)});
+  async #token(form,signal){
+    const response=await this.#request(`${AUTH}/api/accounts/oauth/token`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(form),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(20_000)]):AbortSignal.timeout(20_000)});
+    if(!response.ok){if(response.status===429)throw requestError('ChatGPT 授权请求受限，请稍后重试。','RATE_LIMIT',429);const failure=authError(response.status>=500?'ChatGPT 授权服务暂不可用。':'ChatGPT 授权已失效，请重新登录。',response.status>=500?'HTTP':'AUTH');failure.terminalAuth=[400,401,403].includes(response.status);throw failure;}
     const body=await jsonResponse(response);
-    if(!response.ok)throw authError(response.status===400?'ChatGPT 授权已过期，请重新登录。':'ChatGPT 授权服务暂不可用。');
     if(typeof body.access_token!=='string'||typeof body.refresh_token!=='string'||typeof body.id_token!=='string'||!Number.isSafeInteger(body.expires_in)||body.expires_in<1||typeof body.scope!=='string')throw authError('ChatGPT 授权响应无效。');
     return body;
   }
   async login(){
     await this.start();
+    if(this.stopping)throw authError('ChatGPT 连接器已关闭。','CANCELLED');
     if(this.pending)throw authError('ChatGPT 登录正在进行中。');
     const previous=this.#account(),clientId=previous?.client_id??'dynamic_agent_client';
     const state=base64url(randomBytes(32)),nonce=base64url(randomBytes(32)),verifier=base64url(randomBytes(32));
@@ -115,7 +144,7 @@ export class SiwcClient extends EventEmitter {
     try{await new Promise((ok,fail)=>{server.once('error',fail);server.listen(0,'127.0.0.1',ok);});}catch{throw authError('无法启动本机 ChatGPT 登录回调。');}
     const port=server.address().port,redirectUri=`http://127.0.0.1:${port}/auth/callback`;
     const timer=setTimeout(()=>void this.cancelLogin(),5*60_000);timer.unref?.();
-    this.pending={server,timer,state,nonce,verifier,redirectUri,clientId,previous};
+    this.pending={server,timer,state,nonce,verifier,redirectUri,clientId,previous,controller:new AbortController()};
     const url=new URL(`${AUTH}/api/accounts/authorize`);
     const values={client_id:clientId,ext_agent_host_id:this.state.hostId,response_type:'code',redirect_uri:redirectUri,scope:SCOPES,resource:API,state,nonce,code_challenge_method:'S256',code_challenge:base64url(createHash('sha256').update(verifier).digest())};
     if(previous?.email)values.login_hint=previous.email;
@@ -135,72 +164,77 @@ export class SiwcClient extends EventEmitter {
     if(!url.searchParams.get('code')||!/^oaiapp_[A-Za-z0-9_-]{3,256}$/.test(issued||'')||pending.previous&&issued!==pending.previous.client_id){await this.cancelLogin();return finish(400,'Authorization invalid.');}
     pending.processing=true;
     try{
-      const tokens=await this.#token({grant_type:'authorization_code',client_id:issued,code:url.searchParams.get('code'),code_verifier:pending.verifier,redirect_uri:pending.redirectUri,resource:API});
-      const identity=await this.#identity(tokens.id_token,issued,pending.nonce);
+      const tokens=await this.#token({grant_type:'authorization_code',client_id:issued,code:url.searchParams.get('code'),code_verifier:pending.verifier,redirect_uri:pending.redirectUri,resource:API},pending.controller.signal);
+      const identity=await this.#identity(tokens.id_token,issued,pending.nonce,pending.controller.signal);
       if(pending.previous&&identity.sub!==pending.previous.subject)throw authError('ChatGPT 账户与原授权不一致。');
       const granted=tokens.scope.split(' ');
       if(!granted.includes('chatgpt.tokens.use.direct'))throw authError('ChatGPT 未授权订阅用量，请重新授权。');
-      const account={client_id:issued,subject:identity.sub,email:typeof identity.email==='string'?identity.email.slice(0,320):'',id_token:tokens.id_token,access_token:tokens.access_token,refresh_token:tokens.refresh_token,scopes:granted,expires_at:Date.now()+tokens.expires_in*1000};
-      const next={...this.state,active:issued,accounts:{...this.state.accounts,[issued]:account}};
-      await savePrivate(this.credentialsPath,next);
-      this.state=next;this.generation++;this.modelCache=null;this.conversations.clear();this.loginError=null;
-      this.emit('status',this.status());
-      finish(200,'RelyLess ChatGPT authorization complete. You may close this tab.');
-    }catch(error){this.loginError=error.message;finish(400,'Authorization failed. Return to RelyLess and try again.');}
-    finally{await this.cancelLogin();}
+      await this.#locked(async()=>{
+        if(this.pending!==pending||this.stopping)return;
+        const saved=await this.#readState();if(this.pending!==pending||this.stopping)return;
+        const account={client_id:issued,subject:identity.sub,email:typeof identity.email==='string'?identity.email.slice(0,320):'',id_token:tokens.id_token,access_token:tokens.access_token,refresh_token:tokens.refresh_token,scopes:granted,expires_at:Date.now()+tokens.expires_in*1000};
+        const next={...saved,active:issued,accounts:{...saved.accounts,[issued]:account}};
+        await savePrivate(this.credentialsPath,next);
+        if(this.pending!==pending||this.stopping){await savePrivate(this.credentialsPath,saved);return;}
+        this.state=next;this.generation++;this.modelCache=null;this.conversations.clear();this.loginError=null;
+        this.emit('status',this.status());finish(200,'RelyLess ChatGPT authorization complete. You may close this tab.');
+      });
+      if(!response.writableEnded)finish(400,'Authorization cancelled.');
+    }catch(error){if(this.pending===pending)this.loginError=error.message;finish(400,'Authorization failed. Return to RelyLess and try again.');}
+    finally{if(this.pending===pending)this.#clearLogin(pending);}
   }
+  #clearLogin(pending){this.pending=null;clearTimeout(pending.timer);pending.controller.abort();pending.server.close();this.emit('status',this.status());}
   async cancelLogin(){
-    const pending=this.pending;this.pending=null;
-    if(pending){clearTimeout(pending.timer);pending.server.close();}
-    this.emit('status',this.status());return this.status();
+    const pending=this.pending;
+    if(pending){this.#clearLogin(pending);if(pending.processing)await this.#locked(async()=>{});}
+    return this.status();
   }
   async logout(){
-    await this.start();await this.cancelLogin();
-    const account=this.#account();
+    await this.start();const account=this.#account();this.generation++;this.refreshController?.abort();
+    for(const controller of this.activeRequests)controller.abort();
+    this.conversations.clear();this.modelCache=null;
+    if(account){this.state={...this.state,accounts:{...this.state.accounts,[account.client_id]:this.#registration(account)}};this.emit('status',this.status());}
+    await this.cancelLogin();
+    if(account)await this.#locked(async()=>{const saved=await this.#readState(),current=saved.accounts[account.client_id];if(current)saved.accounts[account.client_id]=this.#registration(current);await savePrivate(this.credentialsPath,saved);this.state=saved;this.emit('status',this.status());});
     let revoked=true;
     if(account?.refresh_token){try{const doc=await this.#discovery();if(!doc.revocation_endpoint)throw new Error('No revocation endpoint');const response=await this.#request(doc.revocation_endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:account.refresh_token,token_type_hint:'refresh_token',client_id:account.client_id}),signal:AbortSignal.timeout(15_000)});revoked=response.ok;}catch{revoked=false;}}
-    if(account){const next={...this.state,accounts:{...this.state.accounts,[account.client_id]:{client_id:account.client_id,subject:account.subject,email:account.email}}};await savePrivate(this.credentialsPath,next);this.state=next;}
-    this.generation++;this.conversations.clear();this.modelCache=null;
-    for(const controller of this.activeRequests)controller.abort();
-    this.emit('status',this.status());
     if(!revoked)throw authError('本机已退出 ChatGPT；远程撤销未确认。请在 ChatGPT 设置中断开此应用。');
     return this.status();
   }
   async #accessToken(){
-    await this.start();let account=this.#account();
-    if(!account?.scopes?.includes('chatgpt.tokens.use.direct')||!account.access_token)throw authError('请先登录并授权 ChatGPT 订阅用量。');
-    if(account.expires_at>Date.now()+60_000)return account.access_token;
-    if(!this.refreshing)this.refreshing=(async()=>{
-      const clientId=account.client_id,lockPath=this.credentialsPath+'.lock';
-      let lock;
-      for(let attempt=0;attempt<100;attempt++){
-        try{lock=await open(lockPath,'wx',0o600);break;}
-        catch(error){if(error.code!=='EEXIST')throw error;await new Promise(done=>setTimeout(done,100));}
-      }
-      if(!lock)throw authError('ChatGPT 登录数据正由另一连接器更新，请稍后重试。');
-      try{
-        const saved=JSON.parse(await readFile(this.credentialsPath,'utf8'));
-        account=saved?.accounts?.[clientId];
+    await this.start();const initial=this.#account(),generation=this.generation;this.#checkGeneration(generation);
+    if(!initial?.scopes?.includes('chatgpt.tokens.use.direct')||!initial.access_token)throw authError('请先登录并授权 ChatGPT 订阅用量。');
+    if(initial.expires_at>Date.now()+60_000)return initial.access_token;
+    if(!this.refreshing){
+      const controller=new AbortController();this.refreshController=controller;
+      this.refreshing=this.#locked(async()=>{
+        this.#checkGeneration(generation);const saved=await this.#readState(),clientId=initial.client_id,account=saved.accounts[clientId];this.#checkGeneration(generation);
         if(saved.active!==clientId||!account?.refresh_token)throw authError('账户已切换，请重新请求。');
         if(account.expires_at>Date.now()+60_000){this.state=saved;return account.access_token;}
-        const tokens=await this.#token({grant_type:'refresh_token',client_id:clientId,refresh_token:account.refresh_token,resource:API});
-        if(this.#account()?.client_id!==clientId)throw authError('账户已切换，请重新请求。');
-        const identity=await this.#identity(tokens.id_token,clientId,null);
-        if(identity.sub!==account.subject||!tokens.scope.split(' ').includes('chatgpt.tokens.use.direct'))throw authError('ChatGPT 账户或订阅授权已变化，请重新登录。');
-        const nextAccount={...account,access_token:tokens.access_token,refresh_token:tokens.refresh_token,id_token:tokens.id_token,scopes:tokens.scope.split(' '),expires_at:Date.now()+tokens.expires_in*1000};
-        const next={...saved,accounts:{...saved.accounts,[clientId]:nextAccount}};
-        await savePrivate(this.credentialsPath,next);this.state=next;this.emit('status',this.status());
-        return nextAccount.access_token;
-      }finally{await lock.close();await rm(lockPath,{force:true});}
-    })().finally(()=>{this.refreshing=null;});
+        try{
+          const tokens=await this.#token({grant_type:'refresh_token',client_id:clientId,refresh_token:account.refresh_token,resource:API},controller.signal);this.#checkGeneration(generation);
+          const identity=await this.#identity(tokens.id_token,clientId,null,controller.signal);this.#checkGeneration(generation);
+          if(identity.sub!==account.subject||!tokens.scope.split(' ').includes('chatgpt.tokens.use.direct'))throw Object.assign(authError('ChatGPT 账户或订阅授权已变化，请重新登录。'),{terminalAuth:true});
+          const nextAccount={...account,access_token:tokens.access_token,refresh_token:tokens.refresh_token,id_token:tokens.id_token,scopes:tokens.scope.split(' '),expires_at:Date.now()+tokens.expires_in*1000};
+          const next={...saved,accounts:{...saved.accounts,[clientId]:nextAccount}};
+          await savePrivate(this.credentialsPath,next);
+          if(generation!==this.generation||this.stopping){await savePrivate(this.credentialsPath,saved);this.#checkGeneration(generation);}
+          this.state=next;this.emit('status',this.status());return nextAccount.access_token;
+        }catch(error){
+          this.#checkGeneration(generation);
+          if(error.terminalAuth){saved.accounts[clientId]=this.#registration(account);await savePrivate(this.credentialsPath,saved);this.state=saved;this.generation++;this.modelCache=null;this.conversations.clear();this.emit('status',this.status());}
+          throw error;
+        }
+      }).finally(()=>{this.refreshing=null;this.refreshController=null;});
+    }
     return this.refreshing;
   }
   async listModels({refresh=false}={}){
     if(!refresh&&this.modelCache)return this.modelCache.map(item=>({...item}));
     const token=await this.#accessToken();
     const response=await this.#request(`${API}/models`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(20_000)});
+    if(!response.ok)throw await httpFailure(response);
     const body=await jsonResponse(response);
-    if(!response.ok)throw errorFor(response,body);
     if(!Array.isArray(body.models))throw requestError('ChatGPT 模型列表无效。','OUTPUT_INVALID');
     const models=body.models.filter(item=>item?.visibility==='list'&&typeof item.slug==='string'&&item.slug.length<=200&&typeof item.display_name==='string').slice(0,256).map((item,index)=>({id:item.slug,name:item.display_name.slice(0,200),isDefault:index===0}));
     if(!models.length)throw authError('此 ChatGPT 账户没有可用的订阅模型。');
@@ -208,17 +242,18 @@ export class SiwcClient extends EventEmitter {
   }
   async #model(model){const models=await this.listModels();const selected=model?models.find(item=>item.id===model):models[0];if(!selected)throw requestError('所选 ChatGPT 模型不可用，请刷新模型列表。','OUTPUT_INVALID');return selected.id;}
   async #infer({operation,traceId,model,instructions,input,parse,raw=false,onProgress,progress}){
-    const selected=await this.#model(model),token=await this.#accessToken(),generation=this.generation,controller=new AbortController();
+    const generation=this.generation,selected=await this.#model(model);this.#checkGeneration(generation);
+    const token=await this.#accessToken();this.#checkGeneration(generation);const controller=new AbortController();
     this.activeRequests.add(controller);
     const timer=setTimeout(()=>controller.abort(),this.timeoutMs);timer.unref?.();
     const started=Date.now();this.#record(operation,'provider','start','NATIVE_START');
     try{
       const response=await this.#request(`${API}/responses`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({model:selected,instructions,input:Array.isArray(input)?input:[{role:'user',content:JSON.stringify(input)}],store:false,stream:true}),signal:controller.signal});
-      if(!response.ok)throw errorFor(response,await jsonResponse(response));
+      if(!response.ok)throw await httpFailure(response);
       if(!response.body)throw requestError('ChatGPT 未返回响应流。','OUTPUT_INVALID');
       const decoder=new TextDecoder();let buffer='',text='',total=0,completed=false;
       for await(const chunk of response.body){
-        if(generation!==this.generation)throw authError('账户已切换，请重新请求。');
+        this.#checkGeneration(generation);
         total+=chunk.byteLength;if(total>MAX_STREAM)throw requestError('ChatGPT 响应流过大。','OUTPUT_INVALID');
         buffer+=decoder.decode(chunk,{stream:true});
         for(let boundary;(boundary=buffer.search(/\r?\n\r?\n/))>=0;){
@@ -236,6 +271,7 @@ export class SiwcClient extends EventEmitter {
           else if(event.type==='response.completed')completed=true;
         }
       }
+      this.#checkGeneration(generation);
       if(!completed||!text)throw requestError('ChatGPT 响应中断或为空，请重试。','OUTPUT_INVALID');
       let value=text;
       if(!raw)try{value=JSON.parse(text);}catch{throw requestError('ChatGPT 返回的结构化结果无效。','OUTPUT_INVALID');}
@@ -285,5 +321,5 @@ export class SiwcClient extends EventEmitter {
     while(this.conversations.size>CONVERSATION_LIMIT)this.conversations.delete(this.conversations.keys().next().value);
     return result;
   }
-  async close(){this.stopping=true;await this.cancelLogin();for(const controller of this.activeRequests)controller.abort();this.conversations.clear();}
+  async close(){this.stopping=true;this.generation++;this.refreshController?.abort();await this.cancelLogin();for(const controller of this.activeRequests)controller.abort();await this.refreshing?.catch(()=>{});this.conversations.clear();}
 }
