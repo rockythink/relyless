@@ -187,6 +187,58 @@ test('a valid-looking delta without response.completed is never accepted',async(
 });
 
 const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};};
+const remainsPending=async promise=>expect(await Promise.race([promise.then(()=>false,()=>false),new Promise(done=>setTimeout(()=>done(true),40))])).toBe(true);
+for(const action of ['cancelLogin','logout','close'])for(const revokeStatus of [200,503])test('owned callback cleanup '+action+' waits for revocation '+revokeStatus+' without retaining login ownership',async()=>{
+  let paused=false;const entered=deferred(),gate=deferred(),revoking=deferred(),revokeGate=deferred();
+  const f=await fixture({override:async(target,init)=>{if(paused&&target.pathname==='/keys'){entered.resolve();await gate.promise;}if(paused&&target.pathname==='/revoke'&&new URLSearchParams(init.body).get('token')==='refresh-2'){revoking.resolve();await revokeGate.promise;return new Response(null,{status:revokeStatus});}}});let outcome;
+  try{await f.authorize();await f.client.cancelLogin();paused=true;const authorization=f.authorize();await entered.promise;outcome=f.client[action]().then(value=>({value}),error=>({error}));await remainsPending(outcome);expect(f.client.status().loginPending).toBe(false);
+    gate.resolve();await revoking.promise;await remainsPending(outcome);if(action==='logout')expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBeUndefined();
+    revokeGate.resolve();const result=await outcome;expect((await authorization).response.status).toBe(400);
+    if(revokeStatus===503)expect(result.error?.message).toContain('远程撤销未确认');else expect(result.error).toBeUndefined();
+    if(action==='logout')expect(f.client.status().authenticated).toBe(false);
+  }finally{gate.resolve();revokeGate.resolve();await outcome;await f.close();}
+});
+
+test('cancelLogin does not await an unrelated credential lock after its callback is discarded',async()=>{
+  const entered=deferred(),gate=deferred();const f=await fixture({override:async target=>{if(target.pathname==='/keys'){entered.resolve();await gate.promise;}}});let outcome;
+  const lock=join(f.dir,'siwc.json.lock');
+  try{const authorization=f.authorize();await entered.promise;await writeFile(lock,JSON.stringify({pid:process.pid}),{mode:0o600});outcome=f.client.cancelLogin();await remainsPending(outcome);gate.resolve();await outcome;expect((await authorization).response.status).toBe(400);expect(JSON.parse(await readFile(lock,'utf8')).pid).toBe(process.pid);expect(f.requests.some(item=>item.url==='/revoke')).toBe(true);}
+  finally{gate.resolve();await rm(lock,{force:true});await outcome;await f.close();}
+});
+
+test('close waits for detached cleanup and old revocation failure cannot overwrite a newer completed login',async()=>{
+  const entered=deferred(),gate=deferred();let paused=true;const f=await fixture({override:async(target,init)=>{if(target.pathname==='/keys'&&paused){entered.resolve();await gate.promise;}if(target.pathname==='/revoke'&&new URLSearchParams(init.body).get('token')==='refresh-1')return new Response(null,{status:503});}});let cancelled,closing;
+  try{const authorization=f.authorize();await entered.promise;cancelled=f.client.cancelLogin().then(value=>({value}),error=>({error}));await remainsPending(cancelled);paused=false;expect((await f.authorize()).response.status).toBe(200);await f.client.pending?.completion;expect(f.client.status().error).toBeNull();closing=f.client.close().then(value=>({value}),error=>({error}));await remainsPending(closing);gate.resolve();expect((await authorization).response.status).toBe(400);expect((await cancelled).error?.message).toContain('远程撤销未确认');expect((await closing).error?.message).toContain('远程撤销未确认');expect(f.client.status()).toMatchObject({authenticated:true,error:null});}
+  finally{gate.resolve();await cancelled;await closing;await f.close();}
+});
+
+test('an expired login timer waits for cleanup failure without overwriting a fresh completed login',async()=>{
+  const entered=deferred(),gate=deferred();let paused=true,expireLogin;const f=await fixture({override:async(target,init)=>{if(paused&&target.pathname==='/keys'){entered.resolve();await gate.promise;}if(target.pathname==='/revoke'&&new URLSearchParams(init.body).get('token')==='refresh-1')return new Response(null,{status:503});}}),timeout=globalThis.setTimeout;let oldCompletion;
+  try{globalThis.setTimeout=(callback,ms,...args)=>{if(ms===5*60_000)expireLogin=callback;return timeout(callback,ms,...args);};const authorization=f.authorize();await entered.promise;globalThis.setTimeout=timeout;expect(typeof expireLogin).toBe('function');oldCompletion=f.client.pending.completion;expireLogin();await remainsPending(oldCompletion);expect(f.client.status().loginPending).toBe(false);paused=false;expect((await f.authorize()).response.status).toBe(200);await f.client.pending?.completion;gate.resolve();expect((await authorization).response.status).toBe(400);expect((await oldCompletion).unconfirmed).toBe(true);await new Promise(done=>timeout(done,0));expect(f.client.status()).toMatchObject({authenticated:true,error:null,loginPending:false});}
+  finally{globalThis.setTimeout=timeout;gate.resolve();await oldCompletion;await f.close();}
+});
+
+test('callback completion settles when finishing the HTTP response throws',async()=>{
+  const entered=deferred(),gate=deferred();const f=await fixture({override:async target=>{if(target.pathname==='/keys'){entered.resolve();await gate.promise;}}});const create=f.client.serverFactory;let outcome;
+  f.client.serverFactory=callback=>create((request,response)=>{const write=response.writeHead.bind(response);let thrown=false;response.writeHead=(...args)=>{if(!thrown&&args[0]===400){thrown=true;throw new Error('Fixture response failure');}return write(...args);};callback(request,response);});
+  try{const authorization=f.authorize();await entered.promise;outcome=f.client.cancelLogin();await remainsPending(outcome);gate.resolve();await outcome;expect((await authorization).response.status).toBe(400);expect(f.client.status().loginPending).toBe(false);expect(f.client.callbackCleanups.size).toBe(0);}
+  finally{gate.resolve();await outcome;await f.close();}
+});
+
+test('callback cleanup deadline reports unconfirmed without retaining the cancelled attempt',async()=>{
+  const entered=deferred(),gate=deferred();const f=await fixture({override:async target=>{if(target.pathname==='/keys'){entered.resolve();await gate.promise;}}});let outcome;
+  try{const authorization=f.authorize();await entered.promise;outcome=f.client.cancelLogin(AbortSignal.timeout(80)).then(value=>({value}),error=>({error}));await remainsPending(outcome);expect((await outcome).error?.message).toContain('远程撤销未确认');expect(f.client.status().loginPending).toBe(false);gate.resolve();expect((await authorization).response.status).toBe(400);}
+  finally{gate.resolve();await outcome;await f.close();}
+});
+
+test('logout preserves local sign-out when its overall callback cleanup budget expires',async()=>{
+  let paused=false;const entered=deferred(),gate=deferred();const f=await fixture({override:async(target,init)=>{if(paused&&target.pathname==='/keys'){entered.resolve();await gate.promise;}if(init.signal?.aborted)throw init.signal.reason;}});let outcome;
+  try{await f.authorize();await f.client.cancelLogin();paused=true;const authorization=f.authorize();await entered.promise;
+    // Compress only this operation's overall deadline; restore before any asynchronous continuation.
+    const timeout=AbortSignal.timeout;try{AbortSignal.timeout=ms=>timeout(ms===35_000?120:ms);outcome=f.client.logout().then(value=>({value}),error=>({error}));}finally{AbortSignal.timeout=timeout;}
+    await remainsPending(outcome);const result=await outcome;expect(result.error?.message).toContain('本机已退出');expect(result.error?.message).toContain('远程撤销未确认');expect(f.client.status()).toMatchObject({authenticated:false,loginPending:false});expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBeUndefined();gate.resolve();expect((await authorization).response.status).toBe(400);
+  }finally{gate.resolve();await outcome;await f.close();}
+});
 async function expire(f){const path=join(f.dir,'siwc.json'),saved=JSON.parse(await readFile(path,'utf8'));saved.accounts[clientId].expires_at=0;await writeFile(path,JSON.stringify(saved),{mode:0o600});f.client.state.accounts[clientId].expires_at=0;}
 for(const revokeStatus of [200,503])test('shared logout revokes discarded late grants and reports remote '+revokeStatus,async()=>{
   const entered=deferred(),gate=deferred();let paused=true,other;
@@ -272,20 +324,62 @@ test('logout revokes captured grants concurrently before completing local sign-o
 
 for(const stage of ['/api/accounts/oauth/token','/keys'])for(const action of ['cancelLogin','logout','close'])test('SIWC '+action+' during '+stage+' cannot persist a late login',async()=>{
   const entered=deferred(),gate=deferred();const f=await fixture({override:async target=>{if(target.pathname===stage){entered.resolve();await gate.promise;}}});
-  try{const authorization=f.authorize();await entered.promise;await f.client[action]();gate.resolve();expect((await authorization).response.status).toBe(400);expect(f.client.status().authenticated).toBe(false);expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId]?.access_token).toBeUndefined();}
+  try{const authorization=f.authorize();await entered.promise;const actionResult=f.client[action]();await remainsPending(actionResult);gate.resolve();await actionResult;expect((await authorization).response.status).toBe(400);expect(f.client.status().authenticated).toBe(false);expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId]?.access_token).toBeUndefined();}
   finally{gate.resolve();await f.close();}
 });
 
 test('a cancelled callback cannot close a newer login attempt',async()=>{
   const entered=deferred(),gate=deferred();const f=await fixture({override:async target=>{if(target.pathname==='/api/accounts/oauth/token'){entered.resolve();await gate.promise;}}});
-  try{const authorization=f.authorize();await entered.promise;await f.client.cancelLogin();await f.client.login();gate.resolve();expect((await authorization).response.status).toBe(400);expect(f.client.status()).toMatchObject({authenticated:false,loginPending:true});}
+  try{const authorization=f.authorize();await entered.promise;const cancelled=f.client.cancelLogin();await remainsPending(cancelled);await f.client.login();gate.resolve();await cancelled;expect((await authorization).response.status).toBe(400);expect(f.client.status()).toMatchObject({authenticated:false,loginPending:true});}
   finally{gate.resolve();await f.close();}
 });
 
-for(const stage of ['/api/accounts/oauth/token','/keys'])test('SIWC logout during refresh '+stage+' stays logged out on disk and restart',async()=>{
-  let refreshing=false;const entered=deferred(),gate=deferred();const f=await fixture({override:async target=>{if(refreshing&&target.pathname===stage){entered.resolve();await gate.promise;}}});
-  try{await f.authorize();await expire(f);refreshing=true;const outcome=f.client.classify({text:'Flink streams.'}).then(value=>({value}),error=>({error}));await entered.promise;const logout=f.client.logout();gate.resolve();await logout;expect((await outcome).error?.code).toBe('CANCELLED');expect(f.client.status().authenticated).toBe(false);const saved=JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8'));expect(saved.accounts[clientId].refresh_token).toBeUndefined();const restored=new SiwcClient({dataDir:f.dir});await restored.start();expect(restored.status().authenticated).toBe(false);await restored.close();}
-  finally{gate.resolve();await f.close();}
+for(const stage of ['/api/accounts/oauth/token','/keys'])for(const revokeStatus of [200,503])test('shared logout completes before gated refresh '+stage+' and rejects late grant '+revokeStatus,async()=>{
+  let refreshing=false,other,outcome,logout;const entered=deferred(),gate=deferred();
+  const f=await fixture({override:async target=>{if(refreshing&&target.pathname===stage){entered.resolve();await gate.promise;}if(target.pathname==='/revoke')return new Response(null,{status:revokeStatus});}});
+  try{await f.authorize();await expire(f);other=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});await other.start();refreshing=true;
+    outcome=f.client.classify({text:'Flink streams.'}).then(value=>({value}),error=>({error}));await entered.promise;
+    logout=other.logout().then(value=>({value}),error=>({error}));let timer;
+    try{const result=await Promise.race([logout,new Promise(done=>{timer=setTimeout(()=>done({blocked:true}),250);})]);expect(result.blocked).toBeUndefined();if(revokeStatus===200)expect(result.value.authenticated).toBe(false);else expect(result.error.message).toContain('远程撤销未确认');}finally{clearTimeout(timer);}
+    expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBeUndefined();
+    gate.resolve();const result=await outcome;expect(result.error?.code).toBe('CANCELLED');
+    expect(f.requests.filter(item=>item.url==='/revoke').map(item=>new URLSearchParams(item.init.body).get('token'))).toContain('refresh-2');
+    if(revokeStatus===503){expect(result.error.message).toContain('远程撤销未确认');expect(f.client.status().error).toContain('远程撤销未确认');}
+    expect(f.client.status().authenticated).toBe(false);expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].access_token).toBeUndefined();
+    const restored=new SiwcClient({dataDir:f.dir});try{await restored.start();expect(restored.status().authenticated).toBe(false);}finally{await restored.close();}
+  }finally{gate.resolve();await logout;await outcome;await other?.close();await f.close();}
+});
+
+test('terminal refresh failure cannot erase a newer authorization for the same client',async()=>{
+  const entered=deferred(),gate=deferred();let paused=false,other,outcome;
+  const f=await fixture({override:async(target,init)=>{if(paused&&target.pathname==='/api/accounts/oauth/token'&&new URLSearchParams(init.body).get('grant_type')==='refresh_token'){entered.resolve();await gate.promise;return json({error:'invalid_grant'},400);}}});
+  try{await f.authorize();await expire(f);other=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});await other.start();paused=true;
+    outcome=f.client.listModels().then(value=>({value}),error=>({error}));await entered.promise;
+    const url=new URL((await other.login()).authUrl),callback=new URL(url.searchParams.get('redirect_uri'));fixture.nonce=url.searchParams.get('nonce');
+    for(const [key,value] of [['state',url.searchParams.get('state')],['client_id',clientId],['code','fresh-code']])callback.searchParams.set(key,value);
+    let timer;try{expect(await Promise.race([fetch(callback).then(response=>response.status),new Promise(done=>{timer=setTimeout(()=>done('blocked'),250);})])).toBe(200);}finally{clearTimeout(timer);}const path=join(f.dir,'siwc.json'),fresh=await readFile(path,'utf8');
+    gate.resolve();expect((await outcome).error?.code).toBe('CANCELLED');expect(await readFile(path,'utf8')).toBe(fresh);expect(JSON.parse(fresh).accounts[clientId].refresh_token).toBe('refresh-2');expect(other.status().authenticated).toBe(true);
+  }finally{gate.resolve();await outcome;await other?.close();await f.close();}
+});
+
+for(const stage of ['/api/accounts/oauth/token','/keys'])test('local logout does not wait for a gated refresh '+stage,async()=>{
+  const entered=deferred(),gate=deferred();let paused=false,outcome,logout;
+  const f=await fixture({override:async target=>{if(paused&&target.pathname===stage){entered.resolve();await gate.promise;}}});
+  try{await f.authorize();await expire(f);paused=true;outcome=f.client.listModels().then(value=>({value}),error=>({error}));await entered.promise;
+    logout=f.client.logout();await logout;expect(f.client.status().authenticated).toBe(false);
+    gate.resolve();expect((await outcome).error?.code).toBe('CANCELLED');expect(f.requests.filter(item=>item.url==='/revoke').map(item=>new URLSearchParams(item.init.body).get('token'))).toContain('refresh-2');
+    expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBeUndefined();
+  }finally{gate.resolve();await logout;await outcome;await f.close();}
+});
+
+test('logout cancels a refresh-lock waiter before the other client releases its network gate',async()=>{
+  const entered=deferred(),gate=deferred();let paused=false,other,first,second;
+  const f=await fixture({override:async(target,init)=>{if(paused&&target.pathname==='/api/accounts/oauth/token'&&new URLSearchParams(init.body).get('grant_type')==='refresh_token'){entered.resolve();await gate.promise;}}});
+  try{await f.authorize();await expire(f);other=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});await other.start();paused=true;
+    first=f.client.listModels().then(value=>({value}),error=>({error}));await entered.promise;second=other.listModels().then(value=>({value}),error=>({error}));
+    await new Promise(done=>setTimeout(done,100));await other.logout();expect((await second).error?.code).toBe('CANCELLED');
+    gate.resolve();expect((await first).error?.code).toBe('CANCELLED');expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBeUndefined();
+  }finally{gate.resolve();await first;await second;await other?.close();await f.close();}
 });
 
 test('invalid refresh grants clear tokens but retain the issued registration for explicit login',async()=>{
@@ -304,8 +398,15 @@ test('refresh recovers a dead owner lock without manual credential changes',asyn
   const f=await fixture();try{await f.authorize();await expire(f);const owner=spawnSync('node',['-e','process.exit(0)']);expect(owner.status).toBe(0);await writeFile(join(f.dir,'siwc.json.lock'),JSON.stringify({pid:owner.pid}),{mode:0o600});expect(await f.client.classify({text:'Flink streams.'})).toEqual({domain:'tech',source:'chatgpt'});expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBe('refresh-2');}finally{await f.close();}
 },15000);
 
-test('two independent SIWC clients serialize a rotating refresh',async()=>{
-  const f=await fixture();let other;try{await f.authorize();await expire(f);other=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});await other.start();await Promise.all([f.client.listModels(),other.listModels()]);expect(f.requests.filter(item=>item.url==='/api/accounts/oauth/token')).toHaveLength(2);expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBe('refresh-2');}finally{await other?.close();await f.close();}
+test('two independent SIWC clients serialize a gated rotating refresh',async()=>{
+  const entered=deferred(),gate=deferred();let paused=false,other,outcomes;
+  const f=await fixture({override:async(target,init)=>{if(paused&&target.pathname==='/api/accounts/oauth/token'&&new URLSearchParams(init.body).get('grant_type')==='refresh_token'){entered.resolve();await gate.promise;}}});
+  try{await f.authorize();await expire(f);other=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});await other.start();paused=true;
+    const first=f.client.listModels();await entered.promise;const second=other.listModels();outcomes=Promise.all([first,second]);
+    await new Promise(done=>setTimeout(done,100));expect(f.requests.filter(item=>item.url==='/api/accounts/oauth/token')).toHaveLength(2);
+    gate.resolve();expect((await outcomes).map(models=>models[0].id)).toEqual(['fixture-model','fixture-model']);
+    expect(f.requests.filter(item=>item.url==='/api/accounts/oauth/token')).toHaveLength(2);expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBe('refresh-2');
+  }finally{gate.resolve();await outcomes;await other?.close();await f.close();}
 });
 
 for(const [status,code] of [[401,'AUTH'],[403,'AUTH'],[429,'RATE_LIMIT'],[503,'HTTP']])test('SIWC HTTP '+status+' keeps its failure category for non-JSON bodies',async()=>{
