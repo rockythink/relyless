@@ -642,7 +642,7 @@
     }
   }
   function removeRecordHint(record){
-    record.knownAction?.remove(); record.knownAction=null; record.hint?.remove();record.hint=null;
+    clearKnownError(record.knownAction);record.wrapper?.querySelectorAll('['+OWN+'="known-error"]').forEach(node=>node.remove());record.knownAction?.remove();record.knownAction=null;record.hint?.remove();record.hint=null;
     if(record.wrapper?.isConnected)record.wrapper.replaceWith(...record.wrapper.childNodes);
     record.wrapper=null;
   }
@@ -1366,7 +1366,18 @@
       if(!current()){reportResult(result,'cancelled');removePassagePanel(view.panel);return;}
       if(!result||!renderPassageProgress(view,result.items,true))throw new Error('翻译结果不完整或无效。');
       view.finished=true;view.body.setAttribute('aria-busy','false');if(view.cancel)view.cancel.textContent='关闭';outcome='complete';reportResult(result,'ok');void request('HISTORY_COMMIT',{requestId}).catch(()=>{});
-    }catch(error){reportResult(receivedResult,'error');outcome='error';if(!view.cancelled&&validPassageTarget(target)&&view.panel.isConnected){view.finished=true;view.parts.clear();view.body.textContent=error.message||'翻译失败。';view.body.setAttribute('aria-busy','false');if(view.cancel)view.cancel.textContent='关闭';else view.panel.style.setProperty('color','var(--danger)','important');}else removePassagePanel(view.panel);}
+    }catch(error){
+      reportResult(receivedResult,'error');outcome='error';
+      if(!view.cancelled&&validPassageTarget(target)&&view.panel.isConnected){
+        view.finished=true;view.parts.clear();const message=error.message||'翻译失败。';view.body.textContent=message;view.body.setAttribute('aria-busy','false');
+        if(view.cancel)view.cancel.textContent='关闭';
+        else{
+          view.panel.style.setProperty('color','var(--danger)','important');
+          const feedbackTarget=localFeedbackTarget(target.block);
+          if(feedbackTarget){feedbackTarget.onClose=()=>removePassagePanel(view.panel);const feedback=showLocalFeedback(feedbackTarget,message,{showSource:false});feedback.passageErrorPanel=view.panel;feedback.retry.hidden=false;feedback.retry.onclick=()=>{if(!validPassageTarget(target))return;closeCard();void translatePassage(target);};}
+        }
+      }else removePassagePanel(view.panel);
+    }
     finally{if(state.passageRequests.delete(view)){if(outcome==='error'&&view.finished&&view.panel.isConnected)passageErrors.add(view.panel);updatePassageStatus(outcome);}}
   }
   function cancelPassageRequests(remove=true,preserveContent=false){
@@ -1658,6 +1669,10 @@
     state.observer?.disconnect();state.observer=new MutationObserver(mutations=>{
       if(!state.enabled)return;
       if(state.page!==location.href){onPageNavigation();return;}if(state.reader&&!readerSourceIntact()){leaveReader({restorePosition:false});return;}
+      if(state.card?.passageErrorPanel&&!state.card.passageErrorPanel.isConnected)closeCard();
+      for(const owner of knownErrors.keys())if(!owner.isConnected)clearKnownError(owner);
+      let detachedFailure=false;for(const panel of passageErrors)if(!panel.isConnected){passageErrors.delete(panel);detachedFailure=true;}
+      if(detachedFailure){if(passageErrors.size||state.passageRequests.size)updatePassageStatus();else setTaskStatus('passage',null);}
       for(const panel of document.querySelectorAll('['+OWN+'="passage-translation"]')){const target=passageSources.get(panel);if (target?.kind === 'navigation' && !validPassageTarget(target)) removePassagePanel(panel)}
       if(sentenceGroups.enabled&&mutations.some(mutation=>mutation.type==='attributes'&&touchesSentence(mutation.target))){scheduleSentenceRender();scheduleSentenceScan(180);}
       const marksChanged=mutations.some(mutation=>nodeElement(mutation.target)?.closest('.'+MARK_CLASS)||mutation.type==='childList'&&[...mutation.addedNodes,...mutation.removedNodes].some(node=>nodeElement(node)?.closest('.'+MARK_CLASS)));

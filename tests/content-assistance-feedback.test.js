@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs';
 const source=name=>readFileSync(new URL('../extension/'+name,import.meta.url),'utf8');
 const waitFor=async predicate=>{const deadline=Date.now()+1200;while(!await predicate()){if(Date.now()>deadline)throw new Error('Assistance did not settle');await new Promise(resolve=>setTimeout(resolve,5));}};
 
-async function withContent(run,{structure=false,lookupDisplay='annotation'}={}){
+async function withContent(run,{structure=false,lookupDisplay='annotation',observe=false}={}){
   const window=new Window({url:'https://example.test/article'}),original=new Map(),handlers=new Map(),pending=[],shadows=new WeakMap();
   const rect={left:40,top:80,right:340,bottom:100,width:300,height:20,x:40,y:80};
   const globals={window,document:window.document,location:window.location,Node:window.Node,NodeFilter:window.NodeFilter,HTMLElement:window.HTMLElement,MutationObserver:window.MutationObserver,
@@ -38,6 +38,7 @@ async function withContent(run,{structure=false,lookupDisplay='annotation'}={}){
     delete globalThis.ShisuiContent;new Function(source('content/kernel.js'))();
     const state=ShisuiContent.state;state.enabled=true;state.settings=settings;state.providerConfigured=true;state.domainResolved=true;
     new Function(source('content.js'))();await new Promise(resolve=>setTimeout(resolve,0));
+    if(observe){state.enabled=false;await new Promise(resolve=>listener({type:'SS_SET_ENABLED',enabled:true},{id:'abc'},resolve));}
     await run({window,state,paragraph,pending,handlers,event,lookup,shadows,click:button=>{if(button.onclick)button.onclick(event(button));else{const action=elementListeners.get(button)?.get('click');if(action)action(event(button));else button.click();}},send:(message,sender={id:'abc'})=>new Promise(resolve=>{if(listener(message,sender,resolve)!==true)resolve();})});
   }finally{
     for(const item of pending)item.reply({ok:false,error:'Test request cancelled'});
@@ -318,4 +319,39 @@ for(const secondFails of [false,true])test("a different inline known-word save "
     expect((await send({type:"SS_STATUS"})).data.tasks.find(task=>task.key==="known")?.text).toContain("第一个词保存失败");
     window.__SHISUI_CONTENT__.dispose();expect(document.querySelector("[data-shisui-ui=known-feedback]")).toBeNull();expect(document.querySelector("[data-shisui-ui=known-error]")).toBeNull();
   });
+});
+
+for(const keepOther of [false,true])test('host removal of a failed passage '+(keepOther?'preserves another visible failure':'clears its vanished error'),async()=>{
+  await withContent(async({paragraph,pending,send})=>{
+    const translate=()=>{const range=document.createRange();range.selectNodeContents(paragraph);return ShisuiContent.hooks.translatePassage(ShisuiContent.hooks.passageTarget(range));};
+    const first=translate();await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:'第一处失败'});await first;const panel=document.querySelector('[data-shisui-ui=passage-translation]');
+    if(keepOther){const second=translate();await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:'第二处失败'});await second;}
+    panel.remove();await new Promise(resolve=>setTimeout(resolve,20));expect(ShisuiContent.blockText(paragraph)).toBe('The client retries with backoff.');expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='passage'&&task.error)).toBe(keepOther);
+  },{observe:true});
+});
+
+for(const retry of [false,true])test('failed navigation translation can be '+(retry?'retried locally':'closed locally'),async()=>{
+  await withContent(async({state,pending,send,click})=>{
+    const link=document.querySelector('nav a'),range=document.createRange();range.selectNodeContents(link);const operation=ShisuiContent.hooks.translatePassage(ShisuiContent.hooks.passageTarget(range));
+    await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:'导航翻译失败'});await operation;await waitFor(()=>state.card?.answer.classList.contains('error'));
+    expect(state.card.answer.textContent).toContain('导航翻译失败');expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='passage')?.error).toBe(true);
+    if(retry){click(state.card.retry);await waitFor(()=>pending.length===1);expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='passage')?.busy).toBe(true);pending.shift().reply({ok:true,data:{items:[{id:'p1',translation:'文档'}]}});await waitFor(()=>link.querySelector('[data-shisui-ui=passage-translation]')?.textContent==='文档');expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.error)).toBe(false);}
+    else{click(state.card.card.querySelector('.dismiss'));expect(document.querySelector('[data-shisui-ui=passage-translation]')).toBeNull();expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='passage')).toBe(false);}
+    expect(link.getAttribute('href')).toBe('/docs');expect(ShisuiContent.blockText(link)).toBe('Documentation');
+  });
+});
+
+test('host removal of a failed inline known-word action clears its vanished error',async()=>{
+  await withContent(async({state,pending,lookup,send})=>{
+    state.settings.lookupDisplay='card';lookup();await waitFor(()=>pending.length===1);pending.shift().reply({ok:true,data:{hint:'try again',sense:'repeat',source:'provider',support:{wordId:'retry-word',senseKey:'retry-sense'}}});await waitFor(()=>state.card?.knownWordId());
+    const view=state.card,record=state.records[0],button=view.known;button.remove();view.card.querySelector('.dismiss').click();record.wrapper.append(button);record.knownAction=button;button.click();await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:'保存失败'});await waitFor(()=>record.wrapper.querySelector('[data-shisui-ui=known-error]'));
+    record.wrapper.remove();await new Promise(resolve=>setTimeout(resolve,20));expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='known')).toBe(false);
+  },{observe:true});
+});
+
+test("host removal of a navigation failure removes its recovery card and error",async()=>{
+  await withContent(async({state,pending,send})=>{
+    const link=document.querySelector("nav a"),range=document.createRange();range.selectNodeContents(link);const operation=ShisuiContent.hooks.translatePassage(ShisuiContent.hooks.passageTarget(range));await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:"导航失败"});await operation;expect(state.card?.answer.textContent).toBe("导航失败");
+    link.querySelector("[data-shisui-ui=passage-translation]").remove();await waitFor(()=>state.card===null);expect((await send({type:"SS_STATUS"})).data.tasks.some(task=>task.key==="passage")).toBe(false);expect(link.textContent).toBe("Documentation");
+  },{observe:true});
 });
