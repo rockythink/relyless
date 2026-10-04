@@ -1492,9 +1492,9 @@ function errorBadge(tabId,title='RelyLess：页面任务失败，请在弹窗中
 }
 function pageTaskStatus(message,sender) {
   const tabId=sender.tab?.id,documentId=sender.documentId,pageUrl=message.pageUrl;
-  if(sender.id!==chrome.runtime.id||!Number.isSafeInteger(tabId)||tabId<0||sender.frameId!==0||typeof documentId!=='string'||!documentId||documentId.length>128||typeof pageUrl!=='string'||!pageUrl||pageUrl.length>8192||typeof sender.url!=='string'||sender.url!==pageUrl||typeof message.error!=='boolean'||!Number.isSafeInteger(message.sequence)||message.sequence<=0)throw new Error('无效的页面任务状态。');
-  let url;try{url=new URL(pageUrl);}catch{throw new Error('无效的页面任务状态。');}
-  if(!['http:','https:'].includes(url.protocol)||url.href!==pageUrl||!chrome.webNavigation?.getFrame)throw new Error('无效的页面任务状态。');
+  if(sender.id!==chrome.runtime.id||!Number.isSafeInteger(tabId)||tabId<0||sender.frameId!==0||typeof documentId!=='string'||!documentId||documentId.length>128||typeof pageUrl!=='string'||!pageUrl||pageUrl.length>8192||typeof sender.url!=='string'||!sender.url||sender.url.length>8192||typeof message.error!=='boolean'||!Number.isSafeInteger(message.sequence)||message.sequence<=0)throw new Error('无效的页面任务状态。');
+  let url,source;try{url=new URL(pageUrl);source=new URL(sender.url);}catch{throw new Error('无效的页面任务状态。');}
+  if(!['http:','https:'].includes(url.protocol)||url.href!==pageUrl||source.origin!==url.origin||source.href!==sender.url||!chrome.webNavigation?.getFrame)throw new Error('无效的页面任务状态。');
   const generation=tabStatusGeneration.get(tabId)||0,key=pageTaskStatusKey(tabId);
   const validate=async()=>{
     const tab=await readingPageCall(()=>chrome.tabs.get(tabId));
@@ -1513,7 +1513,11 @@ function pageTaskStatus(message,sender) {
     await chrome.storage.session.set({[key]:status});
     try{
       await validate();
-      if(message.error)await errorBadge(tabId);
+      if(message.error){
+        const contextError=(await chrome.storage.session.get(tabErrorKey(tabId)))[tabErrorKey(tabId)];
+        await validate();
+        if(!contextError)await errorBadge(tabId);
+      }
       else if(previous?.error&&!await tabHasError(tabId)){await validate();await resetBadge(tabId);await applyKeywordHint(tabId,undefined,validate);}
       await validate();
     }catch(error){
@@ -1559,10 +1563,19 @@ async function applyKeywordHint(tabId,url,guard) {
 function refreshKeywordHint(tabId,url) {
   return withTabStatus(tabId,()=>applyKeywordHint(tabId,url));
 }
-function clearNavigationStatus(tabId,url,sameDocument=false) {
+function clearNavigationStatus(tabId,url,sameDocument=false,documentId) {
   const generation=(tabStatusGeneration.get(tabId)||0)+1;
   tabStatusGeneration.set(tabId,generation);
   return withTabStatus(tabId,async()=>{
+    if((tabStatusGeneration.get(tabId)||0)!==generation)return;
+    let navigationDocumentId;
+    if(sameDocument&&typeof url==='string'&&url.length<=8192){
+      let page;try{page=new URL(url);}catch{}
+      if(page&&['http:','https:'].includes(page.protocol)&&page.href===url){
+        const frame=await chrome.webNavigation.getFrame({tabId,frameId:0}).catch(()=>null);
+        if(frame?.url===url&&typeof frame.documentId==='string'&&frame.documentId&&frame.documentId.length<=128&&(documentId===undefined||frame.documentId===documentId))navigationDocumentId=frame.documentId;
+      }
+    }
     if((tabStatusGeneration.get(tabId)||0)!==generation)return;
     const key=pageTaskStatusKey(tabId),status=await chrome.storage.session.get([key,tabErrorKey(tabId)]);
     const hadError=Boolean(status[tabErrorKey(tabId)]||status[key]?.error);
@@ -1573,13 +1586,22 @@ function clearNavigationStatus(tabId,url,sameDocument=false) {
     if(hadError)await resetBadge(tabId);
     if((tabStatusGeneration.get(tabId)||0)!==generation)return;
     await applyKeywordHint(tabId,url);
+    if(!navigationDocumentId||(tabStatusGeneration.get(tabId)||0)!==generation)return;
+    const tab=await chrome.tabs.get(tabId).catch(()=>null);
+    if(tab?.url!==url||(tabStatusGeneration.get(tabId)||0)!==generation)return;
+    const frame=await chrome.webNavigation.getFrame({tabId,frameId:0}).catch(()=>null);
+    if(frame?.url!==url||frame.documentId!==navigationDocumentId||(tabStatusGeneration.get(tabId)||0)!==generation)return;
+    const current=await chrome.tabs.get(tabId).catch(()=>null);
+    if(current?.url!==url||(tabStatusGeneration.get(tabId)||0)!==generation)return;
+    // Target the verified document, never a replacement that happens to share its URL.
+    void chrome.tabs.sendMessage(tabId,{type:'SS_PAGE_NAVIGATION',pageUrl:url},{documentId:navigationDocumentId,frameId:0}).catch(()=>{});
   });
 }
 chrome.webNavigation.onCommitted.addListener(details=>{
   if(details.frameId===0)void clearNavigationStatus(details.tabId,details.url).catch(()=>{});
 });
 for(const event of [chrome.webNavigation.onHistoryStateUpdated,chrome.webNavigation.onReferenceFragmentUpdated])event?.addListener(details=>{
-  if(details.frameId===0)void clearNavigationStatus(details.tabId,details.url,true).catch(()=>{});
+  if(details.frameId===0)void clearNavigationStatus(details.tabId,details.url,true,details.documentId).catch(()=>{});
 });
 function reconcileAutomation() {
   const work = automationReconciliation.catch(() => {}).then(async () => {
@@ -1765,7 +1787,7 @@ chrome.permissions.onAdded.addListener(refreshAutomation);
 chrome.permissions.onRemoved.addListener(()=>{clearProviderState();refreshAutomation();});
 chrome.tabs.onActivated?.addListener(()=>{void pruneBackgroundQueue();});
 chrome.tabs.onUpdated.addListener((tabId,changeInfo,tab) => {
-  if(changeInfo.url!==undefined||changeInfo.status==='loading')void clearNavigationStatus(tabId,changeInfo.url||tab?.url,changeInfo.status!=='loading').catch(()=>{});
+  if(changeInfo.url!==undefined||changeInfo.status==='loading')void clearNavigationStatus(tabId,changeInfo.url||tab?.url,changeInfo.url!==undefined||changeInfo.status!=='loading').catch(()=>{});
   if(changeInfo.url!==undefined||changeInfo.status==='loading'){void pruneBackgroundQueue();void chrome.tabs.sendMessage(tabId,{type:'SS_EMERGENCY_END',navigation:true,url:changeInfo.url||tab?.url},{frameId:0}).catch(()=>{});}
   if(changeInfo.url!==undefined||changeInfo.status==='loading'){void forgetEmergency(tabId);injectedEmergencyPages.delete(tabId);void chrome.storage.session.remove([offeredKey(tabId),pendingKey(tabId),assistCacheKey(tabId),'pageDomain:'+tabId]);}
   if((changeInfo.url!==undefined||changeInfo.status==='loading')&&!pageOrigin(tab?.url||''))void clearAutomaticSentenceModes(tabId);

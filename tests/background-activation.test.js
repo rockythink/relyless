@@ -37,7 +37,7 @@ globalThis.chrome = {
   },
   tabs:{
     onRemoved:event(),onUpdated:event(),query:async query=>query?.active ? [tab] : [tab],get:async id=>{if(tabGetBarrier) await tabGetBarrier;return id === tab.id ? {...tab} : null;},
-    sendMessage:async (tabId,message)=>{tabMessages.push({tabId,message});return {ok:true,data:{enabled:false}};},
+    sendMessage:async (tabId,message,options)=>{tabMessages.push({tabId,message,options});return {ok:true,data:{enabled:false}};},
   },
   windows:{getAll:async()=>[{id:7,incognito:false},...privateWindows],onRemoved:event()},
   scripting:{
@@ -283,6 +283,7 @@ const commitMainFrame=(url)=>{globalThis.chrome.webNavigation.onCommitted.listen
 const clickMenu=(menuItemId,info={})=>{globalThis.chrome.contextMenus.onClicked.listeners.forEach(listener=>listener({menuItemId,frameId:0,...info},tab));};
 const failTabSend=()=>{const real=globalThis.chrome.tabs.sendMessage;globalThis.chrome.tabs.sendMessage=async()=>({ok:false,error:'fixture failure'});return()=>{globalThis.chrome.tabs.sendMessage=real;};};
 const lastText=()=>badgeCalls.filter(call=>call.call==='text'&&call.tabId===tab.id).at(-1)?.text;
+const lastTitle=()=>badgeCalls.filter(call=>call.call==='title'&&call.tabId===tab.id).at(-1)?.title;
 const enableDocsBadge=()=>send({type:'AUTOMATION_PATCH',tabId:tab.id,patch:{keywordHints:{badge:true,keywords:['docs'],dismissed:[]}}});
 
 test('error badge wins over hint: matching reconcile keeps ! and skips +',async()=>{
@@ -519,7 +520,7 @@ test('native extension identity, main frame, document, exact URL and bounded fie
   await resetTaskPage();
   await reportTask(true,4);badgeCalls.length=0;
   const sender=taskSender(),message={type:'PAGE_TASK_STATUS',error:false,sequence:5,pageUrl:tab.url};
-  const senders=[{...sender,id:'foreign-extension'},{...sender,frameId:1},{...sender,frameId:undefined},{...sender,documentId:undefined},{...sender,documentId:'old-document'},{...sender,documentId:'x'.repeat(129)},{...sender,url:'https://docs.example/old'},{...sender,tab:{id:-1}},{...sender,tab:undefined},extensionSender];
+  const senders=[{...sender,id:'foreign-extension'},{...sender,frameId:1},{...sender,frameId:undefined},{...sender,documentId:undefined},{...sender,documentId:'old-document'},{...sender,documentId:'x'.repeat(129)},{...sender,url:'https://foreign.example/old'},{...sender,tab:{id:-1}},{...sender,tab:undefined},extensionSender];
   for(const invalid of senders)await expect(send(message,invalid)).rejects.toThrow();
   for(const sequence of [0,-1,1.5,Infinity,NaN,Number.MAX_SAFE_INTEGER+1,'5',null])await expect(send({...message,sequence},sender)).rejects.toThrow();
   for(const error of ['false',0,null])await expect(send({...message,error},sender)).rejects.toThrow();
@@ -539,7 +540,7 @@ test('loading, non-matching and unsupported navigation clear all old error badge
   globalThis.chrome.tabs.onUpdated.listeners.forEach(listener=>listener(tab.id,{status:'loading',url:tab.url},{...tab}));
   await flushBadgeQueue();
   expect(lastText()).toBe('');
-  expect(session[taskKey]).toBeUndefined();
+  expect(session[taskKey]).toEqual({documentId:currentDocumentId,sequence:1,error:false});
   expect(session['tabError:'+tab.id]).toBeUndefined();
   expect(badgeCalls.filter(call=>call.call==='title').at(-1)?.title).toBe('RelyLess');
   currentDocumentId='plain-document';commitMainFrame(tab.url);await flushBadgeQueue();
@@ -709,3 +710,151 @@ test('same-URL document replacement during session lookup cannot overwrite the p
   await reportTask(false,1);
 });
 
+
+for(const contextFirst of [false,true])for(const contextClearsFirst of [false,true])for(const action of ['menu','command'])test(
+  `coexisting task and ${action} failures preserve actionable titles (contextFirst=${contextFirst}, contextClearsFirst=${contextClearsFirst})`,async()=>{
+    await resetTaskPage();
+    const act=()=>action==='menu'?clickMenu('ss-toggle-reading'):globalThis.chrome.commands.onCommand.listeners.forEach(listener=>listener('toggle-reading',tab));
+    const failContext=async()=>{const restore=failTabSend();try{act();await flushBadgeQueue();}finally{restore();}};
+    const contextTitle='RelyLess：无法读取阅读状态。',taskTitle='RelyLess：页面任务失败，请在弹窗中查看或重试';
+    if(contextFirst){await failContext();await reportTask(true,1);}else{await reportTask(true,1);await failContext();}
+    expect(lastText()).toBe('!');expect(lastTitle()).toBe(contextTitle);
+    expect(session['tabError:'+tab.id]).toBe(true);
+    expect(JSON.stringify(session)).not.toContain(contextTitle);
+    await enableDocsBadge();expect(lastText()).toBe('!');expect(lastTitle()).toBe(contextTitle);
+    if(contextClearsFirst){
+      act();await flushBadgeQueue();
+      expect(lastText()).toBe('!');expect(lastTitle()).toBe(taskTitle);
+      expect(session['tabError:'+tab.id]).toBeUndefined();expect(session[taskKey].error).toBe(true);
+      await reportTask(false,2);
+    }else{
+      await reportTask(false,2);
+      expect(lastText()).toBe('!');expect(lastTitle()).toBe(contextTitle);
+      expect(session['tabError:'+tab.id]).toBe(true);expect(session[taskKey].error).toBe(false);
+      act();await flushBadgeQueue();
+    }
+    expect(lastText()).toBe('+');expect(lastTitle()).toContain('域名');
+  }
+);
+
+for(const eventName of ['onHistoryStateUpdated','onReferenceFragmentUpdated'])test(`${eventName} notifies the current content document only after clearing old errors`,async()=>{
+  await resetTaskPage();await reportTask(true,7);
+  const original=globalThis.chrome.tabs.sendMessage;
+  let observed;
+  globalThis.chrome.tabs.sendMessage=async(tabId,message,options)=>{
+    if(message.type==='SS_PAGE_NAVIGATION')observed={status:{...session[taskKey]},badge:lastText()};
+    return original(tabId,message,options);
+  };
+  try{
+    tabMessages.length=0;tab.url=eventName==='onHistoryStateUpdated'?'https://docs.example/next':'https://docs.example/article#next';
+    globalThis.chrome.webNavigation[eventName].listeners.forEach(listener=>listener({tabId:tab.id,frameId:0,url:tab.url,documentId:currentDocumentId}));
+    await flushBadgeQueue();
+    expect(tabMessages.filter(({message})=>message.type==='SS_PAGE_NAVIGATION')).toEqual([
+      {tabId:tab.id,message:{type:'SS_PAGE_NAVIGATION',pageUrl:tab.url},options:{documentId:currentDocumentId,frameId:0}}
+    ]);
+    expect(observed).toEqual({status:{documentId:currentDocumentId,sequence:7,error:false},badge:'+'});
+    expect(await reportTask(true,7)).toEqual({accepted:false});
+    expect(await reportTask(false,8)).toEqual({accepted:true});
+  }finally{globalThis.chrome.tabs.sendMessage=original;}
+});
+
+
+test('same-document notifications also cover tabs URL updates, without notifying committed replacements',async()=>{
+  await resetTaskPage();await reportTask(true,9);tabMessages.length=0;
+  tab.url='https://docs.example/tabs-route';
+  globalThis.chrome.tabs.onUpdated.listeners.forEach(listener=>listener(tab.id,{url:tab.url},{...tab}));
+  await flushBadgeQueue();
+  expect(tabMessages.filter(({message})=>message.type==='SS_PAGE_NAVIGATION')).toEqual([
+    {tabId:tab.id,message:{type:'SS_PAGE_NAVIGATION',pageUrl:tab.url},options:{documentId:currentDocumentId,frameId:0}}
+  ]);
+  expect(session[taskKey]).toEqual({documentId:currentDocumentId,sequence:9,error:false});
+  expect(await reportTask(true,9)).toEqual({accepted:false});
+  tabMessages.length=0;currentDocumentId='committed-replacement';commitMainFrame(tab.url);await flushBadgeQueue();
+  expect(tabMessages.some(({message})=>message.type==='SS_PAGE_NAVIGATION')).toBe(false);
+  expect(session[taskKey]).toBeUndefined();
+  expect(await reportTask(false,1)).toEqual({accepted:true});
+});
+
+for(const invalid of ['subframe','old-url','old-document','missing-frame','frame-url','oversized-url','unsupported-url'])test(`same-document navigation never notifies ${invalid}`,async()=>{
+  await resetTaskPage();tabMessages.length=0;
+  const details={tabId:tab.id,frameId:0,url:tab.url,documentId:currentDocumentId};
+  if(invalid==='subframe')details.frameId=1;
+  if(invalid==='old-url')details.url='https://docs.example/old';
+  if(invalid==='old-document')details.documentId='old-document';
+  if(invalid==='missing-frame')frameAvailable=false;
+  if(invalid==='frame-url')frameUrl='https://docs.example/old';
+  if(invalid==='oversized-url')details.url=tab.url='https://docs.example/?'+'x'.repeat(8192);
+  if(invalid==='unsupported-url')details.url=tab.url='chrome://settings';
+  try{
+    globalThis.chrome.webNavigation.onHistoryStateUpdated.listeners.forEach(listener=>listener(details));
+    await flushBadgeQueue();
+    expect(tabMessages.some(({message})=>message.type==='SS_PAGE_NAVIGATION')).toBe(false);
+  }finally{frameAvailable=true;frameUrl=null;}
+});
+
+for(const race of ['url','document','generation'])test(`navigation notification revalidates ${race} after asynchronous worker cleanup`,async()=>{
+  await resetTaskPage();await reportTask(true,7);tabMessages.length=0;
+  const original=globalThis.chrome.storage.session.set;
+  let entered,release,once=true;
+  const ready=new Promise(resolve=>{entered=resolve;}),barrier=new Promise(resolve=>{release=resolve;});
+  globalThis.chrome.storage.session.set=async value=>{
+    const result=await original(value);
+    if(once&&value[taskKey]){once=false;entered();await barrier;}
+    return result;
+  };
+  try{
+    tab.url='https://docs.example/pending-route';
+    globalThis.chrome.webNavigation.onHistoryStateUpdated.listeners.forEach(listener=>listener({tabId:tab.id,frameId:0,url:tab.url,documentId:currentDocumentId}));
+    await ready;
+    if(race==='url')tab.url='https://docs.example/current-route';
+    if(race==='document')currentDocumentId='same-url-replacement';
+    if(race==='generation')commitMainFrame(tab.url);
+    release();await flushBadgeQueue();
+    expect(tabMessages.some(({message})=>message.type==='SS_PAGE_NAVIGATION')).toBe(false);
+    if(race==='generation')expect(session[taskKey]).toBeUndefined();
+  }finally{release();globalThis.chrome.storage.session.set=original;}
+});
+
+test('superseding a pending same-document notification sends only the latest route and retains its watermark',async()=>{
+  await resetTaskPage();await reportTask(true,7);tabMessages.length=0;
+  const original=globalThis.chrome.webNavigation.getFrame;
+  let entered,release,once=true;
+  const ready=new Promise(resolve=>{entered=resolve;}),barrier=new Promise(resolve=>{release=resolve;});
+  globalThis.chrome.webNavigation.getFrame=async options=>{
+    const frame=await original(options);
+    if(once){once=false;entered();await barrier;}
+    return frame;
+  };
+  const navigate=()=>globalThis.chrome.webNavigation.onHistoryStateUpdated.listeners.forEach(listener=>listener({tabId:tab.id,frameId:0,url:tab.url,documentId:currentDocumentId}));
+  try{
+    tab.url='https://docs.example/first';navigate();await ready;
+    tab.url='https://docs.example/second';navigate();release();await flushBadgeQueue();
+    expect(tabMessages.filter(({message})=>message.type==='SS_PAGE_NAVIGATION')).toEqual([
+      {tabId:tab.id,message:{type:'SS_PAGE_NAVIGATION',pageUrl:tab.url},options:{documentId:currentDocumentId,frameId:0}}
+    ]);
+    expect(session[taskKey]).toEqual({documentId:currentDocumentId,sequence:7,error:false});
+    expect(await reportTask(true,7)).toEqual({accepted:false});
+  }finally{release();globalThis.chrome.webNavigation.getFrame=original;}
+});
+
+test('SPA errors accept native injection URLs only within the current main-frame document and origin',async()=>{
+  await resetTaskPage();const injected=taskSender();await reportTask(true,7);
+  tab.url='https://docs.example/route-two';
+  globalThis.chrome.webNavigation.onHistoryStateUpdated.listeners.forEach(listener=>listener({tabId:tab.id,frameId:0,url:tab.url,documentId:currentDocumentId}));
+  await flushBadgeQueue();badgeCalls.length=0;
+  expect(await reportTask(true,8,injected,tab.url)).toEqual({accepted:true});expect(lastText()).toBe('!');
+  await expect(reportTask(false,9,injected,injected.url)).rejects.toThrow();
+  await expect(reportTask(false,9,{...injected,url:'https://foreign.example/article'},tab.url)).rejects.toThrow();
+  await expect(reportTask(false,9,{...injected,documentId:'old-document'},tab.url)).rejects.toThrow();
+  expect(await reportTask(false,9,injected,tab.url)).toEqual({accepted:true});expect(lastText()).toBe('+');
+});
+
+test('Chrome loading plus URL SPA events preserve document sequence watermarks before history notification',async()=>{
+  await resetTaskPage();await reportTask(true,7);tab.url='https://docs.example/route-two';
+  globalThis.chrome.tabs.onUpdated.listeners.forEach(listener=>listener(tab.id,{status:'loading',url:tab.url},{...tab}));
+  await flushBadgeQueue();
+  expect(await reportTask(true,7)).toEqual({accepted:false});expect(session[taskKey].error).toBe(false);
+  globalThis.chrome.webNavigation.onHistoryStateUpdated.listeners.forEach(listener=>listener({tabId:tab.id,frameId:0,url:tab.url,documentId:currentDocumentId}));
+  await flushBadgeQueue();expect(await reportTask(true,7)).toEqual({accepted:false});
+  expect(await reportTask(true,8)).toEqual({accepted:true});expect(lastText()).toBe('!');
+});

@@ -3,9 +3,9 @@ import {Window} from 'happy-dom';
 import {readFileSync} from 'node:fs';
 
 const source=name=>readFileSync(new URL('../extension/'+name,import.meta.url),'utf8');
-const waitFor=async predicate=>{const deadline=Date.now()+1200;while(!predicate()){if(Date.now()>deadline)throw new Error('Assistance did not settle');await new Promise(resolve=>setTimeout(resolve,5));}};
+const waitFor=async predicate=>{const deadline=Date.now()+1200;while(!await predicate()){if(Date.now()>deadline)throw new Error('Assistance did not settle');await new Promise(resolve=>setTimeout(resolve,5));}};
 
-async function withContent(run,{structure=false}={}){
+async function withContent(run,{structure=false,lookupDisplay='annotation'}={}){
   const window=new Window({url:'https://example.test/article'}),original=new Map(),handlers=new Map(),pending=[],shadows=new WeakMap();
   const rect={left:40,top:80,right:340,bottom:100,width:300,height:20,x:40,y:80};
   const globals={window,document:window.document,location:window.location,Node:window.Node,NodeFilter:window.NodeFilter,HTMLElement:window.HTMLElement,MutationObserver:window.MutationObserver,
@@ -17,10 +17,10 @@ async function withContent(run,{structure=false}={}){
     ShisuiReview:{hide(){},refresh:()=>Promise.resolve()},ShisuiCopy:{onPointerTrack(){},copyParagraph(){}},ShisuiConversation:{openConversation:()=>Promise.resolve()}};
   for(const [key,value]of Object.entries(globals)){original.set(key,globalThis[key]);globalThis[key]=value;}
   for(const key of ['chrome','ShisuiContent'])original.set(key,globalThis[key]);
-  const settings={assistanceMode:'on-demand',domain:'general',helpLanguage:'en',lookupDisplay:'annotation',hintDisplay:'direct',rulePacks:[]};
+  const settings={assistanceMode:'on-demand',domain:'general',helpLanguage:'en',lookupDisplay,hintDisplay:'direct',rulePacks:[]};
   let listener;
   globalThis.chrome={runtime:{id:'abc',getURL:path=>'chrome-extension://abc/'+path,sendMessage:(message,callback)=>{
-    if(['ASSIST','WORD_PREFERENCE_SET','SENTENCE_GROUPS_BATCH'].includes(message.type)){pending.push({message,reply:callback});return;}
+    if(['ASSIST','WORD_PREFERENCE_SET','SENTENCE_GROUPS_BATCH','EMERGENCY_TRANSLATE'].includes(message.type)){pending.push({message,reply:callback});return;}
     callback({ok:true,data:message.type==='STATE_GET'?{settings,providerConfigured:true}:message.type==='SENTENCE_GROUPS_GET'?{enabled:structure,density:'medium',lineStyle:'solid'}:{}});
   },onMessage:{addListener:callback=>listener=callback,removeListener(){}}}};
   const capture=target=>{const add=target.addEventListener.bind(target);target.addEventListener=(type,callback,options)=>{handlers.set(callback.name,callback);add(type,callback,options);};};
@@ -32,13 +32,13 @@ async function withContent(run,{structure=false}={}){
   document.body.innerHTML='<main><p>The client retries with backoff.</p><nav><a href="/docs">Documentation</a></nav></main>';
   const paragraph=document.querySelector('p');
   document.caretRangeFromPoint=()=>{const mapping=ShisuiContent.textMap(paragraph),entry=mapping.nodes.find(item=>item.end>12),range=document.createRange();range.setStart(entry.node,12-entry.start);range.collapse(true);return range;};
-  const event=(target=paragraph,extra={})=>({isTrusted:true,type:'click',button:0,detail:1,pointerId:1,clientX:80,clientY:90,target,preventDefault(){},stopImmediatePropagation(){},composedPath:()=>[target,document.body,document,window],...extra});
+  const event=(target=paragraph,extra={})=>({isTrusted:true,type:'click',button:0,detail:1,pointerId:1,clientX:80,clientY:90,target,preventDefault(){},stopImmediatePropagation(){},stopPropagation(){},composedPath:()=>[target,document.body,document,window],...extra});
   const lookup=(target=paragraph)=>{handlers.get('onLookupKey')(event(target,{type:'keydown',key:'D',code:'KeyD'}));handlers.get('onHelpPointerDown')(event(target,{type:'pointerdown'}));handlers.get('onHelpClick')(event(target));handlers.get('onLookupKey')(event(target,{type:'keyup',key:'D',code:'KeyD'}));};
   try{
     delete globalThis.ShisuiContent;new Function(source('content/kernel.js'))();
     const state=ShisuiContent.state;state.enabled=true;state.settings=settings;state.providerConfigured=true;state.domainResolved=true;
     new Function(source('content.js'))();await new Promise(resolve=>setTimeout(resolve,0));
-    await run({window,state,paragraph,pending,handlers,event,lookup,shadows,click:button=>{if(button.onclick)button.onclick(event(button));else{const action=elementListeners.get(button)?.get('click');if(action)action(event(button));else button.click();}},send:message=>new Promise(resolve=>listener(message,{id:'abc'},resolve))});
+    await run({window,state,paragraph,pending,handlers,event,lookup,shadows,click:button=>{if(button.onclick)button.onclick(event(button));else{const action=elementListeners.get(button)?.get('click');if(action)action(event(button));else button.click();}},send:(message,sender={id:'abc'})=>new Promise(resolve=>{if(listener(message,sender,resolve)!==true)resolve();})});
   }finally{
     for(const item of pending)item.reply({ok:false,error:'Test request cancelled'});
     for(const host of document.querySelectorAll('[data-shisui-ui="known-feedback"]'))[...shadows.get(host).querySelectorAll('button')].find(button=>button.textContent==='关闭')?.click();
@@ -126,4 +126,96 @@ test('inline known save failure stays by its button and is removed when assistan
     await waitFor(()=>paragraph.querySelector('[data-shisui-ui="known-error"]'));expect(button.disabled).toBe(false);expect(button.nextElementSibling.textContent).toContain('词条保存失败');expect(ShisuiContent.blockText(paragraph)).toBe('The client retries with backoff.');
     window.__SHISUI_CONTENT__.dispose();expect(paragraph.querySelector('[data-shisui-ui="known-error"]')).toBeNull();expect(paragraph.textContent).toBe('The client retries with backoff.');
   });
+});
+
+test('closing a pending help card clears its task before a late result and preserves a newer lookup',async()=>{
+  await withContent(async({state,pending,lookup,send})=>{
+    lookup();await waitFor(()=>pending.length===1);const old=pending.shift();
+    expect((await send({type:'SS_STATUS'})).data.tasks).toContainEqual({key:'lookup',text:'正在获取帮助',error:false,busy:true});
+    state.card.card.querySelector('.dismiss').click();
+    expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='lookup')).toBe(false);
+    state.settings.lookupDisplay='annotation';lookup();await waitFor(()=>pending.length===1);const current=state.card;
+    old.reply({ok:false,error:'迟到的卡片错误'});await new Promise(resolve=>setTimeout(resolve,200));
+    expect(state.card).toBe(current);expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='lookup')?.busy).toBe(true);
+    pending.shift().reply({ok:false,error:'当前查词失败'});await waitFor(()=>state.card.answer.classList.contains('error'));
+    expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='lookup')?.error).toBe(true);
+  },{lookupDisplay:'card'});
+});
+
+test('a late dismissed annotation cannot clear a newer help card task',async()=>{
+  await withContent(async({state,pending,lookup,send})=>{
+    lookup();await waitFor(()=>pending.length===1);const old=pending.shift();state.card.card.querySelector('.dismiss').click();
+    state.settings.lookupDisplay='card';lookup();await waitFor(()=>pending.length===1);const current=state.card;
+    old.reply({ok:false,error:'迟到的词注错误'});await new Promise(resolve=>setTimeout(resolve,200));
+    expect(state.card).toBe(current);expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='lookup')?.busy).toBe(true);
+  });
+});
+
+test('partial page translation failures retain successes and retry controls while reporting an error until recovery',async()=>{
+  await withContent(async({paragraph,pending,send,click})=>{
+    const second=document.createElement('p');second.textContent='The server preserves the original reading context.';paragraph.after(second);
+    expect((await send({type:'SS_EMERGENCY_START',token:'token',resume:false})).ok).toBe(true);await waitFor(()=>pending.length===1);
+    const batch=pending.shift(),[success,failure]=batch.message.items;expect(batch.message.items.length).toBe(2);
+    batch.reply({ok:true,data:{items:[{id:success.id,translation:'已确认的译文。'}],errors:[{id:failure.id,code:'MODEL_FORMAT'}]}});
+    await waitFor(()=>!ShisuiContent.state.emergency.running);
+    const status=(await send({type:'SS_STATUS'})).data;expect(status.emergency.phase).toBe('partial');expect(status.emergency.completed).toBe(1);expect(status.emergency.failed).toBe(1);
+    expect(status.tasks.find(task=>task.key==='emergency')?.error).toBe(true);
+    const translated=paragraph.querySelector('[data-shisui-ui="emergency-translation"]');expect(translated.textContent).toContain('已确认的译文');
+    const retry=second.querySelector('button');expect(retry.textContent).toBe('重试这一段');click(retry);await waitFor(()=>pending.length===1);
+    const resumed=pending.shift();expect(resumed.message.items.map(item=>item.text)).toEqual([second.firstChild.textContent]);
+    resumed.reply({ok:true,data:{items:resumed.message.items.map(item=>({id:item.id,translation:'重试成功的译文。'})),errors:[]}});await waitFor(()=>!ShisuiContent.state.emergency.running);
+    expect(paragraph.querySelector('[data-shisui-ui="emergency-translation"]')).toBe(translated);expect(second.querySelector('button')).toBeNull();
+    const recovered=(await send({type:'SS_STATUS'})).data;expect(recovered.emergency.phase).toBe('complete');expect(recovered.tasks.find(task=>task.key==='emergency')?.error).toBe(false);
+  });
+});
+
+test('trusted same-document navigation clears old tasks and rejects late help results without new passive work',async()=>{
+  await withContent(async({window,state,pending,lookup,send})=>{
+    lookup();await waitFor(()=>pending.length===1);const old=pending.shift(),generation=state.generation,sequence=state.taskSequence;
+    window.history.pushState({},'', '/next');await send({type:'SS_PAGE_NAVIGATION',pageUrl:location.href});
+    expect(Boolean(state.card)).toBe(false);expect(state.generation).toBeGreaterThan(generation);expect(state.page).toBe(location.href);
+    expect((await send({type:'SS_STATUS'})).data.tasks).toEqual([]);expect(state.taskSequence).toBeGreaterThan(sequence);
+    const reconciledGeneration=state.generation;await send({type:'SS_PAGE_NAVIGATION',pageUrl:location.href});expect(state.generation).toBe(reconciledGeneration);
+    old.reply({ok:false,error:'旧页面迟到错误'});await new Promise(resolve=>setTimeout(resolve,200));
+    expect((await send({type:'SS_STATUS'})).data.tasks).toEqual([]);expect(state.card).toBeNull();expect(pending).toEqual([]);
+  },{lookupDisplay:'card'});
+});
+
+test('stale, oversized, and untrusted navigation messages cannot invalidate current assistance',async()=>{
+  await withContent(async({window,state,pending,lookup,send})=>{
+    lookup();await waitFor(()=>pending.length===1);const card=state.card,generation=state.generation,oldPage=location.href;
+    window.history.replaceState({},'', '/next');
+    for(const [message,sender]of [
+      [{type:'SS_PAGE_NAVIGATION',pageUrl:oldPage},{id:'abc'}],
+      [{type:'SS_PAGE_NAVIGATION',pageUrl:location.href},{id:'other'}],
+      [{type:'SS_PAGE_NAVIGATION',pageUrl:location.href},{id:'abc',tab:{id:1}}],
+      [{type:'SS_PAGE_NAVIGATION',pageUrl:'x'.repeat(8193)},{id:'abc'}],
+      [{type:'SS_PAGE_NAVIGATION',pageUrl:42},{id:'abc'}],
+    ]){await send(message,sender);expect(state.card).toBe(card);expect(state.generation).toBe(generation);}
+    window.history.replaceState({},'',oldPage);
+    expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='lookup')?.busy).toBe(true);
+  },{lookupDisplay:'card'});
+});
+
+test('an immediate status request reconciles a changed URL before returning old page failures',async()=>{
+  await withContent(async({window,state,pending,lookup,send})=>{
+    lookup();await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:'旧页面帮助失败'});await waitFor(()=>state.card.answer.classList.contains('error'));
+    const generation=state.generation;window.history.pushState({},'', '/next');const status=(await send({type:'SS_STATUS'})).data;
+    expect(status.tasks).toEqual([]);expect(state.card).toBeNull();expect(state.generation).toBeGreaterThan(generation);expect(state.page).toBe(location.href);expect(pending).toEqual([]);
+  },{lookupDisplay:'card'});
+});
+
+test('model help failures persist beyond informational timers and clear through retry or dismissal',async()=>{
+  await withContent(async({state,pending,lookup,send})=>{
+    lookup();await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:'服务额度不足。'});await waitFor(()=>state.card.answer.classList.contains('error'));
+    const now=Date.now;Date.now=()=>now()+86400000;
+    try{
+      ShisuiContent.hooks.setTaskStatus('copy','复制失败',{error:true,duration:1});
+      await waitFor(async()=>!(await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='copy'));
+      expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='lookup')?.error).toBe(true);expect(state.card.retry.hidden).toBe(false);
+    }finally{Date.now=now;}
+    state.card.retry.click();await waitFor(()=>pending.length===1);const retrying=(await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='lookup');expect(retrying.error).toBe(false);expect(retrying.busy).toBe(true);
+    state.card.card.querySelector('.dismiss').click();expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='lookup')).toBe(false);
+    pending.shift().reply({ok:false,error:'已关闭的重试失败'});await new Promise(resolve=>setTimeout(resolve,200));expect((await send({type:'SS_STATUS'})).data.tasks).toEqual([]);
+  },{lookupDisplay:'card'});
 });
