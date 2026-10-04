@@ -304,3 +304,18 @@ for(const newer of [false,true])test("closing a failed known-word save "+(newer?
     if(newer)expect(remaining?.text).toBe("较新的保存错误");else expect(remaining).toBeUndefined();
   },{lookupDisplay:"card"});
 });
+
+for(const secondFails of [false,true])test("a different inline known-word save "+(secondFails?"can be retried without hiding the first failure":"succeeds without hiding the first failure"),async()=>{
+  await withContent(async({state,paragraph,pending,lookup,send})=>{
+    const prepare=async(wordId)=>{state.settings.lookupDisplay="card";lookup();await waitFor(()=>pending.length===1);pending.shift().reply({ok:true,data:{hint:"try again",sense:"current use",source:"provider",support:{wordId,senseKey:wordId+"-sense"}}});await waitFor(()=>state.card?.knownWordId()===wordId);const view=state.card,record=state.records.find(record=>record.target.wordId===wordId),button=view.known;button.remove();view.card.querySelector(".dismiss").click();record.wrapper.append(button);record.knownAction=button;return button;};
+    const first=await prepare("retry-word");first.click();await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:"第一个词保存失败"});await waitFor(()=>first.parentElement.querySelector("[data-shisui-ui=known-error]"));
+    document.caretRangeFromPoint=()=>{const map=ShisuiContent.textMap(paragraph),entry=map.nodes.find(item=>item.end>24),range=document.createRange();range.setStart(entry.node,24-entry.start);range.collapse(true);return range;};
+    const second=await prepare("backoff-word");second.click();await waitFor(()=>pending.length===1);
+    expect((await send({type:"SS_STATUS"})).data.tasks.find(task=>task.key==="known")?.error).toBe(true);
+    if(secondFails){pending.shift().reply({ok:false,error:"第二个词保存失败"});await waitFor(()=>second.parentElement.querySelector("[data-shisui-ui=known-error]"));second.click();await waitFor(()=>pending.length===1);expect((await send({type:"SS_STATUS"})).data.tasks.find(task=>task.key==="known")?.text).toContain("第一个词保存失败");}
+    pending.shift().reply({ok:true,data:{wordId:"backoff-word",term:"backoff"}});await waitFor(()=>state.knownWords.has("backoff-word"));
+    expect(first.parentElement.querySelector("[data-shisui-ui=known-error]").textContent).toContain("第一个词保存失败");
+    expect((await send({type:"SS_STATUS"})).data.tasks.find(task=>task.key==="known")?.text).toContain("第一个词保存失败");
+    window.__SHISUI_CONTENT__.dispose();expect(document.querySelector("[data-shisui-ui=known-feedback]")).toBeNull();expect(document.querySelector("[data-shisui-ui=known-error]")).toBeNull();
+  });
+});

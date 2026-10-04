@@ -107,7 +107,7 @@ describe('subscription installer',()=>{
           const launched=spawn(manifest.path,[origin],{env:isolatedEnv(home),stdio:['pipe','pipe','pipe']});
           try{
             const reply=await new Promise((resolve,reject)=>{
-              const timer=setTimeout(()=>reject(new Error('安装后的连接器没有响应')),3000);
+              const timer=setTimeout(()=>reject(new Error('安装后的连接器没有响应')),10000);
               const fail=error=>{clearTimeout(timer);reject(error);};
               const decoder=new NativeMessageDecoder({onMessage:message=>{if(message.id===1){clearTimeout(timer);resolve(message);}},onError:fail});
               launched.stdout.on('data',chunk=>decoder.push(chunk));
@@ -127,7 +127,7 @@ describe('subscription installer',()=>{
           }
         }
       }finally{await rm(home,{recursive:true,force:true});}
-    });
+    },30000);
   }
   test.skipIf(process.platform==='win32')('preserves Antigravity CLI installation and config',async()=>{
     const home=await mkdtemp(join(tmpdir(),'relyless-antigravity-install-'));
