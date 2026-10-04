@@ -29,7 +29,7 @@
   const lookup={held:false,code:null,point:null,press:null,preview:null,frame:0,quietUntil:0,idleTimer:0,waiters:new Set(),rebuildPending:null,taskRequestId:''};
   const lookupKey=()=>state.settings.lookupKey||'D';
   const lookupLabel=()=>'按住 '+lookupKey()+' + 单击';
-    const passageSources=new WeakMap(),passageErrors=new WeakMap();
+  const passageSources=new WeakMap(),passageErrors=new Set();
   const isAlive = () => !disposed && Boolean(runtime.id);
   const identity = item => item.wordId + ':' + item.senseKey;
   const automatic = () => state.enabled && !state.paused && !state.emergency && state.settings.assistanceMode === 'ambient' && document.visibilityState === 'visible';
@@ -98,8 +98,10 @@
     taskStatus.lines.set(key,{key,text,error,busy,expiresAt:duration?Date.now()+duration:0});updateTaskStatus();
   }
   function clearTaskStatus(){taskStatus.lines.clear();updateTaskStatus(true);}
-  function updatePassageStatus(outcome='cancelled'){const count=state.passageRequests.size;
-    setTaskStatus('passage',count?'正在翻译'+(count>1?' · '+count+' 处':''):outcome==='complete'?'翻译完成':outcome==='error'?'翻译未完成，未确认内容已撤下':'翻译已取消',{busy:count>0,error:!count&&outcome==='error',duration:count||outcome==='error'?0:3000});
+  function updatePassageStatus(outcome='cancelled'){
+    for(const panel of passageErrors)if(!panel.isConnected)passageErrors.delete(panel);
+    const count=state.passageRequests.size,error=passageErrors.size>0;
+    setTaskStatus('passage',error?'翻译未完成，未确认内容已撤下'+(count?' · 仍在翻译 '+count+' 处':''):count?'正在翻译'+(count>1?' · '+count+' 处':''):outcome==='complete'?'翻译完成':'翻译已取消',{busy:count>0,error,duration:count||error?0:3000});
   }
   const capture={timer:0,generation:0,session:null,lastInput:0,lastTick:0,elapsed:0,total:0,sequence:0,sent:new Set(),visible:new Map(),blocks:new WeakMap(),busy:false,summary:false};
   function historyInteraction(event){if(automatic()&&event.isTrusted)capture.lastInput=Date.now();}
@@ -483,7 +485,7 @@
     const current=()=>scopeCurrent()&&button.isConnected&&(view?state.card===view&&validTarget(view.target):record&&record.wrapper?.isConnected);
     button.parentElement?.querySelector('['+OWN+'="known-error"]')?.remove();button.disabled=true;setTaskStatus('known',null);
     try{const saved=await request('WORD_PREFERENCE_SET',{wordId,known:true});if(!scopeCurrent())return;state.knownWords.add(wordId);removeKnownWordAnnotations(new Set([wordId]));showKnownFeedback(saved.wordId||wordId,saved.term||term);}
-    catch(error){if(!current())return;button.disabled=false;const message='未能保存“已认识”：'+(error.message||'请重试。'),notice=document.createElement('aside');notice.setAttribute(OWN,'known-error');notice.setAttribute('role','alert');notice.style.cssText='display:block;max-width:320px;padding:var(--space-2);border:1px solid var(--danger-line);border-radius:var(--radius-control);background:var(--danger-soft);color:var(--danger);font:var(--type-support)/var(--leading-support) var(--sans);overflow-wrap:anywhere';notice.textContent=message;button.after(notice);if(view)positionCard(view);setTaskStatus('known',message,{error:true});}
+    catch(error){if(!current())return;button.disabled=false;const message='未能保存“已认识”：'+(error.message||'请重试。'),notice=document.createElement('aside');notice.setAttribute(OWN,'known-error');notice.setAttribute('role','alert');notice.style.cssText='display:block;max-width:320px;padding:var(--space-2);border:1px solid var(--danger-line);border-radius:var(--radius-control);background:var(--danger-soft);color:var(--danger);font:var(--type-support)/var(--leading-support) var(--sans);overflow-wrap:anywhere';notice.textContent=message;button.after(notice);if(view)positionCard(view);setTaskStatus('known',message,{error:true});if(view)view.knownErrorTask=taskStatus.lines.get('known');}
     finally{if(view?.target.onClose===knownClose)view.target.onClose=onClose;}
   }
   function attachKnownAction(record){
@@ -776,7 +778,7 @@
     return target.block?.isConnected && inReadingSurface(target.block) && target.anchor?.startContainer?.isConnected && target.anchor.toString()===target.text && blockText(target.block)===target.sourceText && visibleRange(target.anchor,target.block);
   }
   function closeCard() {
-    const view=state.card;if(!view)return;if(view.requestId&&lookup.taskRequestId===view.requestId)setTaskStatus('lookup',null);stopCardSpeech(view);state.card=null;releaseCardAnchor(view);view.host.remove();view.target.onClose?.();if(view.refreshPreparedOnClose)void refreshPreparedNow().catch(()=>{});
+    const view=state.card;if(!view)return;if(view.requestId&&lookup.taskRequestId===view.requestId)setTaskStatus('lookup',null);if(view.knownErrorTask&&taskStatus.lines.get('known')===view.knownErrorTask)setTaskStatus('known',null);stopCardSpeech(view);state.card=null;releaseCardAnchor(view);view.host.remove();view.target.onClose?.();if(view.refreshPreparedOnClose)void refreshPreparedNow().catch(()=>{});
     // 卡片关闭即中止在途追问；已生成的回合按本机规则保留 30 天。
     if(view.convoTurnId)void request('CONVERSATION_STOP',{turnId:view.convoTurnId}).catch(()=>{});
   }
@@ -1345,7 +1347,7 @@
     let next=null;for(let index=view.items.length-1;index>=0;index--){const id=view.items[index].id,value=values.get(id);let node=view.parts.get(id);if(value!==undefined){if(!node){node=document.createElement('p');view.parts.set(id,node);}if(node.textContent!==value)node.textContent=value;}if(node){if(node.parentNode!==view.body||node.nextSibling!==next)view.body.insertBefore(node,next);next=node;}}
     return true;
   }
-  function removePassagePanel(panel){const owner=passageErrors.get(panel);if(owner&&taskStatus.lines.get('passage')===owner)setTaskStatus('passage',null);passageErrors.delete(panel);panel.remove();}
+  function removePassagePanel(panel){const failed=passageErrors.delete(panel);panel.remove();if(failed){if(passageErrors.size||state.passageRequests.size)updatePassageStatus();else setTaskStatus('passage',null);}}
   async function translatePassage(target){
     const requestId=crypto.randomUUID(),items=target.chunks.map((text,index)=>({id:'p'+(index+1),text})),view={requestId,target,items,parts:new Map(),cancelled:false,finished:false,...passagePanel(target)};state.passageRequests.add(view);updatePassageStatus();
     if(view.cancel)view.cancel.onclick=event=>{if(!event.isTrusted)return;view.cancelled=true;if(state.passageRequests.delete(view))updatePassageStatus();removePassagePanel(view.panel);};
@@ -1357,12 +1359,12 @@
       if(!result||!renderPassageProgress(view,result.items,true))throw new Error('翻译结果不完整或无效。');
       view.finished=true;view.body.setAttribute('aria-busy','false');if(view.cancel)view.cancel.textContent='关闭';outcome='complete';reportResult(result,'ok');void request('HISTORY_COMMIT',{requestId}).catch(()=>{});
     }catch(error){reportResult(receivedResult,'error');outcome='error';if(!view.cancelled&&validPassageTarget(target)&&view.panel.isConnected){view.finished=true;view.parts.clear();view.body.textContent=error.message||'翻译失败。';view.body.setAttribute('aria-busy','false');if(view.cancel)view.cancel.textContent='关闭';else view.panel.style.setProperty('color','var(--danger)','important');}else removePassagePanel(view.panel);}
-    finally{if(state.passageRequests.delete(view)){updatePassageStatus(outcome);if(outcome==='error'&&taskStatus.lines.get('passage')?.error)passageErrors.set(view.panel,taskStatus.lines.get('passage'));}}
+    finally{if(state.passageRequests.delete(view)){if(outcome==='error'&&view.finished&&view.panel.isConnected)passageErrors.add(view.panel);updatePassageStatus(outcome);}}
   }
   function cancelPassageRequests(remove=true,preserveContent=false){
     removeSelectionTool();let changed=false;
     for(const view of state.passageRequests){if(preserveContent&&validPassageTarget(view.target))continue;view.cancelled=true;state.passageRequests.delete(view);changed=true;}
-    if(!preserveContent)setTaskStatus('passage',null);else if(changed)updatePassageStatus();
+    if(!preserveContent){passageErrors.clear();setTaskStatus('passage',null);}else if(changed||passageErrors.size)updatePassageStatus();
     if(remove)for(const node of document.querySelectorAll('['+OWN+'="passage-translation"]')){const target=passageSources.get(node);if (!preserveContent || !target || !validPassageTarget(target)) removePassagePanel(node)}
   }
   async function decomposeSelection(target,x,y){

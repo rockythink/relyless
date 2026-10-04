@@ -276,3 +276,31 @@ test('repeating a transient notice restarts its expiry without discarding its er
     }finally{Date.now=now;}
   });
 });
+
+test("a failed passage remains an error while another translation is pending and after it succeeds",async()=>{
+  await withContent(async({paragraph,pending,send,click})=>{
+    const translate=()=>{const range=document.createRange();range.selectNodeContents(paragraph);return ShisuiContent.hooks.translatePassage(ShisuiContent.hooks.passageTarget(range));};
+    const first=translate();await waitFor(()=>pending.length===1);const failed=pending.shift(),failedPanel=document.querySelector("[data-shisui-ui=passage-translation]");
+    const second=translate();await waitFor(()=>pending.length===1);const successful=pending.shift();
+    failed.reply({ok:false,error:"第一段失败"});await first;
+    expect((await send({type:"SS_STATUS"})).data.tasks.find(task=>task.key==="passage")?.error).toBe(true);
+    successful.reply({ok:true,data:{items:[{id:"p1",translation:"客户端使用退避重试。"}]}});await second;
+    expect((await send({type:"SS_STATUS"})).data.tasks.find(task=>task.key==="passage")?.error).toBe(true);
+    click(failedPanel.querySelector("button"));
+    expect((await send({type:"SS_STATUS"})).data.tasks.some(task=>task.key==="passage")).toBe(false);
+  });
+});
+
+for(const newer of [false,true])test("closing a failed known-word save "+(newer?"preserves a newer error":"clears its error"),async()=>{
+  await withContent(async({state,pending,lookup,send})=>{
+    lookup();await waitFor(()=>pending.length===1);pending.shift().reply({ok:true,data:{hint:"try again",sense:"repeat an attempt",source:"provider",support:{wordId:"retry-word",senseKey:"retry-sense"}}});
+    await waitFor(()=>state.card?.knownWordId());const view=state.card;view.known.click();
+    await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:"保存失败"});
+    await waitFor(()=>view.card.querySelector("[data-shisui-ui=known-error]"));
+    expect((await send({type:"SS_STATUS"})).data.tasks.find(task=>task.key==="known")?.error).toBe(true);
+    if(newer)ShisuiContent.hooks.setTaskStatus("known","较新的保存错误",{error:true});
+    view.card.querySelector(".dismiss").click();
+    const remaining=(await send({type:"SS_STATUS"})).data.tasks.find(task=>task.key==="known");
+    if(newer)expect(remaining?.text).toBe("较新的保存错误");else expect(remaining).toBeUndefined();
+  },{lookupDisplay:"card"});
+});
