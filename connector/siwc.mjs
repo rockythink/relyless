@@ -190,9 +190,9 @@ export class SiwcClient extends EventEmitter {
     if(url.searchParams.has('error')){this.loginError='ChatGPT 授权未完成。';await this.cancelLogin();return finish(400,'Authorization cancelled.');}
     const issued=url.searchParams.get('client_id')||pending.previous?.client_id;
     if(!url.searchParams.get('code')||!/^oaiapp_[A-Za-z0-9_-]{3,256}$/.test(issued||'')||pending.previous&&issued!==pending.previous.client_id){await this.cancelLogin();return finish(400,'Authorization invalid.');}
-    pending.processing=true;
+    pending.processing=true;let tokens,committed=false,failure;
     try{
-      const tokens=await this.#token({grant_type:'authorization_code',client_id:issued,code:url.searchParams.get('code'),code_verifier:pending.verifier,redirect_uri:pending.redirectUri,resource:API},pending.controller.signal);
+      tokens=await this.#token({grant_type:'authorization_code',client_id:issued,code:url.searchParams.get('code'),code_verifier:pending.verifier,redirect_uri:pending.redirectUri,resource:API},pending.controller.signal);
       const identity=await this.#identity(tokens.id_token,issued,pending.nonce,pending.controller.signal);
       if(pending.previous&&identity.sub!==pending.previous.subject)throw authError('ChatGPT 账户与原授权不一致。');
       const granted=tokens.scope.split(' ');
@@ -205,12 +205,17 @@ export class SiwcClient extends EventEmitter {
         const next={...saved,active:issued,accounts:{...saved.accounts,[issued]:account}};
         await savePrivate(this.credentialsPath,next);
         if(this.pending!==pending||this.stopping){await savePrivate(this.credentialsPath,saved);return;}
-        this.state=next;this.generation++;this.modelCache=null;this.conversations.clear();this.loginError=null;
+        committed=true;this.state=next;this.generation++;this.modelCache=null;this.conversations.clear();this.loginError=null;
         this.emit('status',this.status());finish(200,'RelyLess ChatGPT authorization complete. You may close this tab.');
       });
-      if(!response.writableEnded)finish(400,'Authorization cancelled.');
-    }catch(error){if(this.pending===pending)this.loginError=error.message;finish(400,'Authorization failed. Return to RelyLess and try again.');}
-    finally{if(this.pending===pending)this.#clearLogin(pending);}
+    }catch(error){failure=error;}
+    finally{
+      const unconfirmed=tokens&&!committed&&!await this.#revoke([{client_id:issued,refresh_token:tokens.refresh_token}]);
+      if(unconfirmed)failure=authError('本机授权未恢复；迟到授权远程撤销未确认。请在 ChatGPT 设置中断开此应用。');
+      if(failure&&(this.pending===pending||!this.pending&&!this.openingLogin&&!this.#account()?.access_token)){this.loginError=failure.message;this.emit('status',this.status());}
+      if(!response.writableEnded)finish(400,unconfirmed?'Authorization cancelled; remote revocation was not confirmed. Disconnect this app in ChatGPT settings.':failure?'Authorization failed. Return to RelyLess and try again.':'Authorization cancelled.');
+      if(this.pending===pending)this.#clearLogin(pending);
+    }
   }
   #clearLogin(pending){this.pending=null;clearTimeout(pending.timer);pending.controller.abort();pending.server.close();this.emit('status',this.status());}
   async cancelLogin(){
@@ -232,12 +237,14 @@ export class SiwcClient extends EventEmitter {
       saved.authorizationEpoch=randomUUID();
       await savePrivate(this.credentialsPath,saved);this.state=saved;this.emit('status',this.status());return revocations;
     });
-    let revoked=true;
-    if(accounts.length){try{const doc=await this.#discovery();if(!doc.revocation_endpoint)throw new Error('No revocation endpoint');
-      revoked=(await Promise.all(accounts.map(async account=>{try{const response=await this.#request(doc.revocation_endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:account.refresh_token,token_type_hint:'refresh_token',client_id:account.client_id}),signal:AbortSignal.timeout(15_000)});return response.ok;}catch{return false;}}))).every(Boolean);
-    }catch{revoked=false;}}
-    if(!revoked)throw authError('本机已退出 ChatGPT；远程撤销未确认。请在 ChatGPT 设置中断开此应用。');
+    if(!await this.#revoke(accounts))throw authError('本机已退出 ChatGPT；远程撤销未确认。请在 ChatGPT 设置中断开此应用。');
     return this.status();
+  }
+  async #revoke(accounts){
+    if(!accounts.length)return true;
+    try{const doc=await this.#discovery();if(!doc.revocation_endpoint)return false;
+      return(await Promise.all(accounts.map(async account=>{try{const response=await this.#request(doc.revocation_endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:account.refresh_token,token_type_hint:'refresh_token',client_id:account.client_id}),signal:AbortSignal.timeout(15_000)});return response.ok;}catch{return false;}}))).every(Boolean);
+    }catch{return false;}
   }
   async #accessToken(){
     await this.start();const initial=this.#account(),generation=this.generation;this.#checkGeneration(generation);

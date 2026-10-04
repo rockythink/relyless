@@ -79,6 +79,8 @@ SIWC 凭证修改复用跨进程互斥：先写完含 PID 的私有 owner 文件
 
 复用有效访问令牌或模型目录缓存前同样在锁内重读共享授权世代；不让未过期令牌绕过退出墓碑。状态查询重读持久记录，世代或账户改变会清空本机模型缓存和会话并取消旧请求。多个相关 grant 并发撤销，发现和撤销各有既有 15 秒上限，网络阶段不按 grant 数串行累积；任何远端未确认仍报告本机已退出、远端未确认。
 
+回调取得令牌但未成功提交时，在释放凭证锁后使用共同的有界撤销流程清理该 grant；包括本地取消、共享世代拒绝、验证或提交失败。未确认撤销在回调页面和适用的当前账户状态中明确提示，不持久保存丢弃的令牌、不覆盖新的登录尝试。
+
 主机向 `https://api.openai.com/v1/models` 查询目录，并以 `Authorization: Bearer <OAuth access token>` 直接请求 `https://api.openai.com/v1/responses`。模型目录不代表保证可用；实际权限、额度和同意状态决定推理能否完成。HTTP 推理固定 `store:false`、`stream:true`，逐条消费 SSE，只有 `response.completed` 确认成功；失败、incomplete 或提前断流如实报告，不提交未完成的结构化结果。
 
 SIWC HTTP 预览不支持 `previous_response_id` 或 `conversation`；每轮 `input` 数组带当前任务与所需有界历史，不依赖远端持久会话。主机内的临时历史与扩展本机最多 30 天的追问记录是两层不同生命周期；主机重启后，继续追问须从扩展提供的有限历史重建。请求不发送此流程不支持的 `temperature`、`max_output_tokens` 等 API 参数，也不把 SIWC 扩为音视频或完整代理工具接口。协议、隐私与迁移依据见 [ADR 0007](decisions/0007-chatgpt-siwc-native-host.md)。

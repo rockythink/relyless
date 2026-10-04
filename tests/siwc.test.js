@@ -188,6 +188,16 @@ test('a valid-looking delta without response.completed is never accepted',async(
 
 const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};};
 async function expire(f){const path=join(f.dir,'siwc.json'),saved=JSON.parse(await readFile(path,'utf8'));saved.accounts[clientId].expires_at=0;await writeFile(path,JSON.stringify(saved),{mode:0o600});f.client.state.accounts[clientId].expires_at=0;}
+for(const revokeStatus of [200,503])test('shared logout revokes discarded late grants and reports remote '+revokeStatus,async()=>{
+  const entered=deferred(),gate=deferred();let paused=true,other;
+  const f=await fixture({override:async target=>{if(target.pathname==='/keys'&&paused){entered.resolve();await gate.promise;}if(target.pathname==='/revoke')return new Response(null,{status:revokeStatus});}});
+  try{const authorization=f.authorize();await entered.promise;other=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});await other.start();await other.logout();paused=false;gate.resolve();
+    const response=(await authorization).response;expect(response.status).toBe(400);expect(f.requests.filter(item=>item.url==='/revoke').map(item=>new URLSearchParams(item.init.body).get('token'))).toContain('refresh-1');
+    expect(f.client.status().authenticated).toBe(false);expect(Object.values(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts).every(account=>!account.refresh_token&&!account.access_token)).toBe(true);
+    if(revokeStatus===200)expect(f.client.status().error).toBeNull();else{expect(f.client.status().error).toContain('远程撤销未确认');expect(await response.text()).toContain('revocation was not confirmed');}
+  }finally{gate.resolve();await other?.close();await f.close();}
+});
+
 
 for(const existing of [false,true])for(const stage of ['/api/accounts/oauth/token','/keys'])test('shared logout cancels an older '+(existing?'registered':'initial')+' OAuth callback at '+stage+' and permits a fresh login',async()=>{
   let paused=false;const entered=deferred(),gate=deferred();
