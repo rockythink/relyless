@@ -4,6 +4,7 @@ import { mkdtemp, readFile, stat, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GrokClient } from '../connector/grok.mjs';
+import { DiagnosticStore } from '../connector/diagnostics.mjs';
 
 const CLIENT = 'b1a00492-073a-47ea-816f-4c329264a828';
 const SCOPE = 'openid profile email offline_access grok-cli:access api:access';
@@ -12,7 +13,7 @@ const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url')
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 const complete = text => ({ status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] }] });
 const event = value => `data: ${JSON.stringify(value)}\r\n\r\n`;
-async function fixture({ override, claims = {}, device = {}, reply = { domain: 'tech' }, tokenChanges = {}, wait } = {}) {
+async function fixture({ override, claims = {}, device = {}, reply = { domain: 'tech' }, tokenChanges = {}, wait, diagnostic } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'relyless-grok-')); let now = Date.now(), tokenCount = 0;
   const requests = [], waits = [];
   const state = { get now() { return now; }, get tokenCount() { return tokenCount; }, advance(ms) { now += ms; } };
@@ -30,7 +31,7 @@ async function fixture({ override, claims = {}, device = {}, reply = { domain: '
     if (path === '/v1/responses') return new Response(event({ type: 'response.output_text.delta', delta: JSON.stringify(reply) }) + event({ type: 'response.completed', response: complete(JSON.stringify(reply)) }), { headers: { 'Content-Type': 'text/event-stream' } });
     throw new Error('unexpected fixture route');
   };
-  const client = new GrokClient({ dataDir: dir, fetchImpl, now: () => now, wait: wait ?? (async ms => { waits.push(ms); now += ms; await new Promise(resolve => setTimeout(resolve, 0)); }), requestTimeoutMs: 30 });
+  const client = new GrokClient({ dataDir: dir, fetchImpl, now: () => now, wait: wait ?? (async ms => { waits.push(ms); now += ms; await new Promise(resolve => setTimeout(resolve, 0)); }), requestTimeoutMs: 30, diagnostic });
   await client.start();
   return { client, dir, requests, waits, state, authorize: async () => { const login = await client.login(); const promise = client.loginTask?.promise; if (promise) await promise; return login; }, close: async () => { await client.close(); await rm(dir, { recursive: true, force: true }); } };
 }
@@ -41,7 +42,7 @@ test('Grok device authorization stores verified identity privately and uses subs
     expect(f.client.status()).toMatchObject({ authenticated: true, email: 'user@example.test', loginPending: false, error: null });
     expect(JSON.stringify(f.client.status())).not.toContain('access-'); expect(JSON.stringify(login)).not.toContain('private-device');
     expect((await stat(join(f.dir, 'grok-oauth.json'))).mode & 0o777).toBe(0o600);
-    expect(await f.client.listModels()).toEqual([{ id: 'fixture-model', label: 'Fixture', isDefault: false }]);
+    expect(await f.client.listModels()).toEqual([{ id: 'fixture-model', name: 'Fixture', isDefault: false }]);
     expect(await f.client.classify({ text: 'A data pipeline.' })).toEqual({ domain: 'tech', source: 'grok' });
     const request = f.requests.find(v => v.url.endsWith('/responses')); expect(JSON.parse(request.init.body)).toMatchObject({ store: false, model: 'fixture-model' });
     expect(request.init.headers.Authorization).toBe('Bearer access-1'); expect(request.init.headers['x-grok-client-identifier']).toBe('relyless'); expect(request.init.redirect).toBe('error');
@@ -130,4 +131,10 @@ test('Grok late completed response after logout is cancelled, not delivered as a
   let release, started; const gate = new Promise(resolve => { release = resolve; }), entered = new Promise(resolve => { started = resolve; });
   const f = await fixture({ override: async url => { if (url.endsWith('/responses')) { started(); await gate; return json(complete('{"domain":"tech"}')); } } });
   try { await f.authorize(); const answer = f.client.classify({ text: 'Pipeline.' }); await entered; await f.client.logout(); release(); await expect(answer).rejects.toMatchObject({ code: 'CANCELLED' }); expect(f.client.status().authenticated).toBe(false); } finally { release(); await f.close(); }
+});
+
+test('Grok native provider diagnostics keep trace, status and safe failure metadata without content',async()=>{
+  let store,failed=false;const traceId='12345678-1234-1234-1234-123456789abc';const f=await fixture({diagnostic:record=>store.append(record),override:url=>failed&&url.endsWith('/responses')?new Response('private body',{status:429}):undefined});
+  try{store=await DiagnosticStore.create(f.dir);await f.authorize();await f.client.classify({text:'private reading excerpt'},{traceId});failed=true;await expect(f.client.classify({text:'private reading excerpt'},{traceId})).rejects.toMatchObject({code:'RATE_LIMIT'});await store.idle();const text=await readFile(join(f.dir,'diagnostics.jsonl'),'utf8');const rows=text.trim().split('\n').map(JSON.parse);expect(rows.map(row=>[row.operation,row.stage,row.status,row.code,row.traceId])).toEqual([['RESOLVE_DOMAIN','provider','start','NATIVE_START',traceId],['RESOLVE_DOMAIN','provider','ok','OK',traceId],['RESOLVE_DOMAIN','provider','start','NATIVE_START',traceId],['RESOLVE_DOMAIN','provider','error','RATE_LIMIT',traceId]]);expect(rows[1].durationMs).toBeGreaterThanOrEqual(0);expect(rows[3].httpStatus).toBe(429);expect(text).not.toMatch(/private|access-1|refresh-1|user@example|fixture-model/);}
+  finally{await store?.idle();await f.close();}
 });

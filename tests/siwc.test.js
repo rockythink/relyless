@@ -1,6 +1,7 @@
 import {test,expect} from 'bun:test';
 import {generateKeyPairSync,sign} from 'node:crypto';
-import {mkdtemp,readFile,rm,stat,writeFile} from 'node:fs/promises';
+import {chmod,mkdtemp,readFile,rm,stat,writeFile} from 'node:fs/promises';
+import {spawnSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {SiwcClient} from '../connector/siwc.mjs';
@@ -20,11 +21,12 @@ const sse=(value,{terminal='response.completed',lineEnd='\r\n',split=false}={})=
   const events=[...(!split?[{type:'response.output_text.delta',delta:text}]:[{type:'response.output_text.delta',delta:text.slice(0,middle)},{type:'response.output_text.delta',delta:text.slice(middle)}]),{type:terminal,response:terminal==='response.failed'?{error:{code:'subscription_sharing_usage_limit_exceeded'}}:{}}];
   return new Response(events.map(item=>`data: ${JSON.stringify(item)}${lineEnd}${lineEnd}`).join(''),{headers:{'Content-Type':'text/event-stream'}});
 };
-async function fixture({reply=()=>({domain:'tech'}),tokenScope='openid profile email offline_access resource.invoke chatgpt.tokens.use.direct',identityNonce=null}={}){
+async function fixture({reply=()=>({domain:'tech'}),tokenScope='openid profile email offline_access resource.invoke chatgpt.tokens.use.direct',identityNonce=null,override}={}){
   const dir=await mkdtemp(join(tmpdir(),'relyless-siwc-'));
   const requests=[];let tokenCount=0;
   const fetchImpl=async(url,init={})=>{
     const target=new URL(url);requests.push({url:target.pathname,init});
+    const custom=await override?.(target,init);if(custom!==undefined)return custom;
     if(target.pathname==='/.well-known/openid-configuration')return json({issuer:'https://auth.openai.com',jwks_uri:'https://auth.openai.com/keys',revocation_endpoint:'https://auth.openai.com/revoke'});
     if(target.pathname==='/keys')return json({keys:[{...jwk,kid:'fixture',use:'sig'}]});
     if(target.pathname==='/api/accounts/oauth/token'){
@@ -181,4 +183,57 @@ test('a valid-looking delta without response.completed is never accepted',async(
     f.client.fetch=(url,init)=>new URL(url).pathname==='/v1/responses'?new Response('data: '+JSON.stringify({type:'response.output_text.delta',delta:'{"domain":"tech"}'})+'\n\n',{headers:{'Content-Type':'text/event-stream'}}):before(url,init);
     await expect(f.client.classify({text:'Flink streams.'})).rejects.toMatchObject({code:'OUTPUT_INVALID'});
   }finally{await f.close();}
+});
+
+const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};};
+async function expire(f){const path=join(f.dir,'siwc.json'),saved=JSON.parse(await readFile(path,'utf8'));saved.accounts[clientId].expires_at=0;await writeFile(path,JSON.stringify(saved),{mode:0o600});f.client.state.accounts[clientId].expires_at=0;}
+
+for(const stage of ['/api/accounts/oauth/token','/keys'])for(const action of ['cancelLogin','logout','close'])test('SIWC '+action+' during '+stage+' cannot persist a late login',async()=>{
+  const entered=deferred(),gate=deferred();const f=await fixture({override:async target=>{if(target.pathname===stage){entered.resolve();await gate.promise;}}});
+  try{const authorization=f.authorize();await entered.promise;await f.client[action]();gate.resolve();expect((await authorization).response.status).toBe(400);expect(f.client.status().authenticated).toBe(false);expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId]?.access_token).toBeUndefined();}
+  finally{gate.resolve();await f.close();}
+});
+
+test('a cancelled callback cannot close a newer login attempt',async()=>{
+  const entered=deferred(),gate=deferred();const f=await fixture({override:async target=>{if(target.pathname==='/api/accounts/oauth/token'){entered.resolve();await gate.promise;}}});
+  try{const authorization=f.authorize();await entered.promise;await f.client.cancelLogin();await f.client.login();gate.resolve();expect((await authorization).response.status).toBe(400);expect(f.client.status()).toMatchObject({authenticated:false,loginPending:true});}
+  finally{gate.resolve();await f.close();}
+});
+
+for(const stage of ['/api/accounts/oauth/token','/keys'])test('SIWC logout during refresh '+stage+' stays logged out on disk and restart',async()=>{
+  let refreshing=false;const entered=deferred(),gate=deferred();const f=await fixture({override:async target=>{if(refreshing&&target.pathname===stage){entered.resolve();await gate.promise;}}});
+  try{await f.authorize();await expire(f);refreshing=true;const outcome=f.client.classify({text:'Flink streams.'}).then(value=>({value}),error=>({error}));await entered.promise;const logout=f.client.logout();gate.resolve();await logout;expect((await outcome).error?.code).toBe('CANCELLED');expect(f.client.status().authenticated).toBe(false);const saved=JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8'));expect(saved.accounts[clientId].refresh_token).toBeUndefined();const restored=new SiwcClient({dataDir:f.dir});await restored.start();expect(restored.status().authenticated).toBe(false);await restored.close();}
+  finally{gate.resolve();await f.close();}
+});
+
+test('invalid refresh grants clear tokens but retain the issued registration for explicit login',async()=>{
+  let invalid=false;const f=await fixture({override:(target,init)=>invalid&&target.pathname==='/api/accounts/oauth/token'?json({error:'invalid_grant'},400):undefined});
+  try{await f.authorize();await expire(f);invalid=true;await expect(f.client.classify({text:'Flink streams.'})).rejects.toMatchObject({code:'AUTH'});expect(f.client.status().authenticated).toBe(false);const saved=JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8'));expect(saved.accounts[clientId]).toEqual({client_id:clientId,subject:'user-1',email:'user@example.test'});expect(new URL((await f.client.login()).authUrl).searchParams.get('client_id')).toBe(clientId);}
+  finally{await f.close();}
+});
+
+test('transient refresh failure preserves credentials and allows a later request',async()=>{
+  let unavailable=false;const f=await fixture({override:target=>unavailable&&target.pathname==='/api/accounts/oauth/token'?new Response('',{status:503}):undefined});
+  try{await f.authorize();await expire(f);unavailable=true;await expect(f.client.classify({text:'Flink streams.'})).rejects.toMatchObject({code:'HTTP'});expect(f.client.status().authenticated).toBe(true);expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBe('refresh-1');unavailable=false;expect(await f.client.classify({text:'Flink streams.'})).toEqual({domain:'tech',source:'chatgpt'});}
+  finally{await f.close();}
+});
+
+test('refresh recovers a dead owner lock without manual credential changes',async()=>{
+  const f=await fixture();try{await f.authorize();await expire(f);const owner=spawnSync('node',['-e','process.exit(0)']);expect(owner.status).toBe(0);await writeFile(join(f.dir,'siwc.json.lock'),JSON.stringify({pid:owner.pid}),{mode:0o600});expect(await f.client.classify({text:'Flink streams.'})).toEqual({domain:'tech',source:'chatgpt'});expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBe('refresh-2');}finally{await f.close();}
+},15000);
+
+test('two independent SIWC clients serialize a rotating refresh',async()=>{
+  const f=await fixture();let other;try{await f.authorize();await expire(f);other=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});await other.start();await Promise.all([f.client.listModels(),other.listModels()]);expect(f.requests.filter(item=>item.url==='/api/accounts/oauth/token')).toHaveLength(2);expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBe('refresh-2');}finally{await other?.close();await f.close();}
+});
+
+for(const [status,code] of [[401,'AUTH'],[403,'AUTH'],[429,'RATE_LIMIT'],[503,'HTTP']])test('SIWC HTTP '+status+' keeps its failure category for non-JSON bodies',async()=>{
+  for(const route of ['/v1/models','/v1/responses']){const f=await fixture({override:target=>target.pathname===route?new Response(route.endsWith('models')?'':'<html>private upstream detail</html>',{status}):undefined});try{await f.authorize();await expect(f.client.classify({text:'Flink streams.'})).rejects.toMatchObject({code});}finally{await f.close();}}
+});
+
+test.skipIf(process.platform==='win32')('credential storage failure cannot disclose the local path or authenticate the account',async()=>{
+  const f=await fixture();try{await chmod(f.dir,0o500);expect((await f.authorize()).response.status).toBe(400);expect(f.client.status().authenticated).toBe(false);expect(f.client.status().error).not.toContain(f.dir);expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId]).toBeUndefined();}finally{await chmod(f.dir,0o700);await f.close();}
+});
+
+test('startup directory failure is a safe STORAGE_ERROR',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'relyless-storage-'));const path=join(dir,'private-user');await writeFile(path,'not a directory');const client=new SiwcClient({dataDir:join(path,'oauth')});try{let failure;try{await client.start();}catch(error){failure=error;}expect(failure?.code).toBe('STORAGE_ERROR');expect(failure?.message).not.toContain(dir);}finally{await client.close();await rm(dir,{recursive:true,force:true});}
 });

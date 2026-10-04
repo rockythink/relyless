@@ -145,6 +145,7 @@ node connector/install.mjs --extension-id <YOUR_ACTUAL_EXTENSION_ID>
 
 不需要 Codex CLI、共享客户端密钥或手动粘贴 token。OAuth 访问/刷新令牌及注册信息只由本机主机管理，不进入扩展存储、页面、诊断或导出。清理扩展阅读数据不等于退出 ChatGPT 账户；在订阅面板退出登录，必要时在 ChatGPT 设置中撤销本应用访问。
 
+取消 ChatGPT 登录或退出后，迟到的授权、刷新与模型结果不会恢复账户。刷新令牌失效时会清除不可用令牌、保留已签发的客户端注册，并重新显示登录入口；临时网络或服务故障不会清除有效授权。连接器异常退出留下的失效刷新锁可自动恢复。
 ChatGPT 主机内的追问历史只在内存中保留：闲置 30 分钟过期，最多 50 个会话、每会话最近 12 组问答；退出登录、切换账户或主机退出后清除。它与扩展本机最多 30 天、每会话 40 轮的主动追问记录不同；继续追问会重新发送所需有限历史，主机重启也可从扩展记录重建，无痕窗口不保存这些持久记录。
 
 当前 SIWC 预览要求 HTTP 请求使用 `store:false`、`stream:true`：主机读取 SSE 到 `response.completed` 才确认成功，流中断或失败不会伪装成完成。HTTP 不支持 `previous_response_id` 或远端 `conversation` 持续会话，每轮通过 `input` 数组提供所需历史；也不发送此流程不支持的 `temperature`、`max_output_tokens` 等参数。RelyLess 使用文本求助，不把它当作音视频、文件上传或完整工具代理接口。订阅限制不等于扩展的月度 token 预算，也不保证无限调用。
