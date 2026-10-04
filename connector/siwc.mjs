@@ -65,9 +65,9 @@ export class SiwcClient extends EventEmitter {
   }
   #record(operation,stage,status,code,detail={}){try{Promise.resolve(this.diagnostic?.({at:Date.now(),provider:'chatgpt',operation,stage,status,code,...detail})).catch(()=>{});}catch{}}
   #registration(account){return{client_id:account.client_id,subject:account.subject,email:account.email};}
-  async #readState(){
-    let saved;try{saved=JSON.parse(await readFile(this.credentialsPath,'utf8'));}catch{throw authError('无法读取本机 ChatGPT 授权记录。','STORAGE_ERROR');}
-    if(!object(saved)||!/^urn:uuid:[0-9a-f-]{36}$/.test(saved.hostId)||!object(saved.accounts)||typeof saved.active!=='string')throw authError('本机 ChatGPT 授权记录无效。');
+  async #readState(allowMissing=false){
+    let saved;try{saved=JSON.parse(await readFile(this.credentialsPath,'utf8'));}catch(error){if(allowMissing&&error.code==='ENOENT')return null;throw authError('无法读取本机 ChatGPT 授权记录。','STORAGE_ERROR');}
+    if(!object(saved)||!/^urn:uuid:[0-9a-f-]{36}$/.test(saved.hostId)||!object(saved.accounts)||typeof saved.active!=='string'||Object.hasOwn(saved,'authorizationEpoch')&&(typeof saved.authorizationEpoch!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(saved.authorizationEpoch)))throw authError('本机 ChatGPT 授权记录无效。');
     return saved;
   }
   #checkGeneration(generation){if(generation!==this.generation||this.stopping)throw authError('ChatGPT 请求已取消。','CANCELLED');}
@@ -113,11 +113,13 @@ export class SiwcClient extends EventEmitter {
     if(this.started)return this.started;
     this.started=(async()=>{
       try{await mkdir(this.dataDir,{recursive:true,mode:0o700});}catch{throw authError('无法创建本机 ChatGPT 授权目录。','STORAGE_ERROR');}
-      let saved;
-      try{saved=JSON.parse(await readFile(this.credentialsPath,'utf8'));}catch(error){if(error.code!=='ENOENT')throw authError('本机 ChatGPT 授权记录不可读取；请检查连接器数据。');}
-      if(saved!==undefined&&(!object(saved)||!/^urn:uuid:[0-9a-f-]{36}$/.test(saved.hostId)||!object(saved.accounts)||typeof saved.active!=='string'))throw authError('本机 ChatGPT 授权记录无效；请检查连接器数据。');
-      this.state=saved??{hostId:`urn:uuid:${randomUUID()}`,active:'',accounts:{}};
-      if(!saved)await savePrivate(this.credentialsPath,this.state);
+      await this.#locked(async()=>{
+        const saved=await this.#readState(true);
+        this.state=saved??{hostId:`urn:uuid:${randomUUID()}`,active:'',accounts:{}};
+        if(!saved||!Object.hasOwn(saved,'authorizationEpoch')){
+          this.state={...this.state,authorizationEpoch:randomUUID()};await savePrivate(this.credentialsPath,this.state);
+        }
+      });
       this.emit('status',this.status());
     })();
     try{await this.started;}catch(error){this.started=null;throw error;}
@@ -158,16 +160,21 @@ export class SiwcClient extends EventEmitter {
     try{
       await this.start();this.#checkGeneration(generation);
       if(opening.cancelled)throw authError('ChatGPT 登录已取消。','CANCELLED');
-      const previous=this.#account(),clientId=previous?.client_id??'dynamic_agent_client';
+      const {authorizationEpoch,previous,hostId}=await this.#locked(async()=>{
+        const saved=await this.#readState();this.#checkGeneration(generation);
+        if(opening.cancelled)throw authError('ChatGPT 登录已取消。','CANCELLED');
+        this.state=saved;return{authorizationEpoch:saved.authorizationEpoch,previous:this.#account(),hostId:saved.hostId};
+      });
+      const clientId=previous?.client_id??'dynamic_agent_client';
       const state=base64url(randomBytes(32)),nonce=base64url(randomBytes(32)),verifier=base64url(randomBytes(32));
       server=this.serverFactory((request,response)=>{void this.#callback(request,response).catch(()=>{response.writeHead(400,{'Content-Type':'text/plain; charset=utf-8'}).end('Authorization failed.');});});
       try{await new Promise((ok,fail)=>{server.once('error',fail);server.listen(0,'127.0.0.1',ok);});}catch{throw authError('无法启动本机 ChatGPT 登录回调。');}
       this.#checkGeneration(generation);if(opening.cancelled)throw authError('ChatGPT 登录已取消。','CANCELLED');
       const port=server.address().port,redirectUri=`http://127.0.0.1:${port}/auth/callback`;
       const timer=setTimeout(()=>{if(this.pending?.server===server)void this.cancelLogin().catch(error=>{this.loginError=error.message;this.emit('status',this.status());});},5*60_000);timer.unref?.();
-      this.pending={server,timer,state,nonce,verifier,redirectUri,clientId,previous,controller:new AbortController()};this.openingLogin=null;
+      this.pending={server,timer,state,nonce,verifier,redirectUri,clientId,previous,authorizationEpoch,controller:new AbortController()};this.openingLogin=null;
       const url=new URL(`${AUTH}/api/accounts/authorize`);
-      const values={client_id:clientId,ext_agent_host_id:this.state.hostId,response_type:'code',redirect_uri:redirectUri,scope:SCOPES,resource:API,state,nonce,code_challenge_method:'S256',code_challenge:base64url(createHash('sha256').update(verifier).digest())};
+      const values={client_id:clientId,ext_agent_host_id:hostId,response_type:'code',redirect_uri:redirectUri,scope:SCOPES,resource:API,state,nonce,code_challenge_method:'S256',code_challenge:base64url(createHash('sha256').update(verifier).digest())};
       if(previous?.email)values.login_hint=previous.email;else values.agent_name_hint='RelyLess';
       for(const [key,value] of Object.entries(values))url.searchParams.set(key,value);
       this.emit('status',this.status());return{authUrl:url.href};
@@ -193,6 +200,7 @@ export class SiwcClient extends EventEmitter {
       await this.#locked(async()=>{
         if(this.pending!==pending||this.stopping)return;
         const saved=await this.#readState();if(this.pending!==pending||this.stopping)return;
+        if(saved.authorizationEpoch!==pending.authorizationEpoch){this.state=saved;this.generation++;this.modelCache=null;this.conversations.clear();return;}
         const account={client_id:issued,subject:identity.sub,email:typeof identity.email==='string'?identity.email.slice(0,320):'',id_token:tokens.id_token,access_token:tokens.access_token,refresh_token:tokens.refresh_token,scopes:granted,expires_at:Date.now()+tokens.expires_in*1000};
         const next={...saved,active:issued,accounts:{...saved.accounts,[issued]:account}};
         await savePrivate(this.credentialsPath,next);
@@ -221,6 +229,7 @@ export class SiwcClient extends EventEmitter {
       const clear=id=>{const account=saved.accounts[id];if(account){saved.accounts[id]=this.#registration(account);if(account.refresh_token)revocations.push(account);}};
       clear(saved.active);if(previous&&previous.client_id!==saved.active)clear(previous.client_id);
       if(previous?.refresh_token&&!revocations.some(account=>account.client_id===previous.client_id&&account.refresh_token===previous.refresh_token))revocations.push(previous);
+      saved.authorizationEpoch=randomUUID();
       await savePrivate(this.credentialsPath,saved);this.state=saved;this.emit('status',this.status());return revocations;
     });
     let revoked=true;
@@ -238,6 +247,7 @@ export class SiwcClient extends EventEmitter {
       const controller=new AbortController();this.refreshController=controller;
       this.refreshing=this.#locked(async()=>{
         this.#checkGeneration(generation);const saved=await this.#readState(),clientId=initial.client_id,account=saved.accounts[clientId];this.#checkGeneration(generation);
+        if(saved.authorizationEpoch!==this.state.authorizationEpoch){this.state=saved;this.modelCache=null;this.conversations.clear();throw authError('ChatGPT 请求已取消。','CANCELLED');}
         if(saved.active!==clientId||!account?.refresh_token)throw authError('账户已切换，请重新请求。');
         if(account.expires_at>Date.now()+60_000){this.state=saved;return account.access_token;}
         try{

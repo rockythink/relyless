@@ -89,4 +89,7 @@
 
 - Grok 与其他 Native 主机共用诊断存储边界：configure(false) 先停止当前进程内记录，再保存磁盘配置；写入失败返回不含私有路径或令牌的 STORAGE_ERROR。扩展保存期望开关，但已连接主机未确认时报告 NATIVE_RPC，不能声称持久关闭成功；主机重启仍可能加载旧的开启配置，下次连接重试同步。
 - 清空先删除扩展日志并持久保存待清空标记；所有当前已连接主机均明确确认成功后才移除标记。任何主机失败都报告未完成并保留请求，即使另一主机已经删除；无连接时下次连接重试。不开启隐藏主机或账户连接，也不清理未参与连接的其他独立主机。
-- #53 初始版本 63d7d33 的 552/552 仅为历史记录。最终修复已执行 `npm run check` 为 556 pass、0 fail（46 个文件），定向 SIWC/诊断 55 pass；真实 Native 帧两通道 OAuth/HTTP 夹具与启动取消/退出/关闭均通过。生产双主机诊断 RPC 覆盖关闭写入失败、部分删除失败、持久待清空标记及重连确认。Chrome 源码设置页键盘失败状态为 axe 0 violations、1 incomplete、页面错误 0；UI 失败为响应夹具，当时 manifest 仍为 0.6.0，不代表最终发布包。详见 [ChatGPT 记录](2026-10-03-chatgpt-siwc.md)。
+- #53 初始版本 63d7d33 的 552/552 仅为历史记录。此前修复已执行 `npm run check` 为 556 pass、0 fail（46 个文件），定向 SIWC/诊断 55 pass；真实 Native 帧两通道 OAuth/HTTP 夹具与启动取消/退出/关闭均通过。生产双主机诊断 RPC 覆盖关闭写入失败、部分删除失败、持久待清空标记及重连确认。Chrome 源码设置页键盘失败状态为 axe 0 violations、1 incomplete、页面错误 0；UI 失败为响应夹具，当时 manifest 仍为 0.6.0，不代表最终发布包。详见 [ChatGPT 记录](2026-10-03-chatgpt-siwc.md)。
+- #53 评论 4176095535 的 P2 修复：配置、清空与追加沿用原有串行同步路径，但只有配置确认更新诊断镜像就绪状态。关闭配置写入失败、待清空重连删除成功时，日志仍可删除且待清空标记移除，期望关闭设置不变，镜像保持未同步；后续配置确认才恢复就绪。并发开关与清空同样不能掩盖配置失败，不新增隐式主机启动。
+- 本次定向 `bun test tests/diagnostics.test.js tests/connector-diagnostics.test.js`：23 pass、0 fail。两个行为回归在修复前分别失败于 mirror=true 而非预期 false，修复后通过；覆盖重连待清空及并发关闭/清空的独立确认与配置恢复。不添加源码接线测试。
+- 扩展临时双主机生产 RPC 脚本，保留原有关闭失败、迟到记录屏障、部分删除失败及重连场景；新增同一次重连配置写入失败但两主机删除成功的场景。真实 `runHost`/SIWC/Grok 客户端、Node 子进程与 Native 帧、隔离磁盘故障下，修复前失败于 mirror=true；修复后 stdout 明确显示 `pendingClear removed; mirror=false preserves failed configuration`，以及恢复后 `mirror=true; desired=false unchanged`。两主机活动与轮转日志确实删除，错误无私有路径，子进程退出、沙箱移除；仅 status/diagnostics 请求，未登录真实账户或调用模型。本次仅执行上述定向检查和生产 RPC 场景，不将先前全套 556/556 作为本次完整检查结果。

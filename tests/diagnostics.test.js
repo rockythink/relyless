@@ -121,6 +121,38 @@ test('a failed native opt-out is not confirmed and preserves the desired setting
   fail=false;await restarted.connected();expect((await restarted.snapshot()).native.mirror).toBe(true);
 });
 
+test('reconnect cleanup cannot confirm a failed native configuration',async()=>{
+  const storage=memory(),session=memory(),calls=[];let connected=false,fail=false,logs=['old-native-log'];
+  const service=createDiagnostics({storage,session,nativeStatus:()=>({connected}),sync:async payload=>{
+    calls.push(payload);if(payload.action==='clear'){logs=[];return true;}return !fail;
+  }});
+  await service.clear();await service.configure(false);
+  connected=true;fail=true;await service.connected();
+  expect(calls).toEqual([{action:'configure',enabled:false},{action:'clear'}]);
+  expect(logs).toEqual([]);expect(storage.data.diagnosticNativeClear).toBeUndefined();
+  expect((await service.snapshot())).toMatchObject({enabled:false,native:{mirror:false,pendingClear:false}});
+  fail=false;await service.connected();
+  expect((await service.snapshot())).toMatchObject({enabled:false,native:{mirror:true,pendingClear:false}});
+});
+
+test('concurrent cleanup acknowledges deletion without masking a failed opt-out',async()=>{
+  const storage=memory(),session=memory();let fail=false,logs=['old-native-log'],release,started;
+  const gate=new Promise(resolve=>{release=resolve;}),configStarted=new Promise(resolve=>{started=resolve;});
+  const service=createDiagnostics({storage,session,nativeStatus:()=>({connected:true}),sync:async payload=>{
+    if(payload.action==='configure'&&fail){started();await gate;return false;}
+    if(payload.action==='clear')logs=[];return true;
+  }});
+  await service.connected();fail=true;
+  const configuration=service.configure(false);
+  const rejected=configuration.then(()=>null,error=>error);
+  await configStarted;const cleanup=service.clear();release();
+  expect(await rejected).toMatchObject({code:'NATIVE_RPC'});await cleanup;
+  expect(logs).toEqual([]);expect(storage.data.diagnosticNativeClear).toBeUndefined();
+  expect((await service.snapshot())).toMatchObject({enabled:false,native:{mirror:false,pendingClear:false}});
+  fail=false;await service.configure(false);
+  expect((await service.snapshot())).toMatchObject({enabled:false,native:{mirror:true,pendingClear:false}});
+});
+
 test('diagnostic deletion stays pending until every connected host acknowledges cleanup',async()=>{
   const previousChrome=globalThis.chrome,logs={chatgpt:['old-chatgpt'],grok:['old-grok']};let fail=true;
   globalThis.chrome={runtime:{lastError:null,connectNative:host=>{const kind=host.endsWith('grok')?'grok':'chatgpt';let listener;return{onDisconnect:{addListener:()=>{}},onMessage:{addListener:fn=>{listener=fn;}},postMessage:message=>queueMicrotask(()=>{

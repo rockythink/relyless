@@ -87,6 +87,16 @@
 - 两个真实 Node 子进程运行生产 `runHost`，以生产 `subscription.js` 和 `diagnostic-service.js` 走诊断 RPC：配置路径被目录占用时，两主机实际 enabled:false、迟到 append 不写文件，扩展报告 NATIVE_RPC 且期望关闭设置持久保存；单主机日志路径非空目录导致清空失败时，另一主机删除成功，待清空标记仍跨存储保留；修复存储后 connected() 重试、两主机均删除确认，标记才移除。安全错误不暴露私有路径。
 - Chrome 实际加载源码设置页（当时 manifest 仍为 0.6.0，不是最终 0.7.0 发布包）：用键盘 Space 操作诊断开关，DIAG_SET 失败由响应夹具强制触发；checkbox 保持关闭、红色错误和未同步说明保留。axe-core 为 0 violations、1 incomplete，页面错误为 0；此 UI 证据不是生产 Native 存储失败链路，后者由上一项单独覆盖。
 
+### #53 跨进程退出授权世代修复（评论 4176095540）
+
+- 共享 siwc.json 增加非秘密 UUID authorizationEpoch：登录启动在原有凭证锁内重读并捕获世代，回调提交在锁内核对；退出在清除令牌的同次原子写入中换新世代，没有账户时也留下取消墓碑。旧世代回调返回 400 / Authorization cancelled，不写令牌；退出后主动登录捕获新世代并可成功。本地尝试归属、generation 和写后回滚不变。
+- 首次初始化与旧记录缺少世代时的补写改为同锁串行化，防止另一进程先读取不存在文件、稍后初始化覆盖主机身份或退出墓碑。保留既有注册、令牌与未知字段，无效 JSON、不支持的记录形状及无效世代值不覆盖。刷新保留世代，并在锁内拒绝退出前旧进程的刷新请求，不借用退出后新登录的授权。
+- 失败前最小行为回归实际输出：0 pass / 3 fail；token 与 JWKS 两阶段的旧回调均 Expected 400 / Received 200，真实 Node 并发首次启动得到两个不同 hostId。修复后 bun test tests/siwc.test.js：44 pass / 0 fail / 177 expect() calls，覆盖初次与已有注册登录、跨客户端退出、磁盘和重启无令牌、新登录成功、旧记录迁移、坏记录不覆盖、世代保持与旧进程刷新取消，以及真实 Node 初始化竞争。
+- 本次真实 Node Native 帧与 loopback 的 ChatGPT 冒烟覆盖模型目录、分类、空响应体 RATE_LIMIT、退出及取消旧回调保留新尝试；启动 cancel/logout/close 均正常退出，不返回 auth URL。OAuth/HTTP 使用隔离响应夹具，无真实账户网络。
+- 发布主控实际运行两个 Node 生产 runHost，共享 dataDir：A 的真实 HTTP 回调在 JWKS 响应前由 IPC 暂停，B 完成 logout，恢复 A 后旧回调 400、磁盘无令牌，A 后续主动登录 200，最后退出与两个进程正常关闭。不代表真实订阅授权或 OpenAI 在线推理。
+- 最终整合后 `npm run check`：568 pass / 0 fail，46 个文件；真实双主机退出回调和完整双主机诊断 RPC 再次通过，包括配置失败但清空成功时 mirror:false、修复配置后 mirror:true。
+
+
 ## 后续事项
 
 无已确认的额外范围；上述集成验收属于本次切换的交付要求，不是额外功能。

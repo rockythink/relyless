@@ -189,6 +189,58 @@ test('a valid-looking delta without response.completed is never accepted',async(
 const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};};
 async function expire(f){const path=join(f.dir,'siwc.json'),saved=JSON.parse(await readFile(path,'utf8'));saved.accounts[clientId].expires_at=0;await writeFile(path,JSON.stringify(saved),{mode:0o600});f.client.state.accounts[clientId].expires_at=0;}
 
+for(const existing of [false,true])for(const stage of ['/api/accounts/oauth/token','/keys'])test('shared logout cancels an older '+(existing?'registered':'initial')+' OAuth callback at '+stage+' and permits a fresh login',async()=>{
+  let paused=false;const entered=deferred(),gate=deferred();
+  const f=await fixture({override:async target=>{if(paused&&target.pathname===stage){entered.resolve();await gate.promise;}}});let other,restored;
+  try{
+    if(existing)await f.authorize();paused=true;
+    other=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});await other.start();
+    const authorization=f.authorize();await entered.promise;await other.logout();paused=false;gate.resolve();
+    const response=(await authorization).response;expect(response.status).toBe(400);expect(await response.text()).toBe('Authorization cancelled.');
+    expect(f.client.status()).toMatchObject({authenticated:false,loginPending:false});
+    const saved=JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8'));expect(Object.values(saved.accounts).every(account=>!account.access_token&&!account.refresh_token)).toBe(true);
+    restored=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});await restored.start();expect(restored.status().authenticated).toBe(false);
+    expect((await f.authorize()).response.status).toBe(200);expect(f.client.status().authenticated).toBe(true);
+    expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBe(existing?'refresh-3':'refresh-2');
+  }finally{gate.resolve();await restored?.close();await other?.close();await f.close();}
+});
+
+test('a shared logout tombstone survives concurrent first startup in a real Node process',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'relyless-siwc-start-'));let child,exit,timer;const client=new SiwcClient({dataDir:dir});
+  try{
+    child=spawn('node',['-e',`const fs=require('node:fs/promises');const read=fs.readFile.bind(fs);let release;const gate=new Promise(r=>release=r);process.on('message',()=>release());fs.readFile=async(...args)=>{try{return await read(...args);}catch(error){if(String(args[0]).endsWith('siwc.json')&&error.code==='ENOENT'){process.send('missing');await gate;}throw error;}};(async()=>{const {SiwcClient}=await import(process.argv[1]);const client=new SiwcClient({dataDir:process.argv[2]});await client.start();process.send({hostId:client.state.hostId});await client.close();process.disconnect();})().catch(error=>{console.error(error);process.exit(1);});`,pathToFileURL(resolve('connector/siwc.mjs')).href,dir],{stdio:['ignore','ignore','pipe','ipc']});
+    let stderr='';child.stderr.on('data',chunk=>{stderr+=chunk;});exit=new Promise(done=>child.once('exit',done));
+    await new Promise((done,fail)=>{timer=setTimeout(()=>fail(new Error('Startup did not pause')),5000);child.once('message',value=>{clearTimeout(timer);expect(value).toBe('missing');done();});});
+    const childState=new Promise(done=>child.once('message',done));const logout=client.logout();
+    await new Promise(done=>setTimeout(done,100));child.send('release');await logout;
+    expect((await childState).hostId).toBe(client.state.hostId);expect(await exit).toBe(0);expect(stderr).toBe('');
+    const saved=JSON.parse(await readFile(join(dir,'siwc.json'),'utf8'));expect(saved.hostId).toBe(client.state.hostId);expect(saved.authorizationEpoch).toBe(client.state.authorizationEpoch);expect(typeof saved.authorizationEpoch).toBe('string');
+    const restored=new SiwcClient({dataDir:dir});try{await restored.start();expect(restored.state.authorizationEpoch).toBe(saved.authorizationEpoch);expect(restored.status().authenticated).toBe(false);}finally{await restored.close();}
+  }finally{clearTimeout(timer);if(child?.exitCode===null){child.kill();await exit;}await client.close();await rm(dir,{recursive:true,force:true});}
+},15000);
+
+test('legacy SIWC startup migrates once without replacing identity, tokens or unknown fields',async()=>{
+  const f=await fixture();let first,second;
+  try{await f.authorize();const path=join(f.dir,'siwc.json'),legacy=JSON.parse(await readFile(path,'utf8'));delete legacy.authorizationEpoch;legacy.extensionMetadata={retained:true};await writeFile(path,JSON.stringify(legacy),{mode:0o600});
+    first=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});second=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});await Promise.all([first.start(),second.start()]);
+    const migrated=JSON.parse(await readFile(path,'utf8'));expect({...migrated,authorizationEpoch:undefined}).toEqual({...legacy,authorizationEpoch:undefined});expect(first.state.authorizationEpoch).toBe(migrated.authorizationEpoch);expect(second.state.authorizationEpoch).toBe(migrated.authorizationEpoch);expect(first.status().authenticated).toBe(true);
+  }finally{await first?.close();await second?.close();await f.close();}
+});
+
+for(const invalid of ['broken JSON',{version:99,refreshToken:'future'},{hostId:'urn:uuid:00000000-0000-0000-0000-000000000000',active:'',accounts:{},authorizationEpoch:null}])test('unsupported SIWC records are not rewritten during startup: '+JSON.stringify(invalid),async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'relyless-siwc-invalid-')),path=join(dir,'siwc.json'),text=typeof invalid==='string'?invalid:JSON.stringify(invalid),client=new SiwcClient({dataDir:dir});
+  try{await writeFile(path,text,{mode:0o600});await expect(client.start()).rejects.toThrow();expect(await readFile(path,'utf8')).toBe(text);}finally{await client.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('refresh preserves the shared logout epoch and rejects an older process after fresh login',async()=>{
+  const f=await fixture();let stale,other;
+  try{await f.authorize();await expire(f);const epoch=f.client.state.authorizationEpoch;await f.client.listModels();expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).authorizationEpoch).toBe(epoch);await expire(f);
+    stale=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});other=new SiwcClient({dataDir:f.dir,fetchImpl:f.client.fetch});await Promise.all([stale.start(),other.start()]);await other.logout();
+    expect((await f.authorize()).response.status).toBe(200);const path=join(f.dir,'siwc.json'),fresh=await readFile(path,'utf8'),tokens=f.requests.filter(item=>item.url==='/api/accounts/oauth/token').length;
+    await expect(stale.listModels()).rejects.toMatchObject({code:'CANCELLED'});expect(f.requests.filter(item=>item.url==='/api/accounts/oauth/token')).toHaveLength(tokens);expect(await readFile(path,'utf8')).toBe(fresh);expect(stale.state.authorizationEpoch).toBe(JSON.parse(fresh).authorizationEpoch);
+  }finally{await stale?.close();await other?.close();await f.close();}
+});
+
 for(const stage of ['/api/accounts/oauth/token','/keys'])for(const action of ['cancelLogin','logout','close'])test('SIWC '+action+' during '+stage+' cannot persist a late login',async()=>{
   const entered=deferred(),gate=deferred();const f=await fixture({override:async target=>{if(target.pathname===stage){entered.resolve();await gate.promise;}}});
   try{const authorization=f.authorize();await entered.promise;await f.client[action]();gate.resolve();expect((await authorization).response.status).toBe(400);expect(f.client.status().authenticated).toBe(false);expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId]?.access_token).toBeUndefined();}
@@ -232,7 +284,7 @@ for(const [status,code] of [[401,'AUTH'],[403,'AUTH'],[429,'RATE_LIMIT'],[503,'H
 });
 
 test.skipIf(process.platform==='win32'||process.getuid?.()===0)('credential storage failure cannot disclose the local path or authenticate the account',async()=>{
-  const f=await fixture();try{await chmod(f.dir,0o500);expect((await f.authorize()).response.status).toBe(400);expect(f.client.status().authenticated).toBe(false);expect(f.client.status().error).not.toContain(f.dir);expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId]).toBeUndefined();}finally{await chmod(f.dir,0o700);await f.close();}
+  const f=await fixture();try{await chmod(f.dir,0o500);let failure;try{await f.authorize();}catch(error){failure=error;}expect(failure?.code).toBe('STORAGE_ERROR');expect(failure?.message).not.toContain(f.dir);expect(f.client.status()).toMatchObject({authenticated:false,loginPending:false});expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId]).toBeUndefined();}finally{await chmod(f.dir,0o700);await f.close();}
 });
 
 test('startup directory failure is a safe STORAGE_ERROR',async()=>{

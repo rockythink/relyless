@@ -11,7 +11,12 @@ export function createDiagnostics({storage,session,sync,nativeStatus}) {
   const mirrorToNative=payload=>{
     if(!nativeStatus().connected||mirrorPending>=64||(payload.action==='append'&&!mirror))return Promise.resolve(false);
     mirrorPending++;
-    const work=mirrorWrites.then(async()=>{try{mirror=await sync(payload);return mirror;}catch{mirror=false;return false;}}).finally(()=>{mirrorPending--;});
+    const work=mirrorWrites.then(async()=>{
+      let acknowledged=false;try{acknowledged=await sync(payload);}catch{}
+      // Cleanup and append acknowledgements cannot confirm durable configuration.
+      if(payload.action==='configure')mirror=acknowledged;
+      return acknowledged;
+    }).finally(()=>{mirrorPending--;});
     mirrorWrites=work;return work;
   };
   const record=async(value,epoch=store.epoch,copy=true)=>{
