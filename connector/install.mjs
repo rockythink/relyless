@@ -21,12 +21,10 @@ function options(args) {
     const flag = args[i];
     if (flag === '--help') result.help = true;
     else if (flag === '--uninstall') result.uninstall = true;
-    else if (['--extension-id','--codex','--grok','--agy','--browser','--backend'].includes(flag)) {
+    else if (['--extension-id','--agy','--browser','--backend'].includes(flag)) {
       const value = args[++i];
       if (!value || value.startsWith('--')) throw new Error(`${flag} 缺少参数。`);
       if (flag === '--extension-id') result.extensionId = value;
-      if (flag === '--codex') result.codex = resolve(value);
-      if (flag === '--grok') result.grok = resolve(value);
       if (flag === '--agy') result.agy = resolve(value);
       if (flag === '--browser') result.browsers = value.split(',');
       if (flag === '--backend') {
@@ -57,53 +55,6 @@ export async function findExecutable(name, explicit, extraDirs = [], env = proce
     }
   }
   return '';
-}
-
-// The npm shim (%APPDATA%\npm\codex.cmd) works through ComSpec, but the
-// @openai/codex package also ships a native codex*.exe that can be spawned
-// directly — prefer it when present.
-export async function findNativeCodex() {
-  const appdata = process.env.APPDATA;
-  if (!appdata) return '';
-  const root = join(appdata,'npm','node_modules','@openai');
-  let entries;
-  try { entries = await readdir(root,{withFileTypes:true}); } catch { return ''; }
-  const scan = async (dir,depth) => {
-    if (depth < 0) return '';
-    let list;
-    try { list = await readdir(dir,{withFileTypes:true}); } catch { return ''; }
-    for (const entry of list) {
-      const path = join(dir,entry.name);
-      if (entry.isFile() && /^codex.*\.exe$/i.test(entry.name)) return path;
-      if (entry.isDirectory() && !['bin','scripts'].includes(entry.name)) { const found = await scan(path,depth-1); if (found) return found; }
-    }
-    return '';
-  };
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith('codex')) continue;
-    const found = await scan(join(root,entry.name),4);
-    if (found) return found;
-  }
-  return '';
-}
-
-export async function findCodex(explicit) {
-  const path = process.platform === 'win32'
-    ? (explicit ? await findExecutable('codex', explicit) : await findNativeCodex() || await findExecutable('codex', ''))
-    : await findExecutable('codex', explicit);
-  if (!path) throw new Error('未找到官方 Codex CLI。先运行 npm install -g @openai/codex，再重新安装连接器；也可使用 --codex 指定路径。');
-  return path;
-}
-
-async function findGrok(explicit) {
-  const extra = [
-    join(homedir(), '.grok', 'bin'),
-    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'grok', 'bin') : '',
-    process.env.APPDATA ? join(process.env.APPDATA, 'npm') : '',
-  ].filter(Boolean);
-  const path = await findExecutable('grok', explicit, extra);
-  if (!path) throw new Error('未找到官方 Grok CLI。先运行 npm install -g @xai-official/grok，或按 x.ai/cli 安装后重试；也可使用 --grok 指定路径。');
-  return path;
 }
 
 async function findAgy(explicit) {
@@ -162,7 +113,7 @@ export function locations(backend) {
       'chrome-testing':`HKCU\\SOFTWARE\\Google\\Chrome for Testing\\NativeMessagingHosts\\${host}`,
     }};
   }
-  throw new Error('这个连接器安装程序支持 macOS、Linux，以及 Windows 上的 Grok / Google（Antigravity）订阅。当前系统无法注册此连接器；未修改任何配置。');
+  throw new Error('这个连接器安装程序支持 macOS、Linux 和 Windows。当前系统无法注册此连接器；未修改任何配置。');
 }
 
 async function compileWindowsLauncher(launcher, nodePath, hostPath, configPath) {
@@ -227,7 +178,7 @@ function unregisterWindowsHost(key) {
 async function main() {
   const opts = options(process.argv.slice(2));
   if (opts.help) {
-    console.log('RelyLess · 订阅连接器\n\n安装：node connector/install.mjs --extension-id ID [--backend chatgpt|grok|antigravity] [--codex PATH] [--grok PATH] [--agy PATH]\n浏览器：--browser chrome,edge（默认）；另支持 chromium、chrome-testing\n卸载：node connector/install.mjs --uninstall --backend chatgpt|grok|antigravity [--browser chrome,edge]\n\nChatGPT 后端需要 Node.js 20+ 和官方 Codex CLI，支持 macOS / Linux / Windows。\nGrok 后端需要 Node.js 20+ 和官方 Grok CLI，支持 macOS / Linux / Windows。\nGoogle（Antigravity）后端需要 Node.js 20+ 和官方 Antigravity CLI（agy），支持 macOS / Linux / Windows，使用 Google AI Pro / Ultra 订阅权益。\n仅注册当前用户，不需要管理员权限。\n卸载只移除指定浏览器的连接器注册；保留本机登录数据。要退出账户，请先在插件中退出登录。');
+    console.log('RelyLess · 订阅连接器\n\n安装：node connector/install.mjs --extension-id ID [--backend chatgpt|grok|antigravity] [--agy PATH]\n浏览器：--browser chrome,edge（默认）；另支持 chromium、chrome-testing\n卸载：node connector/install.mjs --uninstall --backend chatgpt|grok|antigravity [--browser chrome,edge]\n\nChatGPT 后端只需要 Node.js 20+，通过官方 Sign in with ChatGPT（OAuth）登录并直接调用 Responses API，无需安装 CLI，支持 macOS / Linux / Windows。\nGrok 后端只需要 Node.js 20+，通过兼容 OAuth 设备码直连，无需安装 CLI。复用官方 Grok CLI 公开 OAuth 客户端，不是 RelyLess 的官方注册，第三方使用不获保证，可能失效。\nGoogle（Antigravity）后端需要 Node.js 20+ 和官方 Antigravity CLI（agy），支持 macOS / Linux / Windows，使用 Google AI Pro / Ultra 订阅权益。注意：Antigravity FAQ 限制第三方工具使用；现有配置保留，不自动迁移。\n仅注册当前用户，不需要管理员权限。\n卸载只移除指定浏览器的连接器注册；保留本机登录数据。要退出账户，请先在插件中退出登录。');
     return;
   }
   if (Number(process.versions.node.split('.')[0]) < 20) throw new Error('需要 Node.js 20 或更新版本。');
@@ -268,18 +219,15 @@ async function main() {
     return;
   }
   const id = await extensionId(opts.extensionId);
-  const cliPath = backend === 'grok' ? await findGrok(opts.grok) : backend === 'antigravity' ? await findAgy(opts.agy) : await findCodex(opts.codex);
-  const versionTarget = cliSpawnTarget(cliPath, ['--version']);
-  const version = spawnSync(versionTarget.command, versionTarget.args, {encoding:'utf8', timeout:10000, windowsHide: true, ...versionTarget.options});
-  const versionText = `${version.stdout || ''}\n${version.stderr || ''}`.trim();
-  if (backend === 'chatgpt') {
-    if (version.status !== 0 || !/^codex-cli \d+\.\d+\.\d+/m.test(version.stdout || '')) throw new Error('无法运行官方 Codex CLI。请检查 Node.js 与 Codex 的安装。');
-  } else if (backend === 'grok') {
-    if (version.status !== 0 || !/grok/i.test(versionText)) {
-      throw new Error('无法运行官方 Grok CLI。请检查 Node.js 与 Grok CLI 的安装。');
+  const cliPath = backend === 'antigravity' ? await findAgy(opts.agy) : '';
+  let versionText = '';
+  if (cliPath) {
+    const versionTarget = cliSpawnTarget(cliPath, ['--version']);
+    const version = spawnSync(versionTarget.command, versionTarget.args, {encoding:'utf8', timeout:10000, windowsHide: true, ...versionTarget.options});
+    versionText = `${version.stdout || ''}\n${version.stderr || ''}`.trim();
+    if (version.status !== 0) {
+      throw new Error('无法运行官方 Antigravity CLI。请检查 agy 的安装（agy --version 应能正常输出）。');
     }
-  } else if (version.status !== 0) {
-    throw new Error('无法运行官方 Antigravity CLI。请检查 agy 的安装（agy --version 应能正常输出）。');
   }
   const installed = join(root,'connector');
   const dataDir = join(root,'data');
@@ -304,9 +252,11 @@ async function main() {
   await chmod(dataDir,0o700).catch(()=>{});
   const files = (await readdir(source,{withFileTypes:true})).filter(entry => entry.isFile() && entry.name.endsWith('.mjs') && entry.name !== 'install.mjs');
   if (!files.some(entry => entry.name === 'host.mjs')) throw new Error('连接器源文件不完整，缺少 host.mjs。');
+  if (!files.some(entry => entry.name === 'siwc.mjs')) throw new Error('连接器源文件不完整，缺少 siwc.mjs。');
   if (backend === 'grok' && !files.some(entry => entry.name === 'grok.mjs')) throw new Error('连接器源文件不完整，缺少 grok.mjs。');
   if (backend === 'antigravity' && !files.some(entry => entry.name === 'antigravity.mjs')) throw new Error('连接器源文件不完整，缺少 antigravity.mjs。');
   for (const file of files) await copyFile(join(source,file.name),join(installed,file.name));
+  await rm(join(installed,'codex.mjs'),{force:true});
   await mkdir(join(root,'extension'),{recursive:true,mode:0o700});
   await Promise.all([
     copyFile(join(source,'../extension/gloss.mjs'),join(root,'extension/gloss.mjs')),
@@ -316,10 +266,10 @@ async function main() {
     copyFile(join(source,'../extension/sentence-groups.mjs'),join(root,'extension/sentence-groups.mjs')),
   ]);
   const config = backend === 'grok'
-    ? {backend:'grok', grokPath:cliPath, dataDir, extensionOrigin:origin}
+    ? {backend:'grok', dataDir, extensionOrigin:origin}
     : backend === 'antigravity'
     ? {backend:'antigravity', agyPath:cliPath, dataDir, extensionOrigin:origin}
-    : {codexPath:cliPath, dataDir, extensionOrigin:origin};
+    : {backend:'chatgpt', dataDir, extensionOrigin:origin};
   await writeFile(configPath,JSON.stringify(config,null,2)+'\n',{mode:0o600});
   await chmod(configPath,0o600).catch(()=>{});
   if (windows) await compileWindowsLauncher(launcher, process.execPath, join(installed,'host.mjs'), configPath);
@@ -342,12 +292,16 @@ async function main() {
       console.log(`已注册：${target}`);
     }
   }
-  const cliLabel = backend === 'grok' ? 'Grok' : backend === 'antigravity' ? 'Antigravity CLI（agy）' : 'Codex';
+  const cliLabel = 'Antigravity CLI（agy）';
   const loginLabel = backend === 'grok' ? 'Grok' : backend === 'antigravity' ? 'Google' : 'ChatGPT';
   const loginHint = backend === 'antigravity'
     ? '首次使用前请先在终端运行 agy，按提示用 Google 账号（Google AI Pro / Ultra 订阅）完成登录，再回扩展刷新。'
-    : `仅首次使用或登录失效时才需要 ${loginLabel} 登录。`;
-  console.log(`\n扩展 ID：${id}\n${cliLabel}：${versionText.split(/\r?\n/)[0]}\n连接器：${root}\n后端：${backend}\n\n安装 / 更新完成。重新加载扩展，进入“服务”，选择“${loginLabel} 订阅”，点击“刷新账户与模型”。\n已有登录数据保留，无需重新登录；${loginHint}\n更新连接器源码后也需重新运行此安装命令；安装后刷新连接会重启连接器，以加载新代码。\n升级 Node.js / ${cliLabel} 或移动扩展目录后，请重新运行此安装命令。`);
+    : backend === 'chatgpt'
+    ? '使用官方 Sign in with ChatGPT 登录；首次切换到此连接器需重新授权，不复用旧 CLI 登录。已有 SIWC 登录数据保留，仅首次使用或登录失效时需要登录。'
+    : 'Grok 为兼容直连：复用官方 Grok CLI 公开 OAuth 客户端，不是 RelyLess 的官方注册，第三方使用不获保证，可能失效。安装后请用设备码重新登录；不导入旧 CLI 凭证，也不删除旧数据。已有本机直连登录数据在更新时保留。';
+  const runtimeInfo = backend === 'chatgpt' ? '认证：官方 Sign in with ChatGPT（OAuth）' : backend === 'grok' ? '认证：Grok 兼容 OAuth 设备码直连（无需 CLI）' : `${cliLabel}：${versionText.split(/\r?\n/)[0]}`;
+  const upgradeLabel = backend === 'antigravity' ? `Node.js / ${cliLabel}` : 'Node.js';
+  console.log(`\n扩展 ID：${id}\n${runtimeInfo}\n连接器：${root}\n后端：${backend}\n\n安装 / 更新完成。重新加载扩展，进入“服务”，选择“${loginLabel} 订阅”，点击“刷新账户与模型”。\n${loginHint}\n更新连接器源码后也需重新运行此安装命令；安装后刷新连接会重启连接器，以加载新代码。\n升级 ${upgradeLabel} 或移动扩展目录后，请重新运行此安装命令。`);
 }
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   main().catch(error => { console.error(`安装失败：${error.message}`); process.exitCode = 1; });

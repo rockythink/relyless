@@ -18,8 +18,8 @@ export const CATALOG_CATEGORIES = [
 
 // 订阅通道条目：与 subscription.js 的 SUBSCRIPTION_KINDS 保持一致；local 为本机模型通道。
 const SUBSCRIPTION_TEMPLATES = [
-  {id: 'chatgpt', name: 'ChatGPT 订阅', category: 'subscription', icon: 'openai', desc: '免 API Key，通过本机连接器使用 Codex 权益', website: 'https://chatgpt.com', keyOptional: true},
-  {id: 'grok', name: 'Grok 订阅', category: 'subscription', icon: 'xai', desc: '免 API Key，通过 SuperGrok 或 X Premium+ 直连', website: 'https://x.ai', keyOptional: true},
+  {id: 'chatgpt', name: 'ChatGPT 订阅', category: 'subscription', icon: 'openai', desc: '免 API Key，通过官方 ChatGPT 登录与本机连接器直连订阅模型', website: 'https://chatgpt.com', keyOptional: true},
+  {id: 'grok', name: 'Grok 订阅', category: 'subscription', icon: 'xai', desc: '兼容 OAuth 直连：复用官方 CLI 公开客户端，无需 CLI；第三方使用不获保证', website: 'https://x.ai', keyOptional: true},
   {id: 'antigravity', name: 'Google 订阅', category: 'subscription', icon: 'google', desc: '免 API Key，通过 Google AI Pro / Ultra 的 Antigravity 权益', website: 'https://gemini.google.com', keyOptional: true},
   {id: 'local', name: '本机模型', category: 'subscription', icon: 'google', desc: 'Gemini Nano 端侧模型：离线、免密钥，只接简短查词提示', website: '', keyOptional: true},
 ];
@@ -274,6 +274,7 @@ class ServiceCatalogController {
         globalThis.optionsSetDraftServiceId(null);
       }
       this.syncHeroDetail();
+      globalThis.optionsSelectSubscription?.();
       return;
     }
 
@@ -357,6 +358,7 @@ class ServiceCatalogController {
       } else this.docLink.hidden = true;
     }
     if (this.checkBtnLabel) this.checkBtnLabel.textContent = this.isSubscriptionKey(key) ? '刷新连接与状态' : '检查服务连接';
+    if (this.isSubscriptionKey(key) && key !== 'local') globalThis.optionsRenderSubscription?.();
   }
 
   async makeCurrentServiceDefault() {

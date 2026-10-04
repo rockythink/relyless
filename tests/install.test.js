@@ -22,11 +22,11 @@ describe('findExecutable',()=>{
     const first=await mkdtemp(join(tmpdir(),'relyless-empty-'));
     const second=await mkdtemp(join(tmpdir(),'relyless-win-'));
     dirs.push(first,second);
-    await writeFile(join(second,'codex.cmd'),'');
-    await writeFile(join(second,'codex.exe'),'');
+    await writeFile(join(second,'agy.cmd'),'');
+    await writeFile(join(second,'agy.exe'),'');
     const env={PATH:`${first};${second}`,PATHEXT:'.EXE;.CMD'};
-    expect(await findExecutable('codex','',[],env,'win32')).toBe(await realpath(join(second,'codex.exe')));
-    expect(await findExecutable('codex','',[],{...env,PATHEXT:'.CMD;.EXE'},'win32')).toBe(await realpath(join(second,'codex.cmd')));
+    expect(await findExecutable('agy','',[],env,'win32')).toBe(await realpath(join(second,'agy.exe')));
+    expect(await findExecutable('agy','',[],{...env,PATHEXT:'.CMD;.EXE'},'win32')).toBe(await realpath(join(second,'agy.cmd')));
   });
 });
 

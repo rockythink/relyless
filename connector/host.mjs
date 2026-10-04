@@ -1,9 +1,10 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { endianness } from "node:os";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { CodexClient } from "./codex.mjs";
+import { SiwcClient } from "./siwc.mjs";
 import { GrokClient } from "./grok.mjs";
 import { AntigravityClient } from "./antigravity.mjs";
 import { DiagnosticStore } from "./diagnostics.mjs";
@@ -94,19 +95,18 @@ async function loadConfiguration(configPath, actualOrigin) {
   let config;
   try { config = JSON.parse(await readFile(resolve(configPath), "utf8")); }
   catch { throw new Error("无法读取连接器配置"); }
-  const backend = config?.backend === "grok" ? "grok" : config?.backend === "antigravity" ? "antigravity" : "chatgpt";
-  const cliPath = backend === "grok" ? config.grokPath : backend === "antigravity" ? config.agyPath : config.codexPath;
+  const backend = config?.backend;
+  const cliPath = backend === "antigravity" ? config.agyPath : null;
   if (!config || typeof config !== "object" || Array.isArray(config)
-    || typeof cliPath !== "string" || !cliPath
+    || !["chatgpt","grok","antigravity"].includes(backend)
+    || (backend === "antigravity" && (typeof cliPath !== "string" || !cliPath))
     || typeof config.dataDir !== "string" || !config.dataDir
     || !validateExtensionOrigin(config.extensionOrigin, actualOrigin)) {
     throw new Error("连接器配置或扩展来源无效");
   }
-  return backend === "grok"
-    ? { backend, grokPath: resolve(cliPath), dataDir: resolve(config.dataDir) }
-    : backend === "antigravity"
+  return backend === "antigravity"
     ? { backend, agyPath: resolve(cliPath), dataDir: resolve(config.dataDir) }
-    : { backend, codexPath: resolve(cliPath), dataDir: resolve(config.dataDir) };
+    : { backend, dataDir: resolve(config.dataDir) };
 }
 
 function parseHostArgv(argv) {
@@ -121,7 +121,7 @@ export async function runHost({ argv = process.argv.slice(2), input = process.st
   const { configPath, origin } = parseHostArgv(argv);
   const configuration = await loadConfiguration(configPath, origin);
   const diagnostics = await DiagnosticStore.create(configuration.dataDir);
-  const createClient = clientFactory || (options => configuration.backend === "grok" ? new GrokClient(options) : configuration.backend === "antigravity" ? new AntigravityClient(options) : new CodexClient(options));
+  const createClient = clientFactory || (options => configuration.backend === "grok" ? new GrokClient(options) : configuration.backend === "antigravity" ? new AntigravityClient(options) : new SiwcClient(options));
   const client = createClient({ ...configuration, diagnostic: record => diagnostics.append(record) });
   let closing = false;
 
@@ -218,7 +218,7 @@ export async function runHost({ argv = process.argv.slice(2), input = process.st
   catch { await close(1); }
 }
 
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(realpathSync(resolve(process.argv[1]))).href;
 if (isMain) {
   runHost().catch(() => { process.exitCode = 1; });
 }

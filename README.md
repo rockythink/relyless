@@ -39,7 +39,7 @@ RelyLess 是一个面向英语阅读的 Chrome / Edge 扩展。它保留网页�
 - 可配置提示密度、查词方式、显示样式、领域识别、固定术语和网站规则。
 - 阅读记录、摘要与远程个性化分析需明确开启；本地求助词档案默认开启，可关闭、导出或清理。“仅在需要时”不扫描或记录被动阅读活动；即使本页已开启阅读解构，也不自动扫描句子。选中完整单句后点“解构所选”、主动查词与“减少提示”仍可用。
 - 设置中的模型用量优先显示服务商上报的 token；≈ 是粗略估计，不是服务模型的精确分词或账单。估计可使用已预热的本机 MiniLM 分词器，较长内容改按完整载荷字符数计算；不保存请求正文。
-- 模型服务可选择自备 API，或通过本机连接器使用官方 CLI 访问 ChatGPT、Grok、Google（Antigravity）订阅权益。
+- 模型服务可选择自备 API，或通过本机连接器使用订阅权益：ChatGPT 走官方 Sign in with ChatGPT（SIWC）开源 OAuth 与直接 Responses API；Grok 走用户接受的兼容 device code OAuth 与订阅代理直连，不需要 Grok CLI，也不代表官方第三方支持；Google（Antigravity）保留现有 CLI 通道与配置，使用前应阅读下方官方限制警告。
 - 设置中的“模型用量”按服务与模型显示本机聚合的请求、错误和 token 计数；缺失的 token 数单独显示估算值，不等同于服务商账单。可单独清空，清空失败会提示重试；无痕请求不计入本机统计。详见 [隐私政策](PRIVACY.md)。
 - 每个 API 服务可保存最多 8 个密钥，按权重轮询并在认证、限流或临时故障时自动切换；可逐项检查密钥。
 - 可选的模型路由判定（Requesty 或 SiliconFlow System One）只判断明确开启的高价值请求；判卷或升级服务不可用时回落当前服务。
@@ -47,7 +47,7 @@ RelyLess 是一个面向英语阅读的 Chrome / Edge 扩展。它保留网页�
 - 「文档类网站提示」：打开弹窗时，当前网站域名片段命中关键词会提示可为此网站开启自动辅助（本机比较，不需权限）；可选的图标提示默认关闭，开启后扩展在本机检查每次打开网页的域名并在图标上提示，不保存、不发送网址。授权仍逐站点进行。
 - 简短查词优先交给本机 Gemini Nano（成功时不联网、不计费）；本机调用失败或返回无效内容时，和其余请求一样回落已配置的就绪服务，远端结果不会标为本机生成。
 - 释义与本页译文默认仅在本次会话缓存；跨会话缓存需在数据与隐私中单独开启；可为服务配置故障转移链，也可设月度 token 预算（超限需二次确认）。
-- 追问在 API 服务与升级后的 ChatGPT 订阅连接器上都支持多轮上下文。
+- 追问在 API 服务与升级后的 ChatGPT 订阅连接器上都支持多轮上下文；ChatGPT 每轮重发所需的有界历史，不依赖远端持久会话。
 - 可按 `]` / `[` 在标记词间键盘导航（默认关闭，在设置中开启）。
 - **PDF 阅读**：默认仍由浏览器查看器打开 PDF。在 .pdf 链接上右键选「RelyLess：在阅读器中打开 PDF」单次进入，或在设置中开启后接管 .pdf 导航——内置阅读器由随扩展本地加载的 PDF.js 渲染，原文始终可选可复制；单击单词求助、划词翻译与「翻译本页」复用与网页相同的模型服务和确认流程，PDF 文本只在你明确请求时发送给模型。PDF 网址不写入任何记录；仅当站点不带跨域许可时才在阅读器内请求该站访问权限，拒绝后不影响其他网站。网址末尾加 `#relyless-native` 可单次回退原生查看器。
 
@@ -78,7 +78,9 @@ PDF 单次读取上限 64 MiB、最多 500 页；过大文档或画布页会提�
 
 进度按正文单元计数，区分已译、待阅读、失败和跳过。只处理视口附近正文，不后台预译整篇；无法安全原位插入的特殊布局保留英文并报告跳过。失败段落只在手动重试时重新请求，已成功部分不会重发。停止保留已有译文，继续需要再次确认；返回英文只移除扩展插入物，不回滚站点更新。已发出的请求可能继续计费。
 
-使用 ChatGPT 订阅连接器时，扩展与连接器须一起更新，并重新运行连接器安装程序；本次全文协议不兼容旧连接器。
+使用 ChatGPT 订阅连接器时，扩展与连接器须一起更新，并重新运行连接器安装程序，再在设置中完成新的 SIWC 登录。旧 Codex CLI 登录凭证不会导入；不再需要安装或运行 Codex CLI，旧连接器与本次协议不兼容。
+
+使用 Grok 订阅连接器时，也须一起更新扩展与连接器、重新运行 `--backend grok` 安装程序，再在设置中发起新的设备码登录。不会导入旧 Grok CLI 认证；旧安装数据保留且不读取、不删除。Google 配置不因本次 Grok 更新而迁移或删除。
 
 ## 从 Release 安装
 
@@ -125,44 +127,55 @@ StepFun 的 step-3.x/5.x 等恒思考模型会把推理计入输出 token；为�
 
 ### 订阅连接器
 
-RelyLess 支持通过 Native Messaging 本机连接器对接官方 CLI，直接利用你的现有 AI 订阅权益。
+RelyLess 通过本机 Node.js Native Messaging 主机利用你授权的 AI 订阅权益。ChatGPT 使用官方 SIWC 开源 OAuth，主机携带 OAuth Bearer 令牌直接调用 `https://api.openai.com/v1/responses`；Grok 通过兼容 OAuth 直接访问 xAI 订阅代理；Google 保留现有 Antigravity CLI 适配。移除 Grok CLI 不等于移除本机连接器：仍需安装 Node Native 主机。项目不提供中转云服务。
 
 #### 1. ChatGPT 订阅连接器（macOS / Linux / Windows）
 
 连接器要求：
 - macOS、Linux 或 Windows；
 - Node.js 20 或更新版本；
-- 官方 [OpenAI Codex CLI](https://github.com/openai/codex)，且 `codex --version` 可正常运行（Windows 上 `codex.cmd` 亦可，安装程序会自动经 cmd 包装）。
-
-安装 Codex CLI：
-```sh
-npm install -g @openai/codex
-```
+- 符合官方 SIWC 资格的 ChatGPT Plus 或 Pro 账户，并在登录时明确允许本应用使用 ChatGPT 计划。可用模型、额度和访问权限由 OpenAI 与账户状态决定。
 
 在解压包或项目根目录运行安装程序。必须把下面的占位符换成扩展管理页显示的、**你自己的实际扩展 ID**：
 ```sh
 node connector/install.mjs --extension-id <YOUR_ACTUAL_EXTENSION_ID>
 ```
 
-#### 2. Grok 订阅连接器（macOS / Linux / Windows）
+安装后重新加载扩展，在「设置 → 模型服务 → ChatGPT 订阅」发起登录。主机临时监听本机 loopback 回调，在浏览器中打开 OpenAI 授权页；你完成登录与授权后，主机验证回调并交换凭证，再刷新账户与模型。登录浏览器与主机须位于同一台电脑；不要把回调地址当作远程登录链接分享。
+
+不需要 Codex CLI、共享客户端密钥或手动粘贴 token。OAuth 访问/刷新令牌及注册信息只由本机主机管理，不进入扩展存储、页面、诊断或导出。清理扩展阅读数据不等于退出 ChatGPT 账户；在订阅面板退出登录，必要时在 ChatGPT 设置中撤销本应用访问。
+
+ChatGPT 主机内的追问历史只在内存中保留：闲置 30 分钟过期，最多 50 个会话、每会话最近 12 组问答；退出登录、切换账户或主机退出后清除。它与扩展本机最多 30 天、每会话 40 轮的主动追问记录不同；继续追问会重新发送所需有限历史，主机重启也可从扩展记录重建，无痕窗口不保存这些持久记录。
+
+当前 SIWC 预览要求 HTTP 请求使用 `store:false`、`stream:true`：主机读取 SSE 到 `response.completed` 才确认成功，流中断或失败不会伪装成完成。HTTP 不支持 `previous_response_id` 或远端 `conversation` 持续会话，每轮通过 `input` 数组提供所需历史；也不发送此流程不支持的 `temperature`、`max_output_tokens` 等参数。RelyLess 使用文本求助，不把它当作音视频、文件上传或完整工具代理接口。订阅限制不等于扩展的月度 token 预算，也不保证无限调用。
+
+官方协议参考：[登录](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[模型与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)、[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
+
+#### 2. Grok 兼容直连（macOS / Linux / Windows）
 
 连接器要求：
 - macOS、Linux 或 Windows；
 - Node.js 20 或更新版本；
-- 官方 Grok CLI（`@xai-official/grok`），且 `grok --version` 可正常运行；
-- 拥有 SuperGrok 或 X Premium+ 订阅，并已通过 CLI 登录（`grok auth login`）。
+- 能在 xAI 完成授权、且具有订阅代理访问权益的账户。SuperGrok 或 X Premium+ 等订阅名称本身不保证该代理、模型或额度可用；账户、套餐层级与服务商策略可能拒绝访问。
 
-安装 Grok CLI：
-```sh
-npm install -g @xai-official/grok
-```
+**兼容性与授权边界：**此通道复用官方 Grok CLI 公开发布的 OAuth client ID，不是 RelyLess 自己注册的 OAuth 客户端，也没有官方第三方支持保证。官方 OIDC discovery 暴露设备码端点，并不代表 xAI 批准 RelyLess 或保证订阅调用可用。RelyLess 在请求标识与 User-Agent 中如实标识自身，不冒充 Grok CLI 或其他来源；代理的 `X-XAI-Token-Auth: xai-grok-cli` 仅表示兼容的令牌认证方案，不是来源身份声明。不需要安装、运行或登录 Grok CLI。
 
 运行安装程序（指定 `--backend grok`）：
 ```sh
 node connector/install.mjs --extension-id <YOUR_ACTUAL_EXTENSION_ID> --backend grok
 ```
 
+安装后重新加载扩展，在「设置 → 模型服务 → Grok 订阅」发起登录。打开主机提供的可信 `auth.x.ai` 验证地址，输入显示的短设备用户码并确认授权；不要分享该用户码。主机在本机轮询设备授权、通过官方 userinfo 核实身份（返回 ID token 时验证签名与 claims）并保存凭证，浏览器只得到验证地址、用户码及脱敏账户/模型状态，不得到 device code 或令牌。拒绝、超时、取消或验证失败会明确报错。从旧 CLI 通道迁移时，须重新安装主机并完成设备码登录；后续主机更新保留有效的直连授权。不导入旧 CLI 认证，也不读取或删除旧 CLI 数据。
+
+OAuth 访问令牌与轮换刷新令牌仅保存在主机数据目录的 `grok-oauth.json`；刷新记录原子更新，POSIX 文件权限为 0600（Windows 访问控制由系统账户与目录权限决定）。令牌不进入扩展存储、网页、诊断或导出；请求正文不落为提示词文件。账户身份通过 `https://auth.x.ai/oauth2/userinfo` 核实；模型目录与 Responses 推理直接访问 `https://cli-chat-proxy.grok.com/v1`，由 xAI 接收必要文本、账户认证及正常网络元数据。请求使用 `store:false`，**不等于零保留**；服务商的正常账户、安全、用量和内容处理仍受其政策约束。
+
+主机只接受明确完成的 HTTP/SSE 结果；认证、权益/套餐、限额、模型权限和断流失败如实显示，不新增自动推理重试，也不自动转成 API Key 付费请求。此次不新增 Grok 多轮追问。订阅面板退出会清除本机授权，并尝试向 xAI 撤销令牌；远端撤销失败不伪装成功，也不阻止本机退出，必要时通过服务商账户管理撤销。清理扩展阅读数据不会退出 Grok，也不能删除服务商已接收的数据。
+
+协议与兼容证据：[官方 OIDC discovery](https://auth.x.ai/.well-known/openid-configuration)、[Kilo 固定版本的公开客户端复用实现](https://github.com/Kilo-Org/kilocode/blob/76bcfd40be616a72f4697b3041565f322245b462/packages/opencode/src/plugin/xai.ts)、[第三方 pi-xai-oauth 代理实现](https://github.com/BlockedPath/pi-xai-oauth)、[ADR 0008](docs/development/decisions/0008-grok-oauth-direct.md)。公开源码不是官方批准或 RelyLess 真实账户登录成功的证据。
+
 #### 3. Google 订阅连接器（macOS / Linux / Windows）
+
+**官方限制警告：**[Antigravity 官方 FAQ](https://antigravity.google/docs/faq/) 明确表示，用第三方软件、工具或服务访问 Antigravity 违反其服务条款，可能导致账户暂停或终止。请先阅读并评估该限制；保留配置不代表官方允许此用途。本次仅迁移 Grok，不迁移、删除或重写你现有的 Google 服务与配置，以下仍描述现有 CLI 通道。
 
 连接器要求：
 - macOS、Linux 或 Windows；
@@ -183,7 +196,7 @@ node connector/install.mjs --extension-id <YOUR_ACTUAL_EXTENSION_ID> --backend a
 
 ## 数据与隐私
 
-“本地优先”不等于“所有处理都离线”。本地领域识别和本机记录不需要把整页上传到 RelyLess 自有服务器；项目本身不提供中转云服务。但使用 API 或 ChatGPT 订阅连接器时，完成任务所需的内容会发送给你选择的模型服务商：
+“本地优先”不等于“所有处理都离线”。本地领域识别和本机记录不需要把整页上传到 RelyLess 自有服务器；项目本身不提供中转云服务。但使用 API 或订阅连接器（包括 ChatGPT、Grok 与 Google）时，完成任务所需的内容会发送给你选择的模型服务商：
 
 - 普通辅助会发送目标词句及适用的页面标题、章节信息和上下文；自动预备的文章上下文最多 12,000 字符，较短文章可能整体包含在内。请求同时包含任务指令与结构化输出约束。
 - 选择远程领域识别时，会发送标题和经过长度限制的正文样本；默认本地领域识别不需要该远程请求。

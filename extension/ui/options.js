@@ -4,6 +4,7 @@ import {API_PROVIDERS, getApiProvider, apiProviderBaseUrl, apiProviderDefaultMod
 import {createProviderPicker} from './provider-picker.js';
 import {serviceCatalog} from './options-service-catalog.js';
 import {VIDEO_SUPPORT_ENABLED} from '../activation.js';
+import {isSubscriptionKind,nativeKind} from '../subscription.js';
 
 const optionsSections = ['assistance','appearance','sites','service','privacy','history','personalization','advanced','terms','diagnostics','guide','about'];
 const optionsLabels = {assistance:'阅读偏好',appearance:'显示与解构',sites:'网站规则',service:'模型服务',privacy:'数据与隐私',history:'阅读记录',personalization:'提示偏好',advanced:'领域识别',terms:'固定术语',diagnostics:'运行诊断',guide:'使用说明',about:'关于作者'};
@@ -11,7 +12,7 @@ const optionsSourceLabels = {personalized:'个性化倾向',manual:'当前页手
 const diagnosticOperationLabels = {SENTENCE_GROUPS_BATCH:'阅读解构',HISTORY_SUMMARY:'阅读摘要',PERSONALIZATION_ANALYZE:'个性化分析',ASSIST_COMMIT:'帮助记录提交',ASSIST:'阅读辅助',SUPPORT_BATCH:'批量辅助',PASSAGE_TRANSLATE:'选段翻译',EMERGENCY_TRANSLATE:'整页翻译',RESOLVE_DOMAIN:'领域识别',PROVIDER_TEST:'服务测试',CONNECTION:'连接器通信',ANALYZE:'本机分析',PREPARED_ASSIST:'预备辅助',PREPARED_SUPPORT:'预备解释'};
 const diagnosticStageLabels = {request:'请求',provider:'服务',first_content:'首段内容',validation:'校验',render:'呈现',connection:'连接',rpc:'通信',stderr:'连接器错误'};
 const diagnosticStatusLabels = {start:'开始',ok:'完成',error:'失败',cancelled:'已取消'};
-const diagnosticCodeLabels = {STARTUP_FAILED:'连接器启动失败',CODEX_EXIT:'模型进程已退出',RPC_TIMEOUT:'连接器通信超时',TURN_FAILED:'模型处理失败',UNKNOWN:'其他异常',OK:'处理完成',LOCAL_RESULT:'使用本机结果',CACHE_HIT:'使用本机缓存',TIMEOUT:'请求超时',NETWORK:'网络错误',AUTH:'服务认证失败',RATE_LIMIT:'请求过于频繁',HTTP:'服务请求失败',JSON_INVALID:'响应解析失败',OUTPUT_INVALID:'响应格式无效',BATCH_SHAPE:'批次格式无效',BATCH_COUNT:'批次数量不符',ITEM_FIELDS:'结果字段无效',ITEM_ID:'结果标识无效',ITEM_DUPLICATE:'结果重复',TRANSLATION_TYPE:'译文类型无效',TRANSLATION_EMPTY:'译文为空',TRANSLATION_WHITESPACE:'译文含首尾空白',TRANSLATION_LENGTH:'译文长度异常',TRANSLATION_NO_HAN:'译文不含汉字',STALE:'请求状态已过期',CANCELLED:'请求已取消',NOT_READY:'服务尚未准备',DISCONNECTED:'连接器已断开',NATIVE_START:'连接器已启动',NATIVE_EXIT:'连接器已退出',NATIVE_RPC:'连接器通信失败',NATIVE_STDERR:'连接器报告错误',STDERR_AUTH:'连接器认证失败',STDERR_RATE_LIMIT:'连接器请求过频',STDERR_TIMEOUT:'连接器处理超时',STDERR_UNKNOWN:'连接器未知错误',STORAGE_ERROR:'本机存储失败',RENDER_INVALID:'呈现数据无效',NOT_DISPLAYED:'结果未能呈现',INTERRUPTED:'请求意外中断',SLOW_REQUEST:'请求耗时较长',REPEATED_FAILURE:'同类请求多次失败',FAILOVER:'服务故障转移',LOCAL_FALLBACK:'本机模型回落'};
+const diagnosticCodeLabels = {STARTUP_FAILED:'连接器启动失败',RPC_TIMEOUT:'连接器通信超时',TURN_FAILED:'模型处理失败',UNKNOWN:'其他异常',OK:'处理完成',LOCAL_RESULT:'使用本机结果',CACHE_HIT:'使用本机缓存',TIMEOUT:'请求超时',NETWORK:'网络错误',AUTH:'服务认证失败',RATE_LIMIT:'请求过于频繁',HTTP:'服务请求失败',JSON_INVALID:'响应解析失败',OUTPUT_INVALID:'响应格式无效',BATCH_SHAPE:'批次格式无效',BATCH_COUNT:'批次数量不符',ITEM_FIELDS:'结果字段无效',ITEM_ID:'结果标识无效',ITEM_DUPLICATE:'结果重复',TRANSLATION_TYPE:'译文类型无效',TRANSLATION_EMPTY:'译文为空',TRANSLATION_WHITESPACE:'译文含首尾空白',TRANSLATION_LENGTH:'译文长度异常',TRANSLATION_NO_HAN:'译文不含汉字',STALE:'请求状态已过期',CANCELLED:'请求已取消',NOT_READY:'服务尚未准备',DISCONNECTED:'连接器已断开',NATIVE_START:'连接器已启动',NATIVE_EXIT:'连接器已退出',NATIVE_RPC:'连接器通信失败',NATIVE_STDERR:'连接器报告错误',STDERR_AUTH:'连接器认证失败',STDERR_RATE_LIMIT:'连接器请求过频',STDERR_TIMEOUT:'连接器处理超时',STDERR_UNKNOWN:'连接器未知错误',STORAGE_ERROR:'本机存储失败',RENDER_INVALID:'呈现数据无效',NOT_DISPLAYED:'结果未能呈现',INTERRUPTED:'请求意外中断',SLOW_REQUEST:'请求耗时较长',REPEATED_FAILURE:'同类请求多次失败',FAILOVER:'服务故障转移',LOCAL_FALLBACK:'本机模型回落'};
 const optionsIds = ['section-title','save-state','global-error','reading-domain','lookup-key','passage-delay','passage-delay-field','automation-all-sites','automation-video-sites','automation-site-form','automation-site-origin','automation-result','automation-site-list','automation-site-empty','keyword-hints-badge','keyword-hints-form','keyword-hints-keywords','keyword-hints-result','keyword-hints-dismissed-list','keyword-hints-dismissed-empty','rule-pack-form','rule-pack-json','rule-pack-result','rule-pack-list','rule-pack-empty','routing-enabled','routing-fields','routing-premium','routing-confidence','routing-ttl','routing-stats','request-concurrency','settings-search','search-results','video-font-size','video-theme','detection-chatgpt','detection-api','detection-subscription-model','detection-model-note','detection-use-translation-api','detection-api-model','detection-api-fields','detection-api-url','detection-api-key','detection-key-state','clear-detection-key','detection-jev','detection-jev-provider','detection-jev-provider-note','detection-jev-model','detection-jev-url','detection-jev-key','detection-jev-key-state','clear-detection-jev-key','save-recognition','domain-test-text','run-domain-test','domain-test-result','domain-rule-form','rule-host','rule-path','rule-domain','rule-subdomains','domain-rule-result','domain-rule-list','domain-rule-empty','term-form','term-source','term-translation','term-domain','term-list','term-empty','subscription-panel','api-panel','subscription-dot','subscription-state','subscription-detail','refresh-subscription','subscription-account','subscription-email','subscription-plan','subscription-model','subscription-model-note','login-subscription','cancel-subscription','logout-subscription','test-subscription','subscription-result','install-command','copy-install-command','provider-form','provider-url','provider-model','provider-keys','key-state','check-all-keys','test-provider','disconnect-provider','provider-result','remember-support','keyboard-nav','pdf-reader','export-data','clear-memory','data-result','usage-list','usage-empty','usage-total','usage-clear','usage-result','open-extension-manager','help-language','api-service-select','new-api-service','provider-name','delete-api-service','cancel-api-service', 'reading-style-preview', 'reset-reading-style', 'diagnostics-storage-error','diagnostics-enabled','diagnostics-recording-note','diagnostics-native-dot','diagnostics-native-state','diagnostics-native-note','diagnostics-requests','diagnostics-failures','diagnostics-slow','diagnostics-pending','diagnostics-updated','diagnostics-issues','diagnostics-issues-empty','diagnostics-events','diagnostics-events-empty','export-diagnostics','clear-diagnostics','diagnostics-result']
 const optionsEls = Object.fromEntries(optionsIds.map(id => [id.replace(/-([a-z])/g,(_match,char)=>char.toUpperCase()),document.querySelector(`#${id}`)]));
 optionsEls.dataProblem = document.querySelector('#data-problem');
@@ -44,7 +45,8 @@ let optionsSentenceDensity='medium';
 let optionsSentenceLineStyle='solid';
 let optionsState = null;
 // 目录控制器通过全局状态读取当前服务；赋值时同步，避免两份真实来源。
-const setOptionsState = value => { optionsState = value; globalThis.optionsState = value; };
+const optionsSubscriptionStatuses=new Map(),optionsSubscriptionModels=new Map();
+const setOptionsState = value => { optionsState = value; globalThis.optionsState = value;if(value?.subscription)optionsSubscriptionStatuses.set(nativeKind(value.settings),value.subscription);optionsModels=optionsSubscriptionModels.get(nativeKind(value?.settings))||[]; };
 let optionsAutomation = null;
 let optionsModels = [];
 let optionsProviderDirty = false;let optionsDraftServiceId=null;let optionsDisplayedServiceId=null;
@@ -68,7 +70,9 @@ function optionsShowError(error) { setResult(optionsEls.globalError,errorText(er
 function optionsClearError() { setResult(optionsEls.globalError,''); }
 function optionsShowSaved(message='已保存') { clearTimeout(optionsSaveTimer);optionsEls.saveState.textContent=message;optionsSaveTimer=setTimeout(()=>{optionsEls.saveState.textContent='';},1800); }
 function optionsDomainName(domain) { return DOMAINS[domain] || domain || DOMAINS.general; }
-function optionsProviderKind() { return optionsState?.settings?.providerKind === 'api' ? 'api' : 'chatgpt'; }
+function optionsProviderKind() { const kind=optionsState?.settings?.providerKind;return isSubscriptionKind(kind)||kind==='api'||kind==='local'?kind:'chatgpt'; }
+function optionsSubscriptionKind(){return isSubscriptionKind(serviceCatalog.selectedKey)?serviceCatalog.selectedKey:nativeKind(optionsState?.settings);}
+function optionsSubscriptionLabel(kind){return kind==='grok'?'Grok':kind==='antigravity'?'Google':'ChatGPT';}
 function optionsLookupKey(){const key=optionsState?.settings?.lookupKey;return typeof key==='string'&&/^[A-Z]$/.test(key)?key:'D';}
 function optionsRenderLookupKey(){const key=optionsLookupKey();optionsEls.lookupKey.value=key;for(const copy of optionsLookupKeyCopies)copy.textContent=key;}
 function optionsFillDomains(select,includeAuto) { select.replaceChildren();for(const [value,label] of Object.entries(DOMAINS)){if(!includeAuto&&value==='auto')continue;select.append(new Option(value==='auto'?'自动识别':label,value));} }
@@ -141,7 +145,7 @@ async function optionsRefreshUsage(){
     optionsEls.usageTotal.textContent=totals.requests>0?'合计 '+totals.requests+' 次请求 · 输入 '+usageTokensLabel(totals.input,totals.estInput)+' · 输出 '+usageTokensLabel(totals.output,totals.estOutput):'';
   }catch{optionsEls.usageTotal.textContent='统计暂不可用。';}
 }
-function optionsRenderModels(select,selected,note) { select.replaceChildren(new Option('由连接器选择默认模型',''));for(const model of optionsModels)select.append(new Option(model.name||model.id,model.id));select.value=[...select.options].some(option=>option.value===selected)?selected:'';note.textContent=optionsModels.length?'可选择账户当前可用模型。':'连接后刷新可用模型；留空由连接器选择。'; }
+function optionsRenderModels(select,selected,note,models=optionsModels) { select.replaceChildren(new Option('由连接器选择默认模型',''));for(const model of models)select.append(new Option(model.name||model.label||model.id,model.id));select.value=[...select.options].some(option=>option.value===selected)?selected:'';note.textContent=models.length?'可选择账户当前可用模型。':'连接后刷新可用模型；留空由连接器选择。'; }
 function optionsRenderAutomation() { const automation=optionsAutomation?.automation||optionsState.settings.automation||{allSites:false,sites:[],videoSites:false};optionsEls.automationAllSites.checked=Boolean(automation.allSites);optionsEls.automationVideoSites.checked=Boolean(automation.videoSites);optionsEls.automationSiteList.replaceChildren();for(const site of automation.sites||[]){const row=document.createElement('div');row.className='automation-site-item';const code=document.createElement('code');code.textContent=site.origin;const toggle=document.createElement('button');toggle.type='button';toggle.textContent=site.enabled?'已启用':'已停用';toggle.addEventListener('click',()=>void optionsToggleSite(site,!site.enabled));const remove=document.createElement('button');remove.className='delete-button';remove.type='button';remove.textContent='移除';remove.addEventListener('click',()=>void optionsToggleSite(site,null));row.append(code,toggle,remove);optionsEls.automationSiteList.append(row);}optionsEls.automationSiteEmpty.hidden=Boolean(automation.sites?.length);
 const hints=automation.keywordHints||{badge:false,keywords:[],dismissed:[]};optionsEls.keywordHintsBadge.checked=Boolean(hints.badge);optionsEls.keywordHintsKeywords.value=hints.keywords.join(' ');optionsEls.keywordHintsDismissedList.replaceChildren();for(const origin of hints.dismissed||[]){const row=document.createElement('div');row.className='automation-site-item';const code=document.createElement('code');code.textContent=origin;const restore=document.createElement('button');restore.type='button';restore.textContent='恢复提示';restore.addEventListener('click',()=>void optionsRestoreKeywordHint(origin));row.append(code,restore);optionsEls.keywordHintsDismissedList.append(row);}optionsEls.keywordHintsDismissedEmpty.hidden=Boolean(hints.dismissed?.length); }
 function optionsDetectionSettings(){return optionsState.settings.domainDetection||{mode:'local',subscriptionModel:'',apiModel:'',useTranslationApi:true,api:{baseUrl:'https://api.openai.com/v1',apiKey:''},jevProvider:'requesty',jevModel:'typesafe/jev-1.13.0',jevApiKey:'',jevBaseUrl:'https://router.requesty.ai/v1'};}
@@ -197,9 +201,41 @@ function optionsRenderTerms(){
   terms.forEach((term,index)=>{const row=document.createElement('div');row.className='term-item';const source=document.createElement('h3');source.textContent=term.term;const translation=document.createElement('p');translation.textContent=term.translation;const domain=document.createElement('small');domain.textContent=optionsDomainName(term.domain);row.append(source,translation,domain,optionsDeleteButton('删除',()=>void optionsSavePatch({customTerms:terms.filter((_item,itemIndex)=>itemIndex!==index)},'术语已删除')));optionsEls.termList.append(row);});
   optionsEls.termEmpty.hidden=Boolean(terms.length);
 }
-function optionsRenderSubscription(){const subscription=optionsState?.subscription||{};const connected=Boolean(subscription.connected),authenticated=Boolean(subscription.authenticated),pending=Boolean(subscription.loginPending);optionsEls.subscriptionDot.classList.toggle('active',authenticated);optionsEls.subscriptionDot.classList.toggle('connected',connected&&!authenticated);optionsEls.subscriptionAccount.hidden=!authenticated;optionsEls.subscriptionEmail.textContent=subscription.email||'未提供';optionsEls.subscriptionPlan.textContent=subscription.plan||'未提供';if(!connected){optionsEls.subscriptionState.textContent='本机连接器未连接';optionsEls.subscriptionDetail.textContent=subscription.error||'请按下方步骤安装连接器。';}else if(authenticated){optionsEls.subscriptionState.textContent='ChatGPT 已登录';optionsEls.subscriptionDetail.textContent=subscription.error||'当前账户可用于英文线索与局部中文说明。';}else if(pending){optionsEls.subscriptionState.textContent='等待 ChatGPT 登录';optionsEls.subscriptionDetail.textContent=subscription.error||'请完成刚打开的登录流程。';}else{optionsEls.subscriptionState.textContent='连接器已就绪';optionsEls.subscriptionDetail.textContent=subscription.error||'登录后即可使用订阅权益。';}optionsRenderModels(optionsEls.subscriptionModel,optionsState?.settings?.subscriptionModel||'',optionsEls.subscriptionModelNote);optionsEls.loginSubscription.hidden=!connected||authenticated||pending;optionsEls.cancelSubscription.hidden=!pending;optionsEls.logoutSubscription.hidden=!authenticated;optionsEls.loginSubscription.disabled=optionsSubscriptionBusy||!connected;optionsEls.cancelSubscription.disabled=optionsSubscriptionBusy;optionsEls.logoutSubscription.disabled=optionsSubscriptionBusy;optionsEls.refreshSubscription.disabled=optionsSubscriptionBusy;optionsEls.subscriptionModel.disabled=optionsSubscriptionBusy||!authenticated;optionsEls.testSubscription.disabled=optionsSubscriptionBusy||optionsProviderKind()!=='chatgpt'||!optionsState?.providerConfigured;
+function optionsRenderSubscription(){
+  const kind=optionsSubscriptionKind(),label=optionsSubscriptionLabel(kind);
+  const subscription=optionsSubscriptionStatuses.get(kind)||{};
+  const connected=Boolean(subscription.connected),authenticated=Boolean(subscription.authenticated),pending=Boolean(subscription.loginPending);
+  const isDefault=optionsProviderKind()===kind;
+  optionsEls.subscriptionDot.classList.toggle('active',authenticated);
+  optionsEls.subscriptionDot.classList.toggle('connected',connected&&!authenticated);
+  optionsEls.subscriptionAccount.hidden=!authenticated;
+  optionsEls.subscriptionEmail.textContent=subscription.email||'未提供';
+  optionsEls.subscriptionPlan.textContent=subscription.plan||'未提供';
+  if(!connected){optionsEls.subscriptionState.textContent='本机连接器未连接';optionsEls.subscriptionDetail.textContent=subscription.error||'请按下方步骤安装连接器。';}
+  else if(authenticated){optionsEls.subscriptionState.textContent=label+' 已登录';optionsEls.subscriptionDetail.textContent=subscription.error||(kind==='grok'?'账户授权已完成；模型与套餐是否可用仍需通过请求确认。':'当前账户可用于英文线索与局部中文说明。');}
+  else if(pending){optionsEls.subscriptionState.textContent='等待 '+label+' 登录';optionsEls.subscriptionDetail.textContent=subscription.error||(subscription.userCode?'请在刚打开的登录页面输入设备码：'+subscription.userCode:'请完成刚打开的登录流程。');}
+  else{optionsEls.subscriptionState.textContent='连接器已就绪';optionsEls.subscriptionDetail.textContent=subscription.error||(kind==='grok'?'登录完成后可读取模型目录；可用性取决于账户订阅权限。':'登录后即可使用订阅权益。');}
+  optionsRenderModels(optionsEls.subscriptionModel,optionsState?.settings?.subscriptionModel||'',optionsEls.subscriptionModelNote,optionsSubscriptionModels.get(kind)||[]);
+  if(kind==='grok'&&authenticated)optionsEls.subscriptionModelNote.textContent='目录仅供选择；实际可用性取决于账户权限与额度，模型请求失败会如实报告。';
+  if(!isDefault)optionsEls.subscriptionModelNote.textContent='设为默认使用后，可保存辅助模型并测试提示。';
+  optionsEls.loginSubscription.textContent=kind==='grok'?'使用 Grok 设备码登录':'使用 '+label+' 登录';
+  optionsEls.loginSubscription.hidden=!connected||authenticated||pending;
+  optionsEls.cancelSubscription.hidden=!pending;
+  optionsEls.logoutSubscription.hidden=!authenticated;
+  optionsEls.loginSubscription.disabled=optionsSubscriptionBusy||!connected;
+  optionsEls.cancelSubscription.disabled=optionsSubscriptionBusy;
+  optionsEls.logoutSubscription.disabled=optionsSubscriptionBusy;
+  optionsEls.refreshSubscription.disabled=optionsSubscriptionBusy;
+  optionsEls.subscriptionModel.disabled=optionsSubscriptionBusy||!authenticated||!isDefault;
+  optionsEls.testSubscription.disabled=optionsSubscriptionBusy||!isDefault||!optionsState?.providerConfigured;
   document.getElementById('subscription-model-field').hidden=!authenticated;
   optionsEls.testSubscription.hidden=!authenticated;
+  const compatibility=document.getElementById('subscription-compatibility-note');
+  compatibility.hidden=kind==='chatgpt';
+  compatibility.textContent=kind==='grok'?'兼容直连：复用官方 Grok CLI 公开 OAuth 客户端 ID，不是 RelyLess 的官方注册；第三方使用不获保证，可能失效。请求以 RelyLess 标识；X-XAI-Token-Auth: xai-grok-cli 仅表示兼容凭证方案，不冒充 CLI。不自动改用付费 API Key。':'注意：Antigravity FAQ 限制第三方工具使用。现有 Google 通道与配置保持不变，不自动迁移。';
+  optionsEls.loginSubscription.setAttribute('aria-describedby',kind==='chatgpt'?'connector-login-help':'subscription-compatibility-note');
+  optionsEls.installCommand.textContent=`node connector/install.mjs --extension-id ${chrome.runtime.id} --backend ${kind}`;
+  document.getElementById('connector-login-help').textContent=kind==='chatgpt'?'ChatGPT 通过官方 Sign in with ChatGPT（OAuth）授权；首次从旧连接器切换需重新登录，之后更新保留本机 SIWC 登录。令牌仅由本机连接器保管，不进入浏览器。连接失效时重新运行安装命令并刷新。':kind==='grok'?'安装后使用设备码重新登录，不导入或删除旧 Grok CLI 凭证；后续更新保留本机直连登录。无需安装或运行 CLI，令牌只由本机连接器保管，不进入浏览器。连接失效时重新运行安装命令并刷新。':'Google 仍使用官方 Antigravity CLI（agy）。首次使用前在终端运行 agy，按提示用 Google 账号（Google AI Pro / Ultra 订阅）完成登录，再回扩展刷新。现有配置与登录数据保留；Antigravity FAQ 限制第三方工具使用。';
   const install=document.getElementById('connector-install');
   if(install.dataset.connected!==String(connected)){install.open=!connected;install.dataset.connected=String(connected);}
 }
@@ -416,10 +452,32 @@ async function optionsSaveDetection(){const mode=document.querySelector('input[n
     }
     const saved=await optionsSavePatch({domainDetection:{mode,subscriptionModel:optionsEls.detectionSubscriptionModel.value,apiModel:optionsEls.detectionApiModel.value.trim(),useTranslationApi,api,jevProvider,jevModel,jevBaseUrl,jevApiKey}},'领域识别设置已保存');if(!saved)return;optionsDetectionDirty=false;await optionsRemoveUnusedPermissions(before,optionsState.settings);optionsRenderDetection();}catch(error){optionsShowError(error);}finally{const needed=optionsCredentialPatterns(optionsState.settings);if(granted&&parsed&&!needed.has(`${parsed.url.origin}/*`))await chrome.permissions.remove({origins:[`${parsed.url.origin}/*`]}).catch(()=>{});if(jevGranted&&jevParsed&&!needed.has(`${jevParsed.url.origin}/*`))await chrome.permissions.remove({origins:[`${jevParsed.url.origin}/*`]}).catch(()=>{});}}
 async function optionsTestProvider(element){setResult(element,'正在测试当前服务…');optionsEls.testProvider.disabled=true;optionsEls.testSubscription.disabled=true;try{const result=await request('PROVIDER_TEST');setResult(element,`测试提示：${result.hint}`);}catch(error){setResult(element,`测试失败：${errorText(error)}`,true);}finally{optionsRenderProvider();}}
-async function optionsSyncState(){if(optionsCurrentSection==='diagnostics')return;[optionsState,optionsAutomation]=await Promise.all([request('STATE_GET'),request('AUTOMATION_GET')]);globalThis.optionsState=optionsState;optionsState.settings.automation=optionsAutomation.automation;optionsRenderAll();}
-async function optionsLoadModels(refresh=false){let loaded=true;try{const result=await request('MODELS_LIST',{refresh});optionsModels=Array.isArray(result.models)?result.models:[];}catch(error){loaded=false;setResult(optionsEls.subscriptionResult,'模型列表刷新失败：'+errorText(error),true);}if(optionsState){optionsRenderSubscription();optionsRenderDetection();}return loaded;}
-async function optionsRefreshSubscription(refresh=false){if(optionsSubscriptionBusy)return;optionsSubscriptionBusy=true;optionsRenderSubscription();try{const subscription=await request('SUBSCRIPTION_STATUS');optionsState.subscription=subscription;await optionsSyncState();if(!subscription.connected||subscription.error){setResult(optionsEls.subscriptionResult,'');return;}if(await optionsLoadModels(refresh))setResult(optionsEls.subscriptionResult,'账户与模型已更新。');}catch(error){setResult(optionsEls.subscriptionResult,errorText(error),true);}finally{optionsSubscriptionBusy=false;optionsRenderSubscription();}}
-async function optionsSubscriptionAction(type){if(optionsSubscriptionBusy)return;optionsSubscriptionBusy=true;optionsRenderSubscription();try{optionsState.subscription=await request(type);await optionsSyncState();setResult(optionsEls.subscriptionResult,type==='SUBSCRIPTION_LOGOUT'?'已退出 ChatGPT 登录。':'状态已更新。');}catch(error){setResult(optionsEls.subscriptionResult,errorText(error),true);}finally{optionsSubscriptionBusy=false;optionsRenderSubscription();}}
+async function optionsSyncState(){if(optionsCurrentSection==='diagnostics')return;const [state,automation]=await Promise.all([request('STATE_GET'),request('AUTOMATION_GET')]);setOptionsState(state);optionsAutomation=automation;optionsState.settings.automation=optionsAutomation.automation;optionsRenderAll();}
+async function optionsLoadModels(refresh=false,kind=optionsSubscriptionKind()){
+  let loaded=true;
+  try{const result=await request('MODELS_LIST',{refresh,kind});const models=Array.isArray(result.models)?result.models:[];optionsSubscriptionModels.set(kind,models);if(kind===nativeKind(optionsState?.settings))optionsModels=models;}
+  catch(error){loaded=false;optionsSubscriptionModels.delete(kind);if(optionsSubscriptionKind()===kind)setResult(optionsEls.subscriptionResult,'模型列表刷新失败：'+errorText(error),true);}
+  if(optionsState){optionsRenderSubscription();optionsRenderDetection();}return loaded;
+}
+async function optionsRefreshSubscription(refresh=false){
+  if(optionsSubscriptionBusy)return;const kind=optionsSubscriptionKind();optionsSubscriptionBusy=true;optionsRenderSubscription();
+  try{const subscription=await request('SUBSCRIPTION_STATUS',{kind});optionsSubscriptionStatuses.set(kind,subscription);await optionsSyncState();if(!subscription.connected||!subscription.authenticated||subscription.error){if(optionsSubscriptionKind()===kind)setResult(optionsEls.subscriptionResult,'');return;}if(await optionsLoadModels(refresh,kind)&&optionsSubscriptionKind()===kind)setResult(optionsEls.subscriptionResult,'账户与模型已更新。');}
+  catch(error){if(optionsSubscriptionKind()===kind)setResult(optionsEls.subscriptionResult,errorText(error),true);}
+  finally{optionsSubscriptionBusy=false;optionsRenderSubscription();}
+}
+async function optionsSubscriptionAction(type){
+  if(optionsSubscriptionBusy)return;const kind=optionsSubscriptionKind();optionsSubscriptionBusy=true;optionsRenderSubscription();
+  try{optionsSubscriptionStatuses.set(kind,await request(type,{kind}));await optionsSyncState();if(optionsSubscriptionKind()===kind)setResult(optionsEls.subscriptionResult,type==='SUBSCRIPTION_LOGOUT'?'已退出 '+optionsSubscriptionLabel(kind)+' 登录。':'状态已更新。');}
+  catch(error){if(optionsSubscriptionKind()===kind)setResult(optionsEls.subscriptionResult,errorText(error),true);}
+  finally{optionsSubscriptionBusy=false;optionsRenderSubscription();}
+}
+chrome.runtime.onMessage.addListener((message,sender)=>{
+  if(sender.id!==chrome.runtime.id||message?.type!=='SUBSCRIPTION_UPDATED'||!isSubscriptionKind(message.kind)||!message.subscription)return;
+  const previous=optionsSubscriptionStatuses.get(message.kind);optionsSubscriptionStatuses.set(message.kind,message.subscription);
+  if(!optionsState)return;
+  if(message.kind===optionsSubscriptionKind())optionsRenderSubscription();
+  if(message.subscription.authenticated&&!previous?.authenticated)void optionsLoadModels(false,message.kind);
+});
 async function optionsExportData(){setResult(optionsEls.dataResult,'正在导出…');try{const payload=await request('READING_DATA_EXPORT');downloadJson(payload,`relyless-support-data-${new Date().toISOString().slice(0,10)}.json`);setResult(optionsEls.dataResult,'本机支持数据已导出。');}catch(error){setResult(optionsEls.dataResult,errorText(error),true);}}
 function optionsDiagnosticNumber(value){return Number.isFinite(value)&&value>=0?String(value):'—';}
 function optionsDiagnosticTime(value){if(!Number.isFinite(value))return '时间未知';const date=new Date(value);return Number.isFinite(date.getTime())?date.toLocaleString('zh-CN',{hour12:false}):'时间未知';}
@@ -645,6 +703,8 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change',optionsRend
 chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local')return;if(changes.sentenceGroupsDensity){optionsSentenceDensity=['coarse','medium','fine'].includes(changes.sentenceGroupsDensity.newValue)?changes.sentenceGroupsDensity.newValue:'medium';optionsRenderSentenceDensity();}if(changes.sentenceGroupsLineStyle){optionsSentenceLineStyle=['solid','dashed','dotted','wavy'].includes(changes.sentenceGroupsLineStyle.newValue)?changes.sentenceGroupsLineStyle.newValue:'solid';optionsRenderSentenceLineStyle();}if(changes.sentenceGroupsDensity||changes.sentenceGroupsLineStyle)queueMicrotask(optionsRenderStructurePreview);if(!changes.settings&&!changes.subscriptionLinked)return;clearTimeout(optionsSyncTimer);optionsSyncTimer=setTimeout(()=>void optionsSyncState().catch(optionsShowError),30);});chrome.runtime.onMessage.addListener(message=>{if(message?.type==='SUBSCRIPTION_UPDATED'&&optionsState){optionsState.subscription=message.subscription||{};optionsRenderSubscription();}});
 window.addEventListener('pagehide',()=>{void optionsCleanupDraftPermissions();});
 
+globalThis.optionsRenderSubscription=optionsRenderSubscription;
+globalThis.optionsSelectSubscription=()=>{const kind=optionsSubscriptionKind();setResult(optionsEls.subscriptionResult,'');optionsRenderSubscription();if(!optionsSubscriptionStatuses.has(kind))void optionsRefreshSubscription();};
 globalThis.optionsDiscardProviderDraft = optionsDiscardProviderDraft;
 globalThis.optionsSavePatch = optionsSavePatch;
 globalThis.optionsSetDraftServiceId = id => {

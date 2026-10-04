@@ -812,14 +812,14 @@
 <input type="radio" name="provider-kind" value="chatgpt">
 <span>
 <b>ChatGPT 订阅</b>
-<small>使用账户可用的 Codex 权益</small>
+<small>官方 ChatGPT 登录与订阅模型</small>
 </span>
 </label>
 <label>
 <input type="radio" name="provider-kind" value="grok">
 <span>
 <b>Grok 订阅</b>
-<small>使用 SuperGrok 或 X Premium+</small>
+<small>兼容 OAuth 直连，无需 CLI</small>
 </span>
 </label>
 <label>
@@ -894,7 +894,7 @@
       <div id="subscription-panel" class="provider-panel">
 <div class="paper-card subscription-card">
 <div class="subscription-summary">
-<div>
+<div aria-live="polite" aria-atomic="true">
 <span id="subscription-dot" class="connection-dot" aria-hidden="true">
 </span>
 <b id="subscription-state">正在检查连接…</b>
@@ -920,6 +920,7 @@
 <small id="subscription-model-note">
 </small>
 </label>
+<p id="subscription-compatibility-note" class="field-help" hidden=""></p>
 <div class="provider-actions">
 <button id="login-subscription" class="primary-action narrow" type="button">使用 ChatGPT 登录</button>
 <button id="cancel-subscription" type="button" hidden="">取消登录</button>
@@ -931,13 +932,13 @@
 </div>
 <details id="connector-install" class="installation-note">
 <summary>安装或修复本机连接器</summary>
-<p>安装 Node.js 20+ 与官方 Codex 后，在项目根目录运行：</p>
+<p>ChatGPT / Grok 只需安装 Node.js 20+，无需 CLI；Google 仍需官方 Antigravity CLI（agy）。在项目根目录运行：</p>
 <div class="copy-command">
 <code id="install-command">
 </code>
 <button id="copy-install-command" type="button">复制</button>
 </div>
-<p>连接失效时重新运行安装命令并刷新，不需要重新选择账户。</p>
+<p id="connector-login-help">ChatGPT 通过官方 Sign in with ChatGPT（OAuth）授权；首次从旧连接器切换需重新登录，之后更新保留本机 SIWC 登录。令牌仅由本机连接器保管，不进入浏览器。连接失效时重新运行安装命令并刷新。</p>
 </details>
 </div>
       <div id="local-panel" class="provider-panel" hidden="">
@@ -1450,7 +1451,7 @@
   <details class="paper-card settings-disclosure guide-chapter">
     <summary>05 · 准备读工作资料，先确认哪些内容会发送和保存</summary>
     <div>
-      <p><strong>本地优先，不等于完全离线。</strong>注释、解构和翻译的模型请求会发送给你选择的 ChatGPT 订阅服务或 API。普通辅助可能包含目标词句、标题、章节与上下文；自动预备的文章上下文最多 12,000 字符，短文章可能整体包含在内。敏感页面不要自动开启，也不要把不允许外发的内容提交求助。</p>
+      <p><strong>本地优先，不等于完全离线。</strong>注释、解构和翻译的模型请求会发送给你选择的订阅服务或 API。Grok 为兼容直连：复用官方 CLI 公开 OAuth 客户端，不是 RelyLess 的官方注册，第三方使用不获保证；代理请求的 <code>X-XAI-Token-Auth: xai-grok-cli</code> 仅标识兼容凭证方案，RelyLess 不冒充 CLI。Google 现有通道与配置保留，但 Antigravity FAQ 限制第三方工具使用。普通辅助可能包含目标词句、标题、章节与上下文；自动预备的文章上下文最多 12,000 字符，短文章可能整体包含在内。敏感页面不要自动开启，也不要把不允许外发的内容提交求助。</p>
       <ul class="guide-list">
         <li><strong>只想记住查过什么：</strong>「记住求助词与支持偏好」默认开启，在本机保存词条、简短释义和支持偏好，不保存原句、标题或来源网址。关闭后不再读取或更新，已有词档案不会自动删除。预备解释与有限上下文另放在当前浏览器会话缓存中。</li>
         <li><strong>想回看读过的内容：</strong>阅读记录需要单独开启并添加允许的网站，可保存查询、原句与来源等信息；关闭采集不等于删除历史，无痕页面不采集。</li>
