@@ -26,6 +26,7 @@ async function withContent(run,{structure=false,lookupDisplay='annotation',obser
   const capture=target=>{const add=target.addEventListener.bind(target);target.addEventListener=(type,callback,options)=>{handlers.set(callback.name,callback);add(type,callback,options);};};
   capture(window);capture(document);document.fonts||={addEventListener(){},removeEventListener(){}};
   window.HTMLElement.prototype.getClientRects=()=>[rect];window.HTMLElement.prototype.getBoundingClientRect=()=>rect;
+  window.HTMLElement.prototype.scrollIntoView=()=>{};
   window.Range.prototype.getClientRects=()=>[rect];window.Range.prototype.getBoundingClientRect=()=>rect;
   const attach=window.HTMLElement.prototype.attachShadow;window.HTMLElement.prototype.attachShadow=function(options){const root=attach.call(this,options);shadows.set(this,root);return root;};
   const elementListeners=new WeakMap(),addElementListener=window.HTMLElement.prototype.addEventListener;window.HTMLElement.prototype.addEventListener=function(type,callback,options){let events=elementListeners.get(this);if(!events)elementListeners.set(this,events=new Map());events.set(type,callback);addElementListener.call(this,type,callback,options);};
@@ -353,5 +354,34 @@ test("host removal of a navigation failure removes its recovery card and error",
   await withContent(async({state,pending,send})=>{
     const link=document.querySelector("nav a"),range=document.createRange();range.selectNodeContents(link);const operation=ShisuiContent.hooks.translatePassage(ShisuiContent.hooks.passageTarget(range));await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:"导航失败"});await operation;expect(state.card?.answer.textContent).toBe("导航失败");
     link.querySelector("[data-shisui-ui=passage-translation]").remove();await waitFor(()=>state.card===null);expect((await send({type:"SS_STATUS"})).data.tasks.some(task=>task.key==="passage")).toBe(false);expect(link.textContent).toBe("Documentation");
+  },{observe:true});
+});
+
+for(const key of ['[',']'])test('keyboard navigation '+key+' closes the old failed card before announcing the new selection',async()=>{
+  await withContent(async({state,pending,lookup,handlers,event,send})=>{
+    lookup();await waitFor(()=>pending.length===1);pending.shift().reply({ok:false,error:'旧词失败'});await waitFor(()=>state.card?.answer.classList.contains('error'));
+    const block=document.createElement('p'),mark=document.createElement('span');mark.className=ShisuiContent.MARK_CLASS;mark.textContent='another';block.append(mark);document.querySelector('main').append(block);const range=document.createRange();range.selectNodeContents(mark);state.records.push({manual:false,stage:'mark',block,marks:[mark],range,target:{text:'another',start:0}});state.settings.keyboardNav={enabled:true};
+    handlers.get('onNavKey')(event(document.body,{type:'keydown',key}));expect(state.card).toBeNull();expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='lookup')?.error).toBe(false);expect(pending).toEqual([]);
+    window.__SHISUI_CONTENT__.dispose();expect(document.querySelector("[data-shisui-ui=nav-flash]")).toBeNull();
+  },{lookupDisplay:'card'});
+});
+
+test('navigation failure arriving in a hidden document has recovery controls after returning',async()=>{
+  await withContent(async({state,pending,send,click})=>{
+    let visibility='visible';Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>visibility});const link=document.querySelector('nav a'),range=document.createRange();range.selectNodeContents(link);const operation=ShisuiContent.hooks.translatePassage(ShisuiContent.hooks.passageTarget(range));await waitFor(()=>pending.length===1);visibility='hidden';pending.shift().reply({ok:false,error:'后台导航失败'});await operation;visibility='visible';
+    expect(state.card?.answer.textContent).toBe('后台导航失败');expect(state.card?.retry.hidden).toBe(false);click(state.card.card.querySelector('.dismiss'));expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='passage')).toBe(false);expect(link.textContent).toBe('Documentation');
+  });
+});
+
+test('host removal of an in-flight help card clears its task and rejects a late failure',async()=>{
+  await withContent(async({state,pending,lookup,send})=>{
+    lookup();await waitFor(()=>pending.length===1);state.card.host.remove();await waitFor(()=>state.card===null);expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='lookup')).toBe(false);pending.shift().reply({ok:false,error:'迟到失败'});await new Promise(resolve=>setTimeout(resolve,20));expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='lookup')).toBe(false);expect(document.querySelector('[data-shisui-ui=card]')).toBeNull();
+  },{observe:true});
+});
+
+for(const keepOther of [false,true])test('host removal of a pending passage '+(keepOther?'preserves another pending view':'clears the vanished busy state'),async()=>{
+  await withContent(async({state,paragraph,pending,send})=>{
+    const range=document.createRange();range.selectNodeContents(paragraph);const target=ShisuiContent.hooks.passageTarget(range),operations=[ShisuiContent.hooks.translatePassage(target)];await waitFor(()=>pending.length===1);const removed=document.querySelector('[data-shisui-ui=passage-translation]');if(keepOther){operations.push(ShisuiContent.hooks.translatePassage(target));await waitFor(()=>pending.length===2);}removed.remove();await waitFor(()=>state.passageRequests.size===(keepOther?1:0));
+    expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='passage'&&task.busy)).toBe(keepOther);for(const item of pending.splice(0))item.reply({ok:true,data:{items:[{id:'p1',translation:'迟到的译文'}]}});await Promise.all(operations);expect(removed.isConnected).toBe(false);expect(document.querySelectorAll('[data-shisui-ui=passage-translation]').length).toBe(keepOther?1:0);
   },{observe:true});
 });
