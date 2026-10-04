@@ -230,10 +230,31 @@ for(const [status,code] of [[401,'AUTH'],[403,'AUTH'],[429,'RATE_LIMIT'],[503,'H
   for(const route of ['/v1/models','/v1/responses']){const f=await fixture({override:target=>target.pathname===route?new Response(route.endsWith('models')?'':'<html>private upstream detail</html>',{status}):undefined});try{await f.authorize();await expect(f.client.classify({text:'Flink streams.'})).rejects.toMatchObject({code});}finally{await f.close();}}
 });
 
-test.skipIf(process.platform==='win32')('credential storage failure cannot disclose the local path or authenticate the account',async()=>{
+test.skipIf(process.platform==='win32'||process.getuid?.()===0)('credential storage failure cannot disclose the local path or authenticate the account',async()=>{
   const f=await fixture();try{await chmod(f.dir,0o500);expect((await f.authorize()).response.status).toBe(400);expect(f.client.status().authenticated).toBe(false);expect(f.client.status().error).not.toContain(f.dir);expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId]).toBeUndefined();}finally{await chmod(f.dir,0o700);await f.close();}
 });
 
 test('startup directory failure is a safe STORAGE_ERROR',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'relyless-storage-'));const path=join(dir,'private-user');await writeFile(path,'not a directory');const client=new SiwcClient({dataDir:join(path,'oauth')});try{let failure;try{await client.start();}catch(error){failure=error;}expect(failure?.code).toBe('STORAGE_ERROR');expect(failure?.message).not.toContain(dir);}finally{await client.close();await rm(dir,{recursive:true,force:true});}
 });
+
+
+for(const action of ['cancelLogin','logout','close'])test('SIWC '+action+' while the callback server starts cannot create a late login',async()=>{
+  const f=await fixture(),entered=deferred(),gate=deferred();let server;
+  const create=f.client.serverFactory;
+  f.client.serverFactory=callback=>{server=create(callback);const listen=server.listen.bind(server);server.listen=(port,host,done)=>listen(port,host,()=>{entered.resolve();void gate.promise.then(done);});return server;};
+  try{const outcome=f.client.login().then(value=>({value}),error=>({error}));await entered.promise;await f.client[action]();gate.resolve();expect((await outcome).error?.code).toBe('CANCELLED');expect(f.client.status()).toMatchObject({authenticated:false,loginPending:false});expect(server.listening).toBe(false);}
+  finally{gate.resolve();server?.close();await f.close();}
+});
+
+test('logout resolves the shared active account under the credential lock',async()=>{
+  const f=await fixture();let restored;
+  try{await f.authorize();const path=join(f.dir,'siwc.json'),saved=JSON.parse(await readFile(path,'utf8')),otherId='oaiapp_other456';saved.accounts[otherId]={...saved.accounts[clientId],client_id:otherId,subject:'user-2',email:'other@example.test',access_token:'other-access',refresh_token:'other-refresh'};saved.active=otherId;await writeFile(path,JSON.stringify(saved),{mode:0o600});expect((await f.client.logout()).authenticated).toBe(false);const after=JSON.parse(await readFile(path,'utf8'));expect(after.accounts[otherId].access_token).toBeUndefined();expect(after.accounts[otherId].client_id).toBe(otherId);expect(f.requests.find(item=>item.url==='/revoke').init.body.get('client_id')).toBe(otherId);restored=new SiwcClient({dataDir:f.dir});await restored.start();expect(restored.status().authenticated).toBe(false);}
+  finally{await restored?.close();await f.close();}
+});
+
+test('first refresh recovers a freshly crashed ownerless lock',async()=>{
+  const f=await fixture();try{await f.authorize();await expire(f);const path=join(f.dir,'siwc.json.lock');const owner=spawnSync('node',['-e',"require('node:fs').openSync(process.argv[1],'wx',0o600);process.exit(0)",path]);expect(owner.status).toBe(0);expect(await f.client.classify({text:'Flink streams.'})).toEqual({domain:'tech',source:'chatgpt'});expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBe('refresh-2');}
+  finally{await f.close();}
+},15000);
+
