@@ -53,7 +53,7 @@ for(const stop of [false,true])test('withdrawing a page preview preserves confir
 });
 const waitFor=async predicate=>{const deadline=Date.now()+1200;while(!await predicate()){if(Date.now()>deadline)throw new Error('Assistance did not settle');await new Promise(resolve=>setTimeout(resolve,5));}};
 
-async function withContent(run,{structure=false,lookupDisplay='annotation',observe=false}={}){
+async function withContent(run,{structure=false,lookupDisplay='annotation',observe=false,settingsPatch={},bodyHtml,runtimeHandler}={}){
   const window=new Window({url:'https://example.test/article'}),original=new Map(),handlers=new Map(),pending=[],shadows=new WeakMap();
   const rect={left:40,top:80,right:340,bottom:100,width:300,height:20,x:40,y:80};
   const globals={window,document:window.document,location:window.location,Node:window.Node,NodeFilter:window.NodeFilter,HTMLElement:window.HTMLElement,MutationObserver:window.MutationObserver,
@@ -65,9 +65,10 @@ async function withContent(run,{structure=false,lookupDisplay='annotation',obser
     ShisuiReview:{hide(){},refresh:()=>Promise.resolve()},ShisuiCopy:{onPointerTrack(){},copyParagraph(){}},ShisuiConversation:{openConversation:()=>Promise.resolve()}};
   for(const [key,value]of Object.entries(globals)){original.set(key,globalThis[key]);globalThis[key]=value;}
   for(const key of ['chrome','ShisuiContent'])original.set(key,globalThis[key]);
-  const settings={assistanceMode:'on-demand',domain:'general',helpLanguage:'en',lookupDisplay,hintDisplay:'direct',rulePacks:[]};
+  const settings={assistanceMode:'on-demand',domain:'general',helpLanguage:'en',lookupDisplay,hintDisplay:'direct',rulePacks:[],...settingsPatch};
   let listener;
   globalThis.chrome={runtime:{id:'abc',getURL:path=>'chrome-extension://abc/'+path,sendMessage:(message,callback)=>{
+    if(runtimeHandler?.(message,callback))return;
     if(['ASSIST','WORD_PREFERENCE_SET','PASSAGE_TRANSLATE','SENTENCE_GROUPS_BATCH','EMERGENCY_TRANSLATE'].includes(message.type)){pending.push({message,reply:callback});return;}
     callback({ok:true,data:message.type==='STATE_GET'?{settings,providerConfigured:true}:message.type==='SENTENCE_GROUPS_GET'?{enabled:structure,density:'medium',lineStyle:'solid'}:{}});
   },onMessage:{addListener:callback=>listener=callback,removeListener(){}}}};
@@ -78,7 +79,7 @@ async function withContent(run,{structure=false,lookupDisplay='annotation',obser
   window.Range.prototype.getClientRects=()=>[rect];window.Range.prototype.getBoundingClientRect=()=>rect;
   const attach=window.HTMLElement.prototype.attachShadow;window.HTMLElement.prototype.attachShadow=function(options){const root=attach.call(this,options);shadows.set(this,root);return root;};
   const elementListeners=new WeakMap(),addElementListener=window.HTMLElement.prototype.addEventListener;window.HTMLElement.prototype.addEventListener=function(type,callback,options){let events=elementListeners.get(this);if(!events)elementListeners.set(this,events=new Map());events.set(type,callback);addElementListener.call(this,type,callback,options);};
-  document.body.innerHTML='<main><p>The client retries with backoff.</p><nav><a href="/docs">Documentation</a></nav></main>';
+  document.body.innerHTML=bodyHtml||'<main><p>The client retries with backoff.</p><nav><a href="/docs">Documentation</a></nav></main>';
   const paragraph=document.querySelector('p');
   document.caretRangeFromPoint=()=>{const mapping=ShisuiContent.textMap(paragraph),entry=mapping.nodes.find(item=>item.end>12),range=document.createRange();range.setStart(entry.node,12-entry.start);range.collapse(true);return range;};
   const event=(target=paragraph,extra={})=>({isTrusted:true,type:'click',button:0,detail:1,pointerId:1,clientX:80,clientY:90,target,preventDefault(){},stopImmediatePropagation(){},stopPropagation(){},composedPath:()=>[target,document.body,document,window],...extra});
@@ -96,6 +97,23 @@ async function withContent(run,{structure=false,lookupDisplay='annotation',obser
     for(const [key,value]of original){if(value===undefined)delete globalThis[key];else globalThis[key]=value;}
   }
 }
+
+test('late prepared support cannot withdraw a confirmed annotation during viewport refresh',async()=>{
+  let latePrepared,preparedCalls=0;
+  const sentence='Give it a concrete task in ordinary language so the assistant can inspect the request, preserve context, explain the result, and verify the completed work.';
+  const start=sentence.indexOf('ordinary'),target=(stage,personal=false)=>({text:'ordinary',start,end:start+'ordinary'.length,wordId:'ordinary-general',senseKey:'ordinary-sense',sense:'common',stage,revision:0,hint:stage==='hint'?'common':'',translation:stage==='hint'?'日常的':'',...(personal?{personal:true}:{} )});
+  await withContent(async({paragraph})=>{
+    await waitFor(()=>paragraph.querySelector('.shisui-term-hint')?.textContent==='common');
+    const hint=paragraph.querySelector('.shisui-term-hint');latePrepared();
+    await new Promise(resolve=>setTimeout(resolve,30));
+    expect(hint.isConnected).toBe(true);expect(paragraph.querySelector('.shisui-term-hint')?.textContent).toBe('common');
+  },{observe:true,settingsPatch:{assistanceMode:'ambient',rememberSupport:true},bodyHtml:'<main lang="en"><p>'+sentence+'</p><p>'+sentence+' '+sentence+'</p></main>',runtimeHandler:(message,callback)=>{
+    if(message.type==='ANALYZE'){callback({ok:true,data:{terms:[{id:'ordinary-general',priority:10,occurrences:[{start,end:start+'ordinary'.length,text:'ordinary'}]}]}});return true;}
+    if(message.type==='SUPPORT_BATCH'){callback({ok:true,data:{items:message.items.map(item=>({id:item.id,target:target('hint'),meaning:null,sentenceTranslation:null,coverage:'excerpt'}))}});return true;}
+    if(message.type==='PREPARED_SUPPORT'){preparedCalls++;if(preparedCalls===1){latePrepared=()=>callback({ok:true,data:{items:message.items.map(item=>({id:item.id,targets:[target('mark',true)]}))}});return true;}callback({ok:true,data:{items:message.items.map(item=>({id:item.id,targets:[]}))}});return true;}
+    return false;
+  }});
+});
 
 test('annotation lookup shows temporary loading and a retryable error without an unconfirmed hint',async()=>{
   await withContent(async({state,paragraph,pending,lookup})=>{
