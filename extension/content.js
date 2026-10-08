@@ -614,7 +614,7 @@
     const start=job.start+target.start,end=job.start+target.end;
     return state.records.filter(record=>record.block===job.block&&record.job.start+record.target.start<end&&record.job.start+record.target.end>start);
   }
-  function allocatePrepared(values){
+  function allocatePrepared(values,preserveConfirmed=false){
     if(!automatic())return;
     for(const {job,target}of values){
       if(!job.visible||state.knownWords.has(target.wordId))continue
@@ -622,7 +622,7 @@
       if(overlaps.some(record=>record.manual))continue;
       const existing=overlaps.find(record=>record.job.start+record.target.start===job.start+target.start&&record.job.start+record.target.end===job.start+target.end);
       if(overlaps.length&&!existing)continue;
-      if(existing&&target.stage==='pending'&&confirmedTarget(existing.target))continue;
+      if(existing&&(target.stage==='pending'||preserveConfirmed&&target.stage!=='hint'&&!existing.target.personal)&&confirmedTarget(existing.target))continue;
       const stage=target.stage;
       if(existing){
         if(blockText(job.block).slice(job.start,job.end)!==job.sentence)continue;
@@ -700,7 +700,7 @@
     let batch=[],size=0;
     const current=()=>automatic()&&generation===state.generation&&viewport===state.viewportGeneration&&blocks.every(inReadingSurface);
     if(!current())return;
-    const flush=async()=>{if(!batch.length)return current();const values=await preparedFor(batch,article);if(lookupBusy())await waitForLookupIdle();if(!current())return false;allocatePrepared(values);batch=[];size=0;return true;};
+    const flush=async()=>{if(!batch.length)return current();const values=await preparedFor(batch,article);if(lookupBusy())await waitForLookupIdle();if(!current())return false;allocatePrepared(values,true);batch=[];size=0;return true;};
     for(const block of blocks){
       let mapping=textMap(block);
       for(const sentence of segments(mapping.text)){
