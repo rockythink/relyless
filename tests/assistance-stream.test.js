@@ -70,3 +70,13 @@ test('brief assistance progress does not require or accept unsolicited full deta
   expect(assistanceProgress(JSON.stringify(result),brief)).toEqual({definition:'except if'});
   expect(assistanceProgress(JSON.stringify({...result,details:{meaning:{en:'An exception.',zh:'例外。'},sentenceTranslation:'除非过期。'}}),brief)).toEqual({});
 });
+
+
+test('page previews accept bounded context but never bind an unfinished identity',()=>{
+  const pageItems=translationItems.map(item=>({...item,context:{title:'Title',heading:'Section',before:'Before',after:'After'}}));
+  expect(translationProgress('{"items":[{"translation":"错误绑定","id":"p1',pageItems)).toBeNull();
+  expect(translationProgress('{"items":[{"translation":"正确绑定","id":"p1"',pageItems)).toEqual({items:[{id:'p1',translation:'正确绑定'}]});
+  const complete={items:pageItems.map(({id})=>({id,translation:'完整中文译文。'}))};
+  expect(translationProgress(JSON.stringify(complete),pageItems)).toEqual(complete);
+  expect(normalizeTranslationProgress({items:[{id:'p1',translation:'中文\ud800'}]},pageItems)).toBeNull();
+});

@@ -40,3 +40,23 @@ test("native origin validation requires the exact canonical extension origin", (
   assert.equal(validateExtensionOrigin(origin, `${origin}?x=1`), false);
   assert.equal(validateExtensionOrigin(origin, `https://${"a".repeat(32)}/`), false);
 });
+
+
+test("Antigravity page callback carries only normalized successes, not page error envelopes", async () => {
+  const [{AntigravityClient},{EventEmitter},{mkdtemp,rm},{tmpdir},{join}]=await Promise.all([import('../connector/antigravity.mjs'),import('node:events'),import('node:fs/promises'),import('node:os'),import('node:path')]);
+  const dir=await mkdtemp(join(tmpdir(),'relyless-page-cli-')),calls=[];let reply={items:[{id:'p1',translation:'保留英文。'},{id:'p2',translation:''}]};
+  const client=new AntigravityClient({agyPath:join(dir,'agy'),dataDir:dir,spawnImpl:(_command,args)=>{
+    calls.push(args);const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.kill=()=>{};
+    queueMicrotask(()=>{child.stdout.emit('data',JSON.stringify(args.includes('/usage')?{status:'SUCCESS'}:reply.status?reply:{status:'SUCCESS',structured_output:reply}));child.emit('exit',0);});return child;
+  }});
+  const items=[{id:'p1',text:'Keep English.',context:{title:'',heading:'',before:'',after:''}},{id:'p2',text:'Second.',context:{title:'',heading:'',before:'',after:''}}],progress=[];
+  try{
+    assert.deepEqual(await client.emergencyTranslate({scope:'page',items},{onProgress:value=>progress.push(value)}),{items:[{id:'p1',translation:'保留英文。'}],errors:[{id:'p2',code:'TRANSLATION_EMPTY'}]});
+    assert.deepEqual(progress,[{items:[{id:'p1',translation:'保留英文。'}]}]);
+    reply={items:[{id:'p1',translation:'正确。'},{id:'p1',translation:'重复。'}]};
+    assert.deepEqual(await client.emergencyTranslate({scope:'page',items},{onProgress:value=>progress.push(value)}),{items:[],errors:items.map(({id})=>({id,code:'ITEM_DUPLICATE'}))});
+    assert.equal(progress.length,1);
+    reply={status:'ERROR',error:'provider failed'};await assert.rejects(client.emergencyTranslate({scope:'page',items},{onProgress:value=>progress.push(value)}));assert.equal(progress.length,1);
+    assert.equal(calls.filter(args=>!args.includes('/usage')).length,3);
+  }finally{await client.close();await rm(dir,{recursive:true,force:true});}
+});

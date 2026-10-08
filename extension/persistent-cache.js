@@ -4,7 +4,7 @@
 export const GLOSS_CACHE_LIMIT = 500;
 export const PAGE_TRANSLATION_CACHE_LIMIT = 1500;
 export const GLOSS_CACHE_VERSION = 2;
-export const TRANSLATION_CACHE_VERSION = 1;
+export const TRANSLATION_CACHE_VERSION = 2;
 export const PERSISTENT_CACHE_TTL = 30 * 86400000;
 
 const text = (value, max) => typeof value === 'string' ? value.slice(0, max) : '';

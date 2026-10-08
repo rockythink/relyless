@@ -3,6 +3,54 @@ import {Window} from 'happy-dom';
 import {readFileSync} from 'node:fs';
 
 const source=name=>readFileSync(new URL('../extension/'+name,import.meta.url),'utf8');
+
+test('page translation previews remain pending and are replaced only by confirmed results',async()=>{
+  await withContent(async({paragraph,pending,send})=>{
+    await send({type:'SS_EMERGENCY_START',token:'page-token',resume:false});await waitFor(()=>pending.length===1);
+    const request=pending[0].message,progress={type:'SS_TRANSLATION_PROGRESS',token:request.token,requestSeq:request.requestSeq,items:[{id:request.items[0].id,translation:'客户端正在重试'}]};
+    for(const invalid of [{...progress,token:'other-token'},{...progress,requestSeq:99},{...progress,items:[...progress.items,...progress.items]},{...progress,items:[{id:'unknown',translation:'不应显示'}]}])await send(invalid);
+    await send(progress,{id:'other-extension'});expect(paragraph.querySelector('[data-shisui-ui=emergency-translation]')).toBeNull();
+    await send(progress);expect(paragraph.querySelector('[data-shisui-ui=emergency-translation]')?.textContent).toBe('客户端正在重试');
+    expect((await send({type:'SS_STATUS'})).data.emergency.completed).toBe(0);
+    expect(paragraph.querySelector('[aria-busy=true]')).not.toBeNull();
+    pending.shift().reply({ok:true,data:{items:[{id:request.items[0].id,translation:'客户端会在退避等待后重试。'}],errors:[]}});
+    await waitFor(async()=>(await send({type:'SS_STATUS'})).data.emergency.completed===1);
+    expect(paragraph.querySelector('[data-shisui-ui=emergency-translation]').textContent).toBe('客户端会在退避等待后重试。');
+    expect(paragraph.querySelector('[aria-busy=true]')).toBeNull();
+    await send(progress);expect(paragraph.querySelector('[data-shisui-ui=emergency-translation]').textContent).toBe('客户端会在退避等待后重试。');
+    expect(ShisuiContent.blockText(paragraph)).toBe('The client retries with backoff.');
+  });
+});
+
+for(const stop of [false,true])test('page preview is withdrawn after '+(stop?'stop and ignores a late stream':'terminal failure'),async()=>{
+  await withContent(async({paragraph,pending,send})=>{
+    await send({type:'SS_EMERGENCY_START',token:'page-token',resume:false});await waitFor(()=>pending.length===1);
+    const request=pending[0].message,progress={type:'SS_TRANSLATION_PROGRESS',token:request.token,requestSeq:request.requestSeq,items:[{id:request.items[0].id,translation:'未确认的译文'}]};
+    await send(progress);expect(paragraph.querySelector('[data-shisui-ui=emergency-translation]')?.textContent).toBe('未确认的译文');
+    if(stop)await send({type:'SS_EMERGENCY_STOP'});
+    pending.shift().reply({ok:false,error:'响应流中断'});await waitFor(async()=>(await send({type:'SS_STATUS'})).data.emergency.phase!=='translating');
+    await send(progress);expect(paragraph.querySelector('[data-shisui-ui=emergency-translation]')).toBeNull();
+    expect((await send({type:'SS_STATUS'})).data.emergency.completed).toBe(0);
+    expect(ShisuiContent.blockText(paragraph)).toBe('The client retries with backoff.');
+  });
+});
+
+for(const stop of [false,true])test('withdrawing a page preview preserves confirmed chunks in the same paragraph after '+(stop?'stop':'failure'),async()=>{
+  await withContent(async({paragraph,pending,send})=>{
+    const original='The client retries with backoff unless the token has expired. '.repeat(90).trim();paragraph.textContent=original;
+    await send({type:'SS_EMERGENCY_START',token:'page-token',resume:false});await waitFor(()=>pending.length===1);
+    const first=pending.shift();first.reply({ok:true,data:{items:[{id:first.message.items[0].id,translation:'已确认的第一块译文。'}],errors:[]}});
+    await waitFor(()=>paragraph.querySelector('[aria-busy=false]')?.textContent==='已确认的第一块译文。'&&pending.length===1);
+    const second=pending.shift();
+    await send({type:'SS_TRANSLATION_PROGRESS',token:second.message.token,requestSeq:second.message.requestSeq,items:[{id:second.message.items[0].id,translation:'未确认的第二块译文'}]});
+    expect(paragraph.querySelector('[aria-busy=true]')?.textContent).toBe('未确认的第二块译文');
+    if(stop)await send({type:'SS_EMERGENCY_STOP'});second.reply({ok:false,error:'响应流中断'});
+    await waitFor(async()=>(await send({type:'SS_STATUS'})).data.emergency.phase!=='translating');
+    expect(paragraph.querySelector('[data-shisui-ui=emergency-translation]')?.textContent).toBe('已确认的第一块译文。');
+    expect(paragraph.querySelector('[aria-busy=true]')).toBeNull();expect(ShisuiContent.blockText(paragraph)).toBe(original);
+    expect((await send({type:'SS_STATUS'})).data.emergency.completed).toBe(0);
+  });
+});
 const waitFor=async predicate=>{const deadline=Date.now()+1200;while(!await predicate()){if(Date.now()>deadline)throw new Error('Assistance did not settle');await new Promise(resolve=>setTimeout(resolve,5));}};
 
 async function withContent(run,{structure=false,lookupDisplay='annotation',observe=false}={}){

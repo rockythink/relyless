@@ -203,7 +203,7 @@
   function openStructureCard(key,x,y){
     const host=document.createElement('div');host.setAttribute(OWN,'sentence-detail');host.style.cssText='position:fixed;z-index:2147483646;width:min(340px,calc(100vw - 32px))';
     const shadow=host.attachShadow({mode:'closed'}),style=document.createElement('style'),panel=document.createElement('section'),head=document.createElement('div'),title=createBrandLabel('阅读解构'),close=document.createElement('button'),tree=document.createElement('ul');
-    style.textContent=globalThis.ShisuiDesign.cssFor(':host')+':host{font:var(--type-control)/var(--leading-control) var(--sans);color:var(--ink)}section{box-sizing:border-box;max-height:min(60vh,420px);overflow:auto;padding:var(--space-3);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-panel);box-shadow:var(--shadow-high)}.head{display:flex;align-items:center;justify-content:space-between;gap:12px}button{font:inherit;color:var(--muted);border:0;background:transparent;min-height:32px;cursor:pointer}ul{list-style:none;padding-left:14px;margin:8px 0}section>ul{padding-left:0}li{margin:7px 0;overflow-wrap:anywhere}.role{font-weight:var(--weight-medium);margin-right:8px}';
+    style.textContent=globalThis.ShisuiDesign.cssFor(':host')+':host{font:var(--type-control)/var(--leading-control) var(--sans);color:var(--ink)}section{box-sizing:border-box;max-height:min(60vh,420px);overflow:auto;padding:var(--space-3);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-panel);box-shadow:var(--shadow-high)}.head{display:flex;align-items:center;justify-content:space-between;gap:12px}button{font:inherit;color:var(--muted);border:0;background:var(--surface);min-height:32px;cursor:pointer}ul{list-style:none;padding-left:14px;margin:8px 0}section>ul{padding-left:0}li{margin:7px 0;overflow-wrap:anywhere}.role{font-weight:var(--weight-medium);margin-right:8px}';
     panel.setAttribute('role','dialog');panel.setAttribute('aria-label','RelyLess · 本句解构');head.className='head';close.type='button';close.textContent='关闭';close.onclick=removeStructureCard;head.append(title,close);panel.append(head,tree);shadow.append(style,panel);uiMountRoot().append(host);sentenceGroups.card={host,tree,key,signature:''};updateStructureCard();const bounds=host.getBoundingClientRect();host.style.left=Math.max(16,Math.min(x-16,innerWidth-bounds.width-16))+'px';host.style.top=Math.max(12,Math.min(y+12,innerHeight-bounds.height-12))+'px';close.focus({preventScroll:true});
   }
   function originalTextRows(block,mapping,start,end,clip){
@@ -438,10 +438,10 @@
   function installPageStyles(){
       const mark='.'+MARK_CLASS+'['+OWN+'="term"]',hint='.'+HINT_CLASS+'['+OWN+'="hint"]',block='['+OWN+'="emergency-translation"]',passage='['+OWN+'="passage-translation"]',action='['+OWN+'="passage-action"]',annotation='['+OWN+'="annotation"]';
       let style=document.getElementById('shisui-content-style');if(!style){style=document.createElement('style');style.id='shisui-content-style';style.setAttribute(OWN,'style');document.documentElement.append(style);}const readingStyle=globalThis.ShisuiReadingStyle.normalize(state.settings.readingStyle),selectors={mark,hint,block,annotation};
-      const pending=mark+'[data-shisui-support-stage="pending"]'; style.textContent=globalThis.ShisuiDesign.cssFor(mark+','+hint+','+block+','+passage+','+annotation+','+action)+mark+'{cursor:text}'+hint+'{user-select:none;cursor:text}'+globalThis.ShisuiReadingStyle.css(readingStyle,selectors)+globalThis.ShisuiReadingStyle.css(readingStyle,{...selectors,block:passage})+pending+'{background:none!important;color:inherit!important;border:0!important;border-radius:3px!important;box-shadow:0 0 0 1px color-mix(in srgb,currentColor 55%,transparent)!important;text-decoration:none!important}';
-      style.textContent+=block+' button{font:inherit;font-size:.85em;line-height:1.4;min-height:32px;margin:0 .25em;padding:.2em .6em;border:1px solid currentColor;border-radius:4px;background:transparent;color:inherit;cursor:pointer}'+block+' button:focus-visible{outline:2px solid currentColor;outline-offset:3px}';
-      style.textContent+=hint+'.veiled{filter:blur(4px)!important;opacity:.75!important;cursor:pointer;transition:filter .15s ease,opacity .15s ease}'+annotation+':hover '+hint+'.veiled,'+hint+'.veiled:focus-visible,'+hint+'.veiled[data-revealed]{filter:none!important;opacity:1!important}'+hint+'.veiled:focus-visible{outline:var(--focus-ring);outline-offset:var(--focus-offset)}@media(prefers-reduced-motion:reduce){'+hint+'.veiled{transition:none}}';
-      const known='['+OWN+'="known-action"]';style.textContent+=annotation+'{position:relative}'+known+'{position:absolute;left:100%;top:50%;z-index:2;transform:translate(0,-50%);opacity:0;pointer-events:none;transition:opacity .12s ease;min-height:26px;box-sizing:border-box;padding:2px 8px;border:1px solid var(--line);border-radius:999px;background:var(--surface);box-shadow:var(--shadow-low);color:var(--accent);font:var(--weight-medium) var(--type-support)/var(--leading-support) var(--sans);white-space:nowrap;cursor:pointer}'+known+'::before{content:"";position:absolute;inset:-6px -2px -6px -12px}'+annotation+'[data-shisui-known-visible]>'+known+','+annotation+':focus-within>'+known+','+known+':focus{opacity:1;pointer-events:auto}'+known+':hover{background:var(--accent-soft)}'+known+':focus-visible{opacity:1;pointer-events:auto;outline:var(--focus-ring);outline-offset:var(--focus-offset)}'+known+':disabled{color:var(--on-action-disabled);background:var(--action-disabled);cursor:default}';
+      const pending=mark+'[data-shisui-support-stage="pending"]'; style.textContent=globalThis.ShisuiDesign.cssFor(mark+','+hint+','+block+','+passage+','+annotation+','+action+',['+OWN+'="nav-flash"]')+mark+'{cursor:text}'+hint+'{user-select:none;cursor:text}'+globalThis.ShisuiReadingStyle.css(readingStyle,selectors)+globalThis.ShisuiReadingStyle.css(readingStyle,{...selectors,block:passage})+pending+'{background:none!important;color:inherit!important;border:0!important;border-radius:3px!important;box-shadow:0 0 0 1px currentColor!important;text-decoration:none!important}';
+      style.textContent+=block+' button{font:inherit;font-size:.85em;line-height:1.4;min-height:32px;margin:0 .25em;padding:.2em .6em;border:1px solid currentColor;border-radius:4px;background:var(--surface);color:var(--ink);cursor:pointer}'+block+' button:focus-visible{outline:2px solid currentColor;outline-offset:3px}';
+      style.textContent+=hint+'.veiled{filter:blur(4px)!important;opacity:1!important;cursor:pointer;transition:filter .15s ease}'+annotation+':hover '+hint+'.veiled,'+hint+'.veiled:focus-visible,'+hint+'.veiled[data-revealed]{filter:none!important;opacity:1!important}'+hint+'.veiled:focus-visible{outline:var(--focus-ring);outline-offset:var(--focus-offset)}@media(prefers-reduced-motion:reduce){'+hint+'.veiled{transition:none}}';
+      const known='['+OWN+'="known-action"]';style.textContent+=annotation+'{position:relative}'+known+'{position:absolute;left:100%;top:50%;z-index:2;transform:translate(0,-50%);opacity:0;pointer-events:none;min-height:26px;box-sizing:border-box;padding:2px 8px;border:1px solid var(--line);border-radius:999px;background:var(--surface);box-shadow:var(--shadow-low);color:var(--accent);font:var(--weight-medium) var(--type-support)/var(--leading-support) var(--sans);white-space:nowrap;cursor:pointer}'+known+'::before{content:"";position:absolute;inset:-6px -2px -6px -12px}'+annotation+'[data-shisui-known-visible]>'+known+','+annotation+':focus-within>'+known+','+known+':focus{opacity:1;pointer-events:auto}'+known+':hover{background:var(--accent-soft)}'+known+':focus-visible{opacity:1;pointer-events:auto;outline:var(--focus-ring);outline-offset:var(--focus-offset)}'+known+':disabled{color:var(--on-action-disabled);background:var(--action-disabled);cursor:default}';
     }
   function removeKnownWordAnnotations(wordIds){
     const view=state.card;
@@ -1157,17 +1157,17 @@
   function flashNavRecord(record){
     nav.flash?.remove();nav.flash=null;
     const host=document.createElement('div');host.setAttribute(OWN,'nav-flash');host.setAttribute('aria-hidden','true');
-    host.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:2147483646;transition:opacity .4s ease;opacity:1';
+    host.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:2147483646;color:var(--teal)';
     let drew=false;
     for(const rect of record.range.getClientRects()){
       if(rect.width<2||rect.height<2)continue;drew=true;
       const line=document.createElement('span');
-      line.style.cssText='position:absolute;box-sizing:border-box;border:2px solid rgba(13,148,136,.9);border-radius:4px;box-shadow:0 0 0 4px rgba(13,148,136,.22);left:'+(rect.left-3)+'px;top:'+(rect.top-3)+'px;width:'+(rect.width+6)+'px;height:'+(rect.height+6)+'px';
+      line.style.cssText='position:absolute;box-sizing:border-box;border:2px solid currentColor;border-radius:4px;left:'+(rect.left-3)+'px;top:'+(rect.top-3)+'px;width:'+(rect.width+6)+'px;height:'+(rect.height+6)+'px';
       host.append(line);
     }
     if(!drew)return;
     uiMountRoot().append(host);nav.flash=host;
-    setTimeout(()=>{host.style.opacity='0';setTimeout(()=>{if(nav.flash===host)nav.flash=null;host.remove();},420);},750);
+    setTimeout(()=>{if(nav.flash===host)nav.flash=null;host.remove();},1170);
   }
   function navigateRecords(direction,event){
     const candidates=navCandidates();if(!candidates.length)return;
@@ -1211,7 +1211,7 @@
     lookup.frame=requestAnimationFrame(()=>{lookup.frame=0;clearLookupPreview();if(!lookup.held||!lookup.point)return;
       try{const point={...lookup.point,target:document.elementFromPoint(lookup.point.clientX,lookup.point.clientY)},target=pointHelpTarget(point),clip=sentenceClip(target.block);
         const host=document.createElement('div');host.setAttribute(OWN,'lookup-preview');host.setAttribute('aria-hidden','true');host.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:2147483646;color:'+getComputedStyle(nodeElement(target.anchor.startContainer)).color;
-        for(const rect of target.anchor.getClientRects()){const left=Math.max(rect.left-2,clip.left),right=Math.min(rect.right+2,clip.right),top=Math.max(rect.top-1,clip.top),bottom=Math.min(rect.bottom+1,clip.bottom);if(right<=left||bottom<=top)continue;const line=document.createElement('span');line.style.cssText='position:absolute;pointer-events:none;box-sizing:border-box;border:1px solid color-mix(in srgb,currentColor 48%,transparent);border-radius:3px;left:'+left+'px;top:'+top+'px;width:'+(right-left)+'px;height:'+(bottom-top)+'px';host.append(line);}
+        for(const rect of target.anchor.getClientRects()){const left=Math.max(rect.left-2,clip.left),right=Math.min(rect.right+2,clip.right),top=Math.max(rect.top-1,clip.top),bottom=Math.min(rect.bottom+1,clip.bottom);if(right<=left||bottom<=top)continue;const line=document.createElement('span');line.style.cssText='position:absolute;pointer-events:none;box-sizing:border-box;border:1px solid currentColor;border-radius:3px;left:'+left+'px;top:'+top+'px;width:'+(right-left)+'px;height:'+(bottom-top)+'px';host.append(line);}
         uiMountRoot().append(host);lookup.preview=host;
       }catch{}
     });
@@ -1344,7 +1344,7 @@
     const passage=target.kind==='passage',panel=document.createElement('details');panel.open=true;panel.setAttribute(OWN,'passage-translation');panel.lang='zh-CN';panel.setAttribute('aria-label',passage?'本段中文翻译':'所选范围中文翻译');
     const summary=document.createElement('summary'),brand=createBrandLabel(passage?'本段译文':'所选译文');brand.style.color='inherit';summary.append(brand);
     const body=document.createElement('div');body.setAttribute('aria-live','polite');body.setAttribute('aria-busy','true');body.textContent='翻译中…';
-    const cancel=document.createElement('button');cancel.type='button';cancel.textContent='取消';cancel.style.cssText='margin-top:var(--space-2);min-height:32px;padding:var(--space-1) var(--space-3);border:1px solid var(--line);border-radius:var(--radius-pill);background:transparent;color:var(--muted);cursor:pointer';
+    const cancel=document.createElement('button');cancel.type='button';cancel.textContent='取消';cancel.style.cssText='margin-top:var(--space-2);min-height:32px;padding:var(--space-1) var(--space-3);border:1px solid var(--line);border-radius:var(--radius-pill);background:var(--surface);color:var(--muted);cursor:pointer';
     panel.append(summary,body,cancel);insertRelatedTranslation(target.block,panel);inheritEmergencyStyle(target.block,panel);passageSources.set(panel,target);return {panel,body,cancel};
   }
   function renderPassageProgress(view,rows,complete=false){
@@ -1412,7 +1412,7 @@
     const actions=selected.kind==='navigation'?[['翻译导航文字',selected]]:singleWord?(passage?[['翻译本段',passage]]:[]):[['翻译所选',selected],...(passage&&passage.text!==selected.text?[['翻译本段',passage]]:[])];if(selected.kind!=='navigation'&&sentenceGroups.enabled&&state.providerConfigured&&selected.blocks.length===1&&trimmed.length<=2000&&segments(selected.blocks[0].sourceText).some(item=>item.segment.trim()===trimmed&&item.index+item.segment.indexOf(trimmed)===selected.blocks[0].start+selected.blocks[0].text.indexOf(trimmed))&&!selected.error)actions.push(['解构所选',selected,'structure']);if(!actions.length)return;
     if(!document.getElementById('shisui-content-style'))installPageStyles();const rect=selected.range.getBoundingClientRect(),host=document.createElement('div');host.setAttribute(OWN,'passage-action');host.style.cssText='position:fixed;z-index:2147483647;display:flex;align-items:center;flex-wrap:wrap;max-width:calc(100vw - 16px);gap:var(--space-1);pointer-events:auto;box-sizing:border-box;padding:var(--space-1) var(--space-2);border:1px solid var(--line);border-radius:var(--radius-panel);background:var(--surface);box-shadow:var(--shadow-high)';const brand=createBrandLabel();brand.style.marginInlineEnd='var(--space-1)';host.append(brand);
     const clearPreview=()=>host.querySelectorAll('[data-passage-preview]').forEach(node=>node.remove());
-    const preview=target=>{clearPreview();for(const part of target.blocks){const mapping=textMap(part.block);if(mapping.text!==part.sourceText)continue;for(const box of originalTextRows(part.block,mapping,part.start,part.end,sentenceClip(part.block))){const line=document.createElement('span');line.dataset.passagePreview='';line.setAttribute(OWN,'passage-preview');line.style.cssText='position:fixed;pointer-events:none;z-index:-1;box-sizing:border-box;border:1px solid color-mix(in srgb,var(--accent) 48%,transparent);border-radius:3px;background:color-mix(in srgb,var(--accent) 7%,transparent);left:'+box.left+'px;top:'+(box.top-box.height)+'px;width:'+(box.right-box.left)+'px;height:'+box.height+'px';host.append(line);}}};
+    const preview=target=>{clearPreview();for(const part of target.blocks){const mapping=textMap(part.block);if(mapping.text!==part.sourceText)continue;for(const box of originalTextRows(part.block,mapping,part.start,part.end,sentenceClip(part.block))){const line=document.createElement('span');line.dataset.passagePreview='';line.setAttribute(OWN,'passage-preview');line.style.cssText='position:fixed;pointer-events:none;z-index:-1;box-sizing:border-box;border:1px solid var(--accent);border-radius:3px;left:'+box.left+'px;top:'+(box.top-box.height)+'px;width:'+(box.right-box.left)+'px;height:'+box.height+'px';host.append(line);}}};
     for(const [label,target,kind]of actions){const button=document.createElement('button');button.type='button';button.textContent=label;button.disabled=Boolean(target.error);button.title=target.error||'';button.style.cssText='font:var(--weight-medium) var(--type-control)/var(--leading-control) var(--sans);min-height:36px;padding:var(--space-2) var(--space-3);border:1px solid var(--line);border-radius:var(--radius-pill);background:var(--surface);color:var(--accent);cursor:'+(target.error?'not-allowed':'pointer');let hoverTimer=0;const cancelHover=()=>{clearTimeout(hoverTimer);hoverTimer=0;};const runAction=()=>{cancelHover();if(target.error)return;button.disabled=true;removeSelectionTool();Kernel.dismissSelection(signature);if(kind==='structure'){const rect=target.range.getBoundingClientRect();void decomposeSelection(target,rect.left,rect.bottom);}else void translatePassage(target);};button.onmouseenter=()=>{preview(target);if(kind!=='structure'&&passageHover())hoverTimer=setTimeout(runAction,passageDelay());};button.onfocus=()=>preview(target);button.onmouseleave=()=>{cancelHover();clearPreview();};button.onblur=()=>{cancelHover();clearPreview();};button.onclick=click=>{if(!click.isTrusted||target.error)return;runAction();};host.append(button);if(target.error){const warning=document.createElement('span');warning.setAttribute('role','status');warning.textContent=target.error;warning.style.cssText='max-width:320px;padding:var(--space-2);border-radius:var(--radius-medium);background:var(--surface);color:var(--danger,var(--accent));box-shadow:var(--shadow-high);font:var(--weight-medium) var(--type-control)/var(--leading-control) var(--sans)';host.append(warning);}}
     uiMountRoot().append(host);
     const bounds=host.getBoundingClientRect();host.style.left=Math.max(8,Math.min(rect.left,innerWidth-bounds.width-8))+'px';host.style.top=Math.max(8,Math.min(rect.bottom+6,innerHeight-bounds.height-8))+'px';state.selectionTool=host;
@@ -1487,6 +1487,7 @@
   function finishEmergency(remove=true,notify=true) {
     const session=state.emergency;if(!session){if(remove){removeEmergencyTranslations();setTaskStatus('emergency',null);}return;}
     session.active=false;session.generation++;session.phase='stopped';
+    for(const pending of emergencyPending)if(pending.session===session)clearEmergencyPreviews(pending);
     for(const unit of session.units)if(unit.state==='translating')unit.state='queued';
     if(notify&&session.token)void request('EMERGENCY_END',{token:session.token}).catch(()=>{});session.token='';
     if(remove){stopEmergencyObservers(session);removeEmergencyTranslations(session.root);setTaskStatus('emergency',null);state.emergency=null;if(notify)queueMicrotask(()=>{if(automatic())void rebuild();scheduleSentenceScan(0);});}
@@ -1521,13 +1522,24 @@
     const style=getComputedStyle(parent);container.style.width='auto';container.style.minWidth='0';container.style.maxWidth='100%';container.style.webkitTextFillColor='currentColor';
     for(const [name,value]of [['--ss-source-font',style.fontFamily],['--ss-source-size',style.fontSize],['--ss-source-leading','1.6'],['--ss-source-color',style.color==='rgba(0, 0, 0, 0)'?getComputedStyle(document.body).color:style.color]])container.style.setProperty(name,value);
   }
-  function renderEmergencyChunk(item,translation,session) {
+  function renderEmergencyChunk(item,translation,session,preview=false) {
     const unit=item.unit;if(!validEmergencyUnit(unit,session)||unit.version!==item.version)return;
     let entry=session.containers.get(unit);
     if(!entry){const container=document.createElement('span');container.setAttribute(OWN,'emergency-translation');container.lang='zh-CN';container.setAttribute('aria-label','对应正文的中文翻译');container.style.display='block';unit.nodes.at(-1).after(container);entry={container,parts:new Map()};session.containers.set(unit,entry);inheritPageTranslationStyle(unit.parent,container);}
-    const part=document.createElement('span');part.style.display='block';part.textContent=translation;entry.parts.set(item.index,part);entry.container.replaceChildren(...[...entry.parts].sort((a,b)=>a[0]-b[0]).map(([,node])=>node));
+    const part=entry.parts.get(item.index)||document.createElement('span');part.style.display='block';part.textContent=translation;part.setAttribute('aria-busy',String(preview));part.title=preview?'翻译中，尚未确认':'';entry.parts.set(item.index,part);entry.container.replaceChildren(...[...entry.parts].sort((a,b)=>a[0]-b[0]).map(([,node])=>node));
   }
   const emergencyPending=new Set();
+  function clearEmergencyPreviews(pending){
+    for(const {unit,index}of pending.batch){const entry=pending.session.containers.get(unit),part=entry?.parts.get(index);if(part?.getAttribute('aria-busy')!=='true')continue;part.remove();entry.parts.delete(index);if(!entry.parts.size&&!entry.error){entry.container.remove();pending.session.containers.delete(unit);}}
+  }
+  function renderEmergencyProgress(message){
+    const session=state.emergency;if(!session?.active||message.token!==session.token||!Number.isSafeInteger(message.requestSeq)||document.visibilityState!=='visible')return;
+    const pending=[...emergencyPending].find(value=>value.session===session&&value.token===message.token&&value.seq===message.requestSeq&&!value.cancelled&&value.generation===session.generation);
+    if(!pending||!Array.isArray(message.items)||!message.items.length||message.items.length>pending.batch.length)return;
+    if(pending.batch.some(item=>item.unit.version!==item.version||!validEmergencyUnit(item.unit,session)||!validEmergencyContext(item.unit,session)))return;
+    const ids=new Set();for(const item of message.items){if(!item||Object.keys(item).some(key=>!['id','translation'].includes(key))||ids.has(item.id)||!pending.batch.some(source=>source.id===item.id)||typeof item.translation!=='string'||!item.translation.trim()||item.translation.length>8000||!item.translation.isWellFormed())return;ids.add(item.id);}
+    for(const value of message.items)renderEmergencyChunk(pending.batch.find(item=>item.id===value.id),value.translation,session,true);
+  }
   function emergencySlice(text,limit,tail=false){
     if(text.length<=limit)return text;let start=tail?text.length-limit:0,end=tail?text.length:limit;if(start&&/[\uDC00-\uDFFF]/.test(text[start]))start++;if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;return text.slice(start,end);
   }
@@ -1569,7 +1581,7 @@
     let cancelled=false;
     for(const pending of emergencyPending){
       if(pending.session!==session||pending.seq>through||pending.cancelled)continue;
-      pending.cancelled=true;cancelled=true;
+      pending.cancelled=true;cancelled=true;clearEmergencyPreviews(pending);
       for(const item of pending.batch)if(item.unit.state==='translating')item.unit.state='deferred';
     }
     if(cancelled&&session.active)void request('EMERGENCY_CANCEL_REQUEST',{token:session.token,through}).catch(()=>{});
@@ -1579,19 +1591,24 @@
     let through=0;for(const pending of emergencyPending)if(pending.session===session&&pending.batch.some(item=>item.unit===unit))through=Math.max(through,pending.seq);
     if(through)cancelEmergencyBatch(session,through);
   }
+  function emergencyChunkContext(unit,index){
+    if(unit.chunks.length===1)return unit.context;
+    return {...unit.context,before:index?emergencySlice(unit.chunks[index-1],400,true):unit.context.before,after:index+1<unit.chunks.length?emergencySlice(unit.chunks[index+1],400):unit.context.after};
+  }
   function nextEmergencyBatch(session){
     const batch=[];let size=0;
     for(const unit of emergencyReady(session)){
       if(!validEmergencyUnit(unit,session)||!validEmergencyContext(unit,session)){invalidateEmergencyUnit(unit,session);continue;}
+      let pendingUnit=false;for(const pending of emergencyPending)if(pending.session===session&&pending.generation===session.generation&&pending.batch.some(item=>item.unit===unit)){pendingUnit=true;break;}if(pendingUnit)continue;
       const index=unit.chunks.findIndex((_,index)=>!unit.done.has(index));if(index<0){unit.state='complete';continue;}
       const text=unit.chunks[index];if(batch.length&&(unit.chunks.length>1||size+text.length>4000))continue;
-      batch.push({id:'e'+(++session.nextId),text,context:unit.context,unit,version:unit.version,index});size+=text.length;
+      batch.push({id:'e'+(++session.nextId),text,context:emergencyChunkContext(unit,index),unit,version:unit.version,index});size+=text.length;
       if(batch.length===4||unit.chunks.length>1)break;
     }
     return batch;
   }
   async function sendEmergencyBatch(session,batch){
-    const pending={session,batch,seq:++session.requestSeq,token:session.token,cancelled:false},generation=session.generation;
+    const pending={session,batch,seq:++session.requestSeq,token:session.token,cancelled:false,generation:session.generation},generation=session.generation;
     emergencyPending.add(pending);updateEmergencyStatus(session);let result;
     try{
       result=await request('EMERGENCY_TRANSLATE',{token:pending.token,requestSeq:pending.seq,items:batch.map(({id,text,context})=>({id,text,context}))});
@@ -1604,23 +1621,35 @@
       for(const item of batch){const unit=item.unit;if(failures.has(item.id)){unit.state='failed';renderEmergencyFailure(unit,session);continue;}renderEmergencyChunk(item,byId.get(item.id),session);unit.done.add(item.index);unit.state=unit.done.size===unit.chunks.length?'complete':'deferred';}
       reportResult(result,result.errors.length?'error':'ok');
     }catch(error){reportResult(result,error.code==='STALE'||error.code==='CANCELLED'?'cancelled':'error');if(session.active&&state.emergency===session&&generation===session.generation&&!pending.cancelled)session.error ||= error.message;}
-    finally{emergencyPending.delete(pending);if(session.generation===generation)for(const item of batch)if(item.unit.state==='translating')item.unit.state='deferred';}
+    finally{clearEmergencyPreviews(pending);emergencyPending.delete(pending);if(session.generation===generation)for(const item of batch)if(item.unit.state==='translating')item.unit.state='deferred';}
   }
   async function runEmergency(session){
-    const limit=Math.min(2,Number.isInteger(state.settings.requestConcurrency)?state.settings.requestConcurrency:2);
-    if(session.running||emergencyPending.size>=limit||session.dirty.size||!session.active||state.emergency!==session||document.visibilityState!=='visible')return;
-    session.running=true;const generation=session.generation;
-    try{while(session.active&&state.emergency===session&&!session.error&&!session.dirty.size&&document.visibilityState==='visible'){
-      if(!session.root.isConnected||session.source!==location.href){finishEmergency(true,true);break;}
-      const tasks=[],capacity=limit-emergencyPending.size;
-      for(let index=0;index<capacity;index++){
-        const batch=nextEmergencyBatch(session);if(!batch.length)break;
-        for(const item of batch)item.unit.state='translating';
-        tasks.push(sendEmergencyBatch(session,batch));
+    const limit=Math.min(2,Number.isInteger(state.settings.requestConcurrency)?state.settings.requestConcurrency:2),generation=session.generation;
+    if(session.running&&session.runningGeneration===generation||emergencyPending.size>=limit||session.error||session.dirty.size||!session.active||state.emergency!==session||document.visibilityState!=='visible')return;
+    session.running=true;session.runningGeneration=generation;const tasks=new Set();
+    const canDispatch=()=>session.active&&state.emergency===session&&session.generation===generation&&!session.error&&!session.dirty.size&&document.visibilityState==='visible';
+    try{
+      while(canDispatch()){
+        if(!session.root.isConnected||session.source!==location.href){finishEmergency(true,true);break;}
+        while(emergencyPending.size<limit&&canDispatch()){
+          const batch=nextEmergencyBatch(session);if(!batch.length)break;
+          for(const item of batch)item.unit.state='translating';
+          const task=sendEmergencyBatch(session,batch).finally(()=>{
+            tasks.delete(task);
+            const current=state.emergency;if(current?.active&&(!current.running||current!==session||current.generation!==generation))scheduleEmergency(current);
+          });
+          tasks.add(task);
+        }
+        if(!tasks.size)break;
+        await Promise.race(tasks);
       }
-      if(!tasks.length)break;
+    }finally{
+      if(session.runningGeneration===generation)session.running=false;
+      // Release paused dispatch, but retain successful siblings before stopping a failed generation.
       await Promise.all(tasks);
-    }}finally{session.running=false;if(session.error&&session.active&&state.emergency===session&&generation===session.generation){const error=session.error;finishEmergency(false,true);session.error=error;session.phase='error';}updateEmergencyStatus(session);const current=state.emergency;if(current?.active&&(current!==session||generation!==session.generation))scheduleEmergency(current);}
+      if(session.error&&session.active&&state.emergency===session&&generation===session.generation){const error=session.error;finishEmergency(false,true);session.error=error;session.phase='error';}
+      updateEmergencyStatus(session);const current=state.emergency;if(current?.active&&(current!==session||generation!==session.generation))scheduleEmergency(current);
+    }
   }
   function scanEmergency(session,roots=[session.root]){
     if(state.emergency!==session)return 0;if(session.source!==location.href||!session.root.isConnected){finishEmergency(true,true);return 0;}
@@ -1791,6 +1820,7 @@
      setReaderEnabled(message.enabled).then(data=>respond({ok:true,data}),error=>respond({ok:false,error:error.message||'无法进入专注阅读。'}));return true;
    }
    if(message?.type==='SS_TRANSLATION_PROGRESS'){
+     if(_sender?.id===runtime.id&&typeof message.token==='string')renderEmergencyProgress(message);
      const view=[...state.passageRequests].find(item=>item.requestId===message.requestId);
      if(_sender.id===runtime.id&&view&&!view.cancelled&&!view.finished){
        if(validPassageTarget(view.target)&&view.panel.isConnected)renderPassageProgress(view,message.items);

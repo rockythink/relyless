@@ -91,6 +91,22 @@ test('Grok emits validated help progress before the terminal event arrives', asy
   try { await f.authorize(); const answer = f.client.assist({ text: 'unless', context: sentence, domain: 'tech', kind: 'word', level: 'hint', detail: 'full' }, { onProgress: value => progressResolve(value) }); const progress = await progressed; expect(progress.definition).toBe('except if'); release(); expect(await answer).toEqual(result); } finally { release(); await f.close(); }
 });
 
+
+for(const terminal of ['response.completed','response.failed','response.incomplete'])test('Grok page preview precedes '+terminal+' without replacing terminal authority',async()=>{
+  let release;const gate=new Promise(resolve=>{release=resolve;}),progress=Promise.withResolvers();
+  const prefix='{"items":[{"id":"p1","translation":"缓存保留',text=prefix+'近期数据。"}]}';
+  const f=await fixture({override:url=>{if(url.endsWith('/responses'))return new Response(new ReadableStream({async start(controller){
+    const bytes=new TextEncoder();controller.enqueue(bytes.encode(event({type:'response.output_text.delta',delta:prefix})));await gate;
+    controller.enqueue(bytes.encode(event({type:'response.output_text.delta',delta:text.slice(prefix.length)})+event({type:terminal,response:complete(text)})));controller.close();
+  }}),{headers:{'Content-Type':'text/event-stream'}});}});
+  try{
+    await f.authorize();const answer=f.client.emergencyTranslate({scope:'page',items:[{id:'p1',text:'The cache preserves recent data.',context:{title:'Cache',heading:'',before:'',after:''}}]},{onProgress:value=>progress.resolve(value)}),settled=answer.then(value=>({value}),error=>({error}));
+    expect(await progress.promise).toEqual({items:[{id:'p1',translation:'缓存保留'}]});release();const result=await settled;
+    if(terminal==='response.completed')expect(result.value).toEqual({items:[{id:'p1',translation:'缓存保留近期数据。'}],errors:[]});else expect(result.error).toMatchObject({code:'OUTPUT_INVALID'});
+    expect(f.requests.filter(item=>item.url.endsWith('/responses'))).toHaveLength(1);
+  }finally{release();await f.close();}
+});
+
 test('Grok timeout aborts direct inference rather than yielding a partial answer', async () => {
   const f = await fixture({ override: (url, init) => url.endsWith('/responses') ? new Promise((resolve, reject) => { init.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }); }) : undefined });
   try { await f.authorize(); f.client.inferenceTimeoutMs = 20; await expect(f.client.classify({ text: 'Pipeline.' })).rejects.toMatchObject({ code: 'TIMEOUT' }); } finally { await f.close(); }

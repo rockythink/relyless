@@ -5,42 +5,44 @@
 <header class="popup-header"><div class="brand-lockup"><img class="brand-icon" src="../icons/relyless.svg" width="28" height="28" alt=""><h1 id="brand-title">RelyLess</h1></div><button id="open-options" class="icon-text-button header-settings" type="button">设置</button></header>
 <section id="unsupported-page" class="unsupported-page" aria-labelledby="unsupported-title" hidden><h2 id="unsupported-title">此页暂不支持</h2><p>请打开普通 HTTP 或 HTTPS 网页后再使用阅读辅助。浏览器内部页面与扩展页面无法开启。</p><a id="unsupported-guide" href="options.html#guide" target="_blank" rel="noopener">查看使用说明</a></section>
 <div id="page-controls" hidden>
-<section id="service-warning" class="notice" hidden><b>服务未就绪</b><p id="service-warning-copy">连接服务后才能生成英文线索和局部中文说明。</p><button id="repair-service" type="button">前往服务设置</button></section>
-<section class="activation-panel" aria-labelledby="activation-title"><div class="page-context"><span id="site-hostname">当前标签页</span><span id="page-status" class="status-chip" aria-live="polite">正在检查</span></div><h2 id="activation-title">当前页面</h2><button id="toggle-page" class="primary-action" type="button" disabled><span id="toggle-label">开启本页</span></button><p id="page-note" class="muted">保留英文，只在需要的位置提供帮助。</p><p id="action-error" class="inline-message error" role="alert" hidden></p></section>
-<section id="task-status-panel" class="task-status-panel" aria-labelledby="task-status-title" hidden><h2 id="task-status-title">当前任务</h2><ul id="task-status-list" aria-live="polite" aria-atomic="true"></ul></section>
-<section class="reader-panel" aria-labelledby="reader-title"><h2 id="reader-title">专注阅读</h2><button id="toggle-reader" type="button" disabled>进入专注阅读</button><p id="reader-note">本地提取当前正文快照，不保存文章；退出返回原网页。</p><p id="reader-error" class="inline-message error" role="alert" tabindex="-1" hidden></p></section>
-<section class="sentence-groups-panel" aria-labelledby="sentence-groups-title">
-  <h2 id="sentence-groups-title">阅读解构</h2>
-  <label class="switch"><input id="sentence-groups" type="checkbox" disabled aria-describedby="sentence-groups-note sentence-structure-key sentence-groups-error"><span aria-hidden="true"></span><span class="sr-only">阅读解构</span></label>
-  <p id="sentence-groups-note" aria-live="polite">已关闭；可随时为当前页面开启。</p>
-  <p id="sentence-structure-key" class="sentence-structure-key">标出当前页的主谓宾等结构。分析会产生额外模型用量。</p>
-  <p id="sentence-groups-error" class="inline-message error" role="alert" hidden></p>
+<div class="page-context"><span id="site-hostname">当前标签页</span><span id="page-status" class="status-chip" aria-live="polite">正在检查</span></div>
+<section class="popup-switch-panel activation-panel" aria-labelledby="activation-title">
+  <label class="popup-switch-copy" for="toggle-page"><span id="activation-title" class="popup-control-title">阅读辅助</span><span id="page-note">仅作用于本页，不更改网站自动开启规则。</span><span id="action-error" class="inline-message error popup-feedback" role="alert" hidden></span></label>
+  <div class="switch"><input id="toggle-page" type="checkbox" disabled aria-labelledby="activation-title" aria-describedby="page-note action-error"><span aria-hidden="true"></span></div>
+
 </section>
-<section id="emergency-panel" class="emergency-panel" aria-labelledby="emergency-title" tabindex="-1">
-  <h2 id="emergency-title">本页双语翻译</h2>
-  <button id="emergency-open" type="button" disabled>翻译本页</button>
-  <p id="emergency-status" aria-live="polite">保留英文，按阅读位置翻译附近正文。</p>
+<section class="popup-switch-panel sentence-groups-panel" aria-labelledby="sentence-groups-title">
+  <label class="popup-switch-copy" for="sentence-groups"><span id="sentence-groups-title" class="popup-control-title">阅读解构</span><span id="sentence-structure-key">标出句子主干 · 产生额外模型用量</span><span id="sentence-groups-error" class="inline-message error popup-feedback" role="alert" hidden></span></label>
+  <div class="switch"><input id="sentence-groups" type="checkbox" disabled aria-labelledby="sentence-groups-title" aria-describedby="sentence-groups-note sentence-structure-key sentence-groups-error"><span aria-hidden="true"></span></div>
+  <p id="sentence-groups-note" class="popup-feedback" aria-live="polite">已关闭；可随时为当前页面开启。</p>
+
+</section>
+<section class="popup-switch-panel site-auto-panel" aria-labelledby="site-auto-title">
+  <label class="popup-switch-copy" for="site-auto"><span id="site-auto-title" class="popup-control-title">此网站以后自动开启</span><span id="site-auto-note" class="popup-feedback">有限上下文用于准备；支持记录只在本机。</span><span id="site-auto-error" class="inline-message error popup-feedback" role="alert" hidden></span></label>
+  <div class="switch"><input id="site-auto" type="checkbox" disabled aria-labelledby="site-auto-title" aria-describedby="site-auto-note site-auto-error"><span aria-hidden="true"></span></div>
+  <button id="site-hint-dismiss" class="icon-text-button" type="button" hidden>不再提示此网站</button>
+
+</section>
+<section id="service-warning" class="notice" aria-labelledby="service-warning-title" hidden><h2 id="service-warning-title">服务未就绪</h2><button id="repair-service" class="icon-text-button" type="button" aria-label="打开模型服务设置">服务设置</button><p id="service-warning-copy" class="popup-feedback">连接服务后才能生成英文线索和局部中文说明。</p></section>
+<section id="task-status-panel" class="task-status-panel" aria-labelledby="task-status-title" hidden><h2 id="task-status-title">当前任务</h2><ul id="task-status-list" aria-live="polite" aria-atomic="true"></ul></section>
+<footer id="emergency-panel" class="popup-actions" aria-labelledby="emergency-title" tabindex="-1">
+  <h2 id="emergency-title" class="sr-only">本页阅读操作</h2>
+  <div class="page-action-buttons">
+    <div><button id="toggle-reader" type="button" aria-describedby="reader-note reader-error" disabled>专注阅读</button><p id="reader-note">本地快照 · 不保存文章</p><p id="reader-error" class="inline-message error popup-feedback" role="alert" tabindex="-1" hidden></p></div>
+    <div><button id="emergency-open" type="button" aria-describedby="emergency-status" disabled>全文翻译</button><p id="emergency-status" class="popup-feedback" aria-live="polite">保留英文 · 按阅读位置翻译</p><p id="emergency-result" class="inline-message popup-feedback" role="status" aria-live="polite" hidden></p></div>
+  </div>
+
   <div id="emergency-confirm" class="emergency-confirm" role="group" aria-labelledby="emergency-confirm-title" hidden>
     <b id="emergency-confirm-title">确认翻译当前页面</b>
-    <p>英文会保留；仅处理你读到附近的正文。</p>
-    <p>原文、页面标题、所在章节和有限的相邻文本会发送给所选服务，并按服务规则计费。停止不能撤回已经发送的请求。</p>
+    <p>保留英文，按阅读位置分批处理。原文、标题、章节及有限相邻文本发送给所选服务，按服务规则计费；停止不能撤回已发送请求。</p>
     <p id="emergency-estimate" class="muted" hidden></p>
     <p id="emergency-budget" class="inline-message error" role="alert" hidden></p>
-    <div class="provider-actions"><button id="emergency-start" type="button">确认并翻译本页</button><button id="emergency-cancel" class="icon-text-button" type="button">取消</button></div>
+    <div class="provider-actions"><button id="emergency-start" class="primary-action" type="button">确认并翻译本页</button><button id="emergency-cancel" class="icon-text-button" type="button">取消</button></div>
   </div>
-  <div id="emergency-progress" class="emergency-progress" hidden>
-    <strong id="emergency-progress-copy">已译 0 / 已识别 0 段</strong>
-    <span id="emergency-counts">待阅读 0 · 失败 0 · 跳过 0</span>
-  </div>
-  <div id="emergency-actions" class="provider-actions" role="group" aria-label="本页双语翻译操作" hidden>
-    <button id="emergency-stop" type="button">停止</button>
-    <button id="emergency-resume" type="button" hidden>继续</button>
-    <button id="emergency-retry" type="button" hidden>重试失败段落</button>
-    <button id="emergency-clear" class="icon-text-button" type="button">返回英文</button>
-  </div>
-  <p id="emergency-result" class="inline-message" role="status" aria-live="polite" hidden></p>
-</section>
-<section class="site-auto-panel" aria-labelledby="site-auto-title"><h2 id="site-auto-title">此网站以后自动开启</h2><label class="switch"><input id="site-auto" type="checkbox" disabled aria-describedby="site-auto-note site-auto-error"><span aria-hidden="true"></span><span class="sr-only">此网站以后自动开启</span></label><p id="site-auto-note">授权一次，以后打开此网站即可自动开始。</p><button id="site-hint-dismiss" class="icon-text-button" type="button" hidden>不再提示此网站</button><p id="site-auto-error" class="inline-message error" role="alert" hidden></p></section>
+  <div id="emergency-progress" class="emergency-progress" hidden><strong id="emergency-progress-copy">已译 0 / 已识别 0 段</strong><span id="emergency-counts">待阅读 0 · 失败 0 · 跳过 0</span></div>
+  <div id="emergency-actions" class="provider-actions" role="group" aria-label="本页双语翻译操作" hidden><button id="emergency-stop" type="button">停止</button><button id="emergency-resume" type="button" hidden>继续</button><button id="emergency-retry" type="button" hidden>重试失败段落</button><button id="emergency-clear" class="icon-text-button" type="button">返回英文</button></div>
+
+</footer>
 </div>
-<footer class="popup-footer"><p>按住 <span data-lookup-key>D</span> + 单击可见英文查词 · 选中正文后点浮条翻译</p></footer>
+<footer class="popup-footer"><p>按住 <kbd data-lookup-key>D</kbd> + 单击查词 · 选中后点浮条翻译</p></footer>
 </main><script type="module" src="popup.js"></script></body></html>

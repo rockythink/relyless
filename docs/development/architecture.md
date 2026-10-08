@@ -44,6 +44,9 @@ content/reader.js 在当前主框架中做有上限的本地正文筛选和白�
 读者快照直接重建选中正文的子节点（嵌套 main/article 作为块级 section），避免把整篇文章包进内联容器。手动确认的本页翻译在前台最多同时发送两个各自有界的段落批次，实际并发还受用户设置的请求上限约束；单个批次仍遵守 4 段、4000 字符的边界。按阅读位置排序，停止、切换视图和源正文变化时取消失效批次并丢弃迟到结果；真实服务商耗时仍取决于模型和网络。
 快照只保留可读名称的链接；无名称链接与空表头保留结构但降级语义，原页节点不受影响。视图内部的页内锚点由本地滚动和聚焦处理，不改变宿主 URL 与文档身份。
 并发批次中有一批失败时，先等待已在途的另一批完成并保留其已验证译文，再停止后续派发；不能把另一批的成功结果当作失败丢弃。
+段落调度采用滚动补位：任一请求完成即重新检查附近正文并补充空闲槽，不等待同轮慢请求；全局在途请求（含停止后尚未结算的旧代次）计入并发上限。runner 由 session 与 generation 共同持有，隐藏、重扫或停止时释放旧持有者，旧 finally 不得覆盖新 runner。
+本页翻译进度复用 translationProgress Native 事件与 SS_TRANSLATION_PROGRESS，按 token/requestSeq 关联；普通网页定向到原 documentId 的主框架，PDF 沿用扩展页消息。后台合并去重并校验当前授权，内容脚本复核批次 ID、generation、原文和上下文；预览仅写纯文本 DOM，不写成功缓存、不计已译，终态失败撤下预览。API、SIWC 与 Grok 可传递增量前缀，Antigravity CLI 仅在最终解析完成时给出预览。
+长段落分块以每块紧邻的同段文本补充 before/after（各最多400字符），首尾沿用外部邻段；不改变原单元的上下文有效性签名或既有12000字符载荷上限。PAGE_TRANSLATION_INSTRUCTIONS 明确保真而非摘要，TRANSLATION_CACHE_VERSION 升为2，不命中旧策略的选段/本页缓存；不迁移或删除词档案。详见 [ADR 0010](decisions/0010-page-translation-streaming.md)。
 ### `extension/ui/`
 
 `popup.html`/`popup.js` 负责当前标签页的短操作；`options.html`/`options.js` 负责持久配置和说明；服务目录、历史等复杂区域使用独立模块。UI 使用 `extension/design.js` 注入的共享 token，规则见 `docs/design-system.md`。

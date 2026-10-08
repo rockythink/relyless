@@ -1466,3 +1466,39 @@ test('Gemini Nano without any fallback surfaces its own error',async()=>{
     await expect(isolatedSend(fixture,{type:'ASSIST',detail:'full',requestId:'nano-y',text:'unless',context:'Retry unless expired.',domain:'tech',kind:'word',level:'hint'},sender)).rejects.toThrow('只覆盖简短查词');
   }finally{globalThis.chrome=previous;globalThis.fetch=previousFetch;}
 });
+
+
+for(const ending of ['complete','duplicate','failed','cancel','document','end'])test('page preview remains provisional through '+ending,async()=>{
+  const previous=globalThis.chrome,previousFetch=globalThis.fetch;
+  const data={wordSchemaVersion:5,productSchemaVersion:1,words:[],settings:{providerKind:'api',provider:{baseUrl:'https://api.example/v1',model:'fixture',apiKey:'fixture-key'},rememberSupport:true}},fixture=isolatedChrome(data,{id:'page-preview-'+ending});
+  const page={url:'https://isolated.example/read',tab:{id:91},frameId:0,documentId:'page-document'},items=[pageItem('p1','The cache preserves recent data.'),pageItem('p2','The second paragraph.')],messages=[],progress=Promise.withResolvers(),encoder=new TextEncoder();let controller,pending,calls=0,documentId=page.documentId;
+  const delta=content=>'data: '+JSON.stringify({choices:[{delta:{content},finish_reason:null}]})+'\n\n';
+  try{
+    globalThis.chrome=fixture.api;fixture.api.webNavigation.getFrame=async()=>({documentId,url:page.url});
+    fixture.api.tabs.sendMessage=async(_tab,message,options)=>{if(message.type==='SS_TRANSLATION_PROGRESS'){messages.push({message,options});progress.resolve();}};
+    globalThis.fetch=withCapabilityProbe(async(_url,options)=>{
+      calls++;if(calls>1){const payload=JSON.parse(JSON.parse(options.body).messages[1].content);return Response.json({choices:[{message:{content:JSON.stringify({items:payload.items.map(({id})=>({id,translation:'重新请求的译文。'}))})},finish_reason:'stop'}]});}
+      return new Response(new ReadableStream({start(value){controller=value;value.enqueue(encoder.encode(delta('{"items":[{"id":"p1","translation":"缓存保留')));}}),{headers:{'Content-Type':'text/event-stream'}});
+    });
+    await import('../extension/background.js?page-preview='+ending+'-'+Date.now());await isolatedSend(fixture,{type:'PAGE_UI_INJECT',tabId:91});
+    const {token}=await isolatedSend(fixture,{type:'EMERGENCY_BEGIN',tabId:91,url:page.url});
+    pending=isolatedSend(fixture,{type:'EMERGENCY_TRANSLATE',token,requestSeq:1,items},page).then(result=>({result}),error=>({error}));await progress.promise;
+    expect(messages[0]).toEqual({message:{type:'SS_TRANSLATION_PROGRESS',token,requestSeq:1,items:[{id:'p1',translation:'缓存保留'}]},options:{frameId:0,documentId:page.documentId}});
+    expect(data.words).toEqual([]);expect(calls).toBe(1);
+    // Closing the preview string repeats the same snapshot, not a second UI update.
+    controller.enqueue(encoder.encode(delta('"')));await new Promise(resolve=>setTimeout(resolve,75));expect(messages).toHaveLength(1);
+    if(ending==='cancel')await isolatedSend(fixture,{type:'EMERGENCY_CANCEL_REQUEST',token,through:1},page);
+    if(ending==='document')documentId='replacement-document';
+    if(ending==='end')await isolatedSend(fixture,{type:'EMERGENCY_END',tabId:91,token});
+    if(ending==='failed')controller.error(new TypeError('provider stream failed'));
+    else{controller.enqueue(encoder.encode(delta('},{"id":"'+(ending==='duplicate'?'p1':'p2')+'","translation":""}]}')+'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'));controller.close();}
+    const settled=await pending;
+    if(ending==='complete')expect(settled.result).toEqual({items:[{id:'p1',translation:'缓存保留'}],errors:[{id:'p2',code:'TRANSLATION_EMPTY'}]});
+    else if(ending==='duplicate')expect(settled.result).toEqual({items:[],errors:items.map(({id})=>({id,code:'ITEM_DUPLICATE'}))});
+    else expect(settled.error).toBeInstanceOf(Error);
+    await new Promise(resolve=>setTimeout(resolve,75));expect(messages).toHaveLength(1);
+    if(ending==='failed'||ending==='duplicate'){
+      expect(await isolatedSend(fixture,{type:'EMERGENCY_TRANSLATE',token,requestSeq:2,items:[pageItem('fresh',items[0].text)]},page)).toEqual({items:[{id:'fresh',translation:'重新请求的译文。'}],errors:[]});expect(calls).toBe(2);
+    }
+  }finally{try{controller?.close();}catch{}if(pending)await pending;globalThis.chrome=previous;globalThis.fetch=previousFetch;}
+});

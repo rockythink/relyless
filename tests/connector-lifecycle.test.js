@@ -28,11 +28,9 @@ test('subscription validates rich support, assistance, emergency, and sentence h
     expect(lastMessage.type).toBe('emergencyTranslate');
     expect(lastMessage.payload.scope).toBe('passage');
     response={items:[{id:'page',translation:'页面译文。'}],errors:[]};
-    const pageProgress=[];
     const pageContext={title:'Title',heading:'Heading',before:'Before',after:'After'};
-    expect(await emergencyTranslateSubscription({scope:'page',items:[{id:'page',text:'Page text.',context:pageContext}],model:'quick',onProgress:value=>pageProgress.push(value)})).toEqual(response);
+    expect(await emergencyTranslateSubscription({scope:'page',items:[{id:'page',text:'Page text.',context:pageContext}],model:'quick'})).toEqual(response);
     expect(lastMessage.payload.scope).toBe('page');
-    expect(pageProgress).toEqual([]);
     response={items:[{id:'sentence',groups:[
       {role:'adverbial',first:1,last:3},{role:'object',first:3,last:4},
       {role:'subject',first:1,last:1},{role:'subject',first:1,last:1},
@@ -47,6 +45,28 @@ test('subscription validates rich support, assistance, emergency, and sentence h
     ]}]});
 
   } finally { delete globalThis.chrome; }
+});
+
+for(const kind of ['chatgpt','grok','antigravity'])test(kind+' page preview is source-bound and cannot turn terminal failure into success',async()=>{
+  const previous=globalThis.chrome;let receive,request;
+  globalThis.chrome={runtime:{lastError:null,connectNative:()=>({onDisconnect:{addListener(){}},onMessage:{addListener:listener=>{receive=listener;}},postMessage:message=>{request=message;},disconnect(){}})}};
+  try{
+    const {emergencyTranslateSubscription}=await import('../extension/subscription.js?page-preview='+kind+'-'+Date.now()),progress=[],items=[{id:'page',text:'Page text.',context:{title:'',heading:'',before:'',after:''}}];
+    const answer=emergencyTranslateSubscription({scope:'page',items,kind,onProgress:value=>progress.push(value)}),settled=answer.then(value=>({value}),error=>({error}));
+    const send=(data,event='translationProgress')=>receive({id:request.id,event,data});
+    send({items:[{id:'page',translation:'错通道'}]},'assistProgress');
+    send({items:[{id:'foreign',translation:'错身份'}]});
+    send({items:[{id:'page',translation:'重复'},{id:'page',translation:'重复'}]});
+    send({items:[{id:'page',translation:'x'.repeat(8001)}]});
+    send({items:[{id:'page',translation:'中文\ud800'}]});
+    send({items:[{id:'page',translation:'尚未完成'}]});
+    await Promise.resolve();await Promise.resolve();
+    expect(progress).toEqual([{items:[{id:'page',translation:'尚未完成'}]}]);
+    receive({id:request.id,ok:false,error:'provider failed'});
+    expect((await settled).error.message).toBe('provider failed');
+    send({items:[{id:'page',translation:'迟到'}]});await Promise.resolve();
+    expect(progress).toHaveLength(1);
+  }finally{if(previous===undefined)delete globalThis.chrome;else globalThis.chrome=previous;}
 });
 
 test('subscription refresh replaces an obsolete host, coalesces refreshes, and isolates late messages',async()=>{

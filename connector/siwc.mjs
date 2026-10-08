@@ -411,7 +411,7 @@ export class SiwcClient extends EventEmitter {
   async emergencyTranslate({scope,items,model='',personalization},{traceId,onProgress}={}){
     if(scope!=='page'&&scope!=='passage')throw new Error('翻译范围无效。');
     const page=scope==='page',selected=page?normalizePageTranslationItems(items):normalizeEmergencyItems(items),prefs=preferences(personalization);
-    return this.#infer({operation:'EMERGENCY_TRANSLATE',traceId,model,instructions:page?PAGE_TRANSLATION_INSTRUCTIONS:EMERGENCY_INSTRUCTIONS,input:{items:selected,...(prefs?{personalization:prefs}:{})},raw:page,parse:(value,text)=>page?inspectPageTranslationResult(text,selected):normalizeEmergencyResult(value,selected),onProgress:page?null:onProgress,progress:text=>translationProgress(text,selected)});
+    return this.#infer({operation:'EMERGENCY_TRANSLATE',traceId,model,instructions:page?PAGE_TRANSLATION_INSTRUCTIONS:EMERGENCY_INSTRUCTIONS,input:{items:selected,...(prefs?{personalization:prefs}:{})},raw:page,parse:(value,text)=>page?inspectPageTranslationResult(text,selected):normalizeEmergencyResult(value,selected),onProgress,progress:text=>translationProgress(text,selected)});
   }
   async historyModel({kind,payload,model=''},{traceId}={}){
     if(!['summary','personalization'].includes(kind)||!object(payload))throw new Error('历史模型请求无效。');

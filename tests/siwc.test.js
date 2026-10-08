@@ -176,6 +176,24 @@ test('page translation keeps per-item shape errors after a completed malformed r
   }finally{await f.close();}
 });
 
+
+for(const terminal of ['response.completed','response.failed','response.incomplete'])test('ChatGPT page preview precedes '+terminal+' without replacing terminal authority',async()=>{
+  let release;const gate=new Promise(resolve=>{release=resolve;}),progress=Promise.withResolvers(),snapshots=[];
+  const prefix='{"items":[{"id":"p1","translation":"缓存保留',suffix='近期数据。"}]}';
+  const f=await fixture({override:target=>{if(target.pathname==='/v1/responses')return new Response(new ReadableStream({async start(controller){
+    const bytes=new TextEncoder(),event=value=>'data: '+JSON.stringify(value)+'\n\n';
+    controller.enqueue(bytes.encode(event({type:'response.output_text.delta',delta:prefix})));await gate;
+    controller.enqueue(bytes.encode(event({type:'response.output_text.delta',delta:suffix})+event({type:terminal,response:terminal==='response.failed'?{error:{code:'subscription_sharing_usage_limit_exceeded'}}:{}})));controller.close();
+  }}),{headers:{'Content-Type':'text/event-stream'}});}});
+  try{
+    await f.authorize();const answer=f.client.emergencyTranslate({scope:'page',items:[{id:'p1',text:'The cache preserves recent data.',context:{title:'Cache',heading:'',before:'',after:''}}]},{onProgress:value=>{snapshots.push(value);progress.resolve(value);}}),settled=answer.then(value=>({value}),error=>({error}));
+    expect(await progress.promise).toEqual({items:[{id:'p1',translation:'缓存保留'}]});release();
+    const result=await settled;
+    if(terminal==='response.completed')expect(result.value).toEqual({items:[{id:'p1',translation:'缓存保留近期数据。'}],errors:[]});else expect(result.error).toBeInstanceOf(Error);
+    expect(f.requests.filter(item=>item.url==='/v1/responses')).toHaveLength(1);
+  }finally{release();await f.close();}
+});
+
 test('a valid-looking delta without response.completed is never accepted',async()=>{
   const f=await fixture();
   try{

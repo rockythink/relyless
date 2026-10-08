@@ -88,8 +88,8 @@
       : setting.style;
     const accent = setting.color === 'auto' ? 'var(--ss-source-color,inherit)' : setting.color;
     const line = setting.color === 'auto' ? 'currentColor' : setting.color;
-    const background = setting.color === 'auto' ? 'color-mix(in srgb,currentColor 12%,transparent)' : setting.color;
-    const foreground = setting.color === 'auto' ? 'var(--ss-source-color,inherit)' : customForeground(setting.color);
+    const background = setting.color === 'auto' ? 'var(--accent-soft)' : setting.color;
+    const foreground = setting.color === 'auto' ? 'var(--ink)' : customForeground(setting.color);
     if (resolved === 'color') rules.push(`color:${accent}`);
     else if (resolved === 'dashed') rules.push(layer === 'translation' ? `border-left:2px dashed ${line}` : `border-bottom:1px dashed ${line}`);
     else if (resolved === 'background') rules.push(`background:${background}`,`color:${foreground}`,'border-radius:3px');

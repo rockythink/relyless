@@ -7,7 +7,7 @@ import {historyModelSubscription,subscriptionStatus,onNativeDiagnostic,syncNativ
 import {ROUTE_VERSION,normalizeDomainRules,resolveRuleDomain} from './domain-routing.js';
 import {normalizeRulePacks} from './rule-pack.js';
 import {classifyLocal,embedLocal,countTokensLocal,nanoStatus,nanoAssist} from './local-classifier.js';
-import {assistanceProgress,translationProgress,conversationProgress} from './assistance-stream.mjs';
+import {assistanceProgress,translationProgress,normalizeTranslationProgress,conversationProgress} from './assistance-stream.mjs';
 import {SOURCE_DATA_INSTRUCTIONS,SUPPORT_POLICY_VERSION,SUPPORT_INSTRUCTIONS,SUPPORT_SCHEMA,ASSISTANCE_INSTRUCTIONS,assistanceSchema,normalizeSupportItems,prepareSupportItems,inspectSupportResponse,requestSupportWithCorrection,SUPPORT_CORRECTION_INSTRUCTIONS,normalizeSupportResult,normalizeAssistanceCommand,normalizeAssistanceRequest,normalizeAssistanceResult,normalizePreparationContext,EMERGENCY_SCHEMA,EMERGENCY_INSTRUCTIONS,normalizeEmergencyItems,normalizeEmergencyResult,PAGE_TRANSLATION_INSTRUCTIONS,normalizePageTranslationItems,inspectPageTranslationResult,normalizePageTranslationResult,CONVERSATION_INSTRUCTIONS,conversationSchema,normalizeConversationRequest,normalizeConversationResult} from './gloss.mjs';
 import {AUTO_SCRIPT_ID,ALL_HOSTS,VIDEO_SUPPORT_ENABLED,pageOrigin,sitePattern,validateAutomation,validateVideo,resolveAutomation,registrationMatches,requiredPermissionOrigins,dismissKeywordOrigin} from './activation.js';
 import {createDiagnostics} from './diagnostic-service.js';
@@ -818,7 +818,7 @@ async function translateItems(items,settings,trace,{scope,onProgress,origin,sour
   for(let index=0;index<items.length;index++){const cached=translationCache.get(keys[index]);if(cached&&now-cached.at<TRANSLATION_CACHE_TTL){outcomes.set(keys[index],{translation:cached.translation});continue;}const stored=pkeys?persisted[pkeys[index]]:null;if(stored&&now-stored.at<PERSISTENT_CACHE_TTL&&stored.at<=now){cacheHits++;outcomes.set(keys[index],{translation:stored.zh});translationCache.delete(keys[index]);translationCache.set(keys[index],{translation:stored.zh,at:now});pageTranslationCache=writeCache(pageTranslationCache,pkeys[index],{zh:stored.zh,at:now},{limit:PAGE_TRANSLATION_CACHE_LIMIT});void persistPageTranslationCache(settings);continue;}if(stored){delete pageTranslationCache[pkeys[index]];void persistPageTranslationCache(settings);}if(!translationInFlight.has(keys[index])&&!claimed.has(keys[index])){claimed.add(keys[index]);fresh.push({item:items[index],key:keys[index]});}if(pkeys)keyToPkey.set(keys[index],pkeys[index]);}
   if(fresh.length){
     const operation=withBackgroundSlot(async()=>{const sourceItems=fresh.map(value=>value.item),idToKey=new Map(fresh.map(value=>[value.item.id,value.key]));let raw;
-      const progress=value=>{if(!onProgress||!value?.items)return;const byKey=new Map(value.items.map(item=>[idToKey.get(item.id),item.translation]));onProgress({items:items.flatMap((item,index)=>byKey.has(keys[index])?[{id:item.id,translation:byKey.get(keys[index])}]:[])});};
+      const progress=value=>{if(!onProgress)return;const normalized=normalizeTranslationProgress(value,sourceItems);if(!normalized)return;const byKey=new Map(normalized.items.map(item=>[idToKey.get(item.id),item.translation]));onProgress({items:items.flatMap((item,index)=>byKey.has(keys[index])?[{id:item.id,translation:byKey.get(keys[index])}]:[])});};
       if(isSubscriptionKind(settings.providerKind))raw=await providerOperation(()=>emergencyTranslateSubscription({scope,items:sourceItems,model:settings.subscriptionModel,traceId:trace?.traceId,preferences:personalization,onProgress:progress,kind:nativeKind(settings)}),trace,settings.subscriptionModel,nativeKind(settings),JSON.stringify(sourceItems).length);else try{raw=await apiRequest(service,{items:sourceItems},instructions,EMERGENCY_SCHEMA,{trace,beforeRequest:()=>requireLiveConsumer(backgroundGuards.get(operation)),...(onProgress?{onContent:content=>progress(translationProgress(content,sourceItems))}:{})});}catch(error){if(scope!=='page'||(error?.code!=='INVALID_JSON'&&diagnosticError(error).code!=='JSON_INVALID'))throw error;providerError='';raw='';}
       try{
         const result=scope==='page'?(isSubscriptionKind(settings.providerKind)?normalizePageTranslationResult(raw,sourceItems):inspectPageTranslationResult(raw,sourceItems)):normalizeEmergencyResult(raw,sourceItems),mapped=new Map();
@@ -846,9 +846,23 @@ async function emergencyTranslate(message,sender) {
   const items=normalizePageTranslationItems(message.items),state=await load();
   if(armed.generation!==state.supportDataGeneration||armed.provider!==await emergencyProvider(state.settings))throw new Error('翻译设置已改变，请重新开始。');
   const guard=async()=>{const [latest,page]=await Promise.all([load(),readingSource(sender)]),current=await emergencySession(source.tabId);if(!current||current.token!==armed.token||page.url!==armed.url||current.provider!==await emergencyProvider(latest.settings)||current.generation!==latest.supportDataGeneration||message.requestSeq<=(current.cancelledThrough||0))throw staleWork();};
-  const result=await translateItems(items,state.settings,diagnostics.trace(message),{scope:'page',incognito:source.incognito,origin:new URL(source.docUrl||source.url).origin,sourceHash:source.sourceHash,guard});
-  await guard();
-  return result;
+  let open=true,pending=null,previous=null,delivering=false,timer=0;
+  const deliver=async()=>{
+    const progress=pending;pending=null;delivering=true;
+    try{if(open){await guard();if(open){
+      const payload={type:'SS_TRANSLATION_PROGRESS',token:armed.token,requestSeq:message.requestSeq,items:progress.items};
+      if(isPdfViewerUrl(source.url))await chrome.runtime.sendMessage({...payload,tabId:source.tabId}).catch(()=>{});
+      else await chrome.tabs.sendMessage(source.tabId,payload,{frameId:0,...(sender.documentId?{documentId:sender.documentId}:{})}).catch(()=>{});
+    }}}catch{}finally{delivering=false;if(open)timer=setTimeout(()=>{timer=0;if(pending)void deliver();},50);}
+  };
+  const onProgress=progress=>{
+    if(!open||!progress?.items.length||previous&&previous.items.length===progress.items.length&&previous.items.every((item,index)=>item.id===progress.items[index].id&&item.translation===progress.items[index].translation))return;
+    previous=progress;pending=progress;if(!delivering&&!timer)void deliver();
+  };
+  try{
+    const result=await translateItems(items,state.settings,diagnostics.trace(message),{scope:'page',incognito:source.incognito,onProgress,origin:new URL(source.docUrl||source.url).origin,sourceHash:source.sourceHash,guard});
+    open=false;clearTimeout(timer);await guard();return result;
+  }finally{open=false;pending=null;clearTimeout(timer);}
 }
 async function emergencyCancelRequest(message,sender){
   if(!Number.isSafeInteger(message.through)||message.through<=0)throw new Error('无效的翻译请求序号。');

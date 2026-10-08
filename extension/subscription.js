@@ -234,7 +234,7 @@ export async function assistSubscription(request,model='',traceId,preferences,on
 export async function emergencyTranslateSubscription({scope,items,model='',traceId,preferences,onProgress,kind}) {
   if(scope!=='page'&&scope!=='passage')throw new Error('翻译范围无效。');
   const selected=scope==='page'?normalizePageTranslationItems(items):normalizeEmergencyItems(items),personalization=normalizePreferences(preferences);
-  const progress=scope==='passage'&&typeof onProgress==='function'?value=>{const normalized=normalizeTranslationProgress(value,selected);if(normalized)return onProgress(normalized);}:undefined;
+  const progress=typeof onProgress==='function'?value=>{const normalized=normalizeTranslationProgress(value,selected);if(normalized)return onProgress(normalized);}:undefined;
   const result=await connector(kind).send('emergencyTranslate',{scope,items:selected,model,...(personalization?{personalization}:{})},traceId,progress);
   return scope==='page'?normalizePageTranslationResult(result,selected):normalizeEmergencyResult(result,selected);
 }

@@ -1,9 +1,9 @@
 import {request, errorText, upsertSiteEntry} from '../shared.js';
 
-const popupEls={status:document.querySelector('#page-status'),hostname:document.querySelector('#site-hostname'),siteAuto:document.querySelector('#site-auto'),siteAutoNote:document.querySelector('#site-auto-note'),siteHintDismiss:document.querySelector('#site-hint-dismiss'),siteAutoError:document.querySelector('#site-auto-error'),toggle:document.querySelector('#toggle-page'),toggleLabel:document.querySelector('#toggle-label'),pageNote:document.querySelector('#page-note'),actionError:document.querySelector('#action-error'),readerToggle:document.querySelector('#toggle-reader'),readerNote:document.querySelector('#reader-note'),readerError:document.querySelector('#reader-error'),sentenceGroups:document.querySelector('#sentence-groups'),sentenceGroupsNote:document.querySelector('#sentence-groups-note'),sentenceGroupsError:document.querySelector('#sentence-groups-error'),options:document.querySelector('#open-options'),serviceWarning:document.querySelector('#service-warning'),serviceWarningCopy:document.querySelector('#service-warning-copy'),repairService:document.querySelector('#repair-service'),emergencyEstimate:document.querySelector('#emergency-estimate'),emergencyBudget:document.querySelector('#emergency-budget')};
+const popupEls={status:document.querySelector('#page-status'),hostname:document.querySelector('#site-hostname'),siteAuto:document.querySelector('#site-auto'),siteAutoNote:document.querySelector('#site-auto-note'),siteHintDismiss:document.querySelector('#site-hint-dismiss'),siteAutoError:document.querySelector('#site-auto-error'),toggle:document.querySelector('#toggle-page'),pageNote:document.querySelector('#page-note'),actionError:document.querySelector('#action-error'),readerToggle:document.querySelector('#toggle-reader'),readerNote:document.querySelector('#reader-note'),readerError:document.querySelector('#reader-error'),sentenceGroups:document.querySelector('#sentence-groups'),sentenceGroupsNote:document.querySelector('#sentence-groups-note'),sentenceGroupsError:document.querySelector('#sentence-groups-error'),options:document.querySelector('#open-options'),serviceWarning:document.querySelector('#service-warning'),serviceWarningCopy:document.querySelector('#service-warning-copy'),repairService:document.querySelector('#repair-service'),emergencyEstimate:document.querySelector('#emergency-estimate'),emergencyBudget:document.querySelector('#emergency-budget')};
 const popupUnsupported=document.querySelector('#unsupported-page');
 const popupPageControls=document.querySelector('#page-controls');
-for(const name of ['panel','open','confirm','start','cancel','progress','progress-copy','counts','actions','stop','resume','retry','clear','result','status']){
+for(const name of ['panel','open','confirm','confirm-title','start','cancel','progress','progress-copy','counts','actions','stop','resume','retry','clear','result','status']){
   const key='emergency'+name.split('-').map(part=>part[0].toUpperCase()+part.slice(1)).join('');
   popupEls[key]=document.querySelector('#emergency-'+name);
 }
@@ -33,12 +33,13 @@ function popupTaskSnapshot(value){
 function popupRenderTasks(){
   popupTaskPanel.hidden=popupTasks.length===0;
   const signature=JSON.stringify(popupTasks);if(signature===popupTaskSignature)return;popupTaskSignature=signature;
-  popupTaskList.replaceChildren(...popupTasks.map(task=>{const item=document.createElement('li');item.textContent=task.text;item.classList.toggle('error',task.error);if(task.busy)item.setAttribute('aria-busy','true');return item;}));
+  popupTaskList.replaceChildren(...popupTasks.map(task=>{const item=document.createElement('li');item.textContent=task.text;item.title=task.text;item.classList.toggle('error',task.error);if(task.busy)item.setAttribute('aria-busy','true');return item;}));
 }
 
 function popupSetLive(element, value) { if (element.textContent !== value) element.textContent = value; }
 function popupShowError(element,error){element.textContent=errorText(error);element.hidden=false;}
 function popupClearError(element){element.textContent='';element.hidden=true;}
+function popupRestoreFocus(element){if(document.activeElement===document.body&&!element.disabled&&!element.hidden)element.focus?.();}
 function popupSupported(){return Boolean(popupTab?.id&&/^https?:\/\//i.test(popupTab.url||''));}
 function popupOrigin(){try{return popupSupported()?new URL(popupTab.url).origin:'';}catch{return'';}}
 function popupHostname(){try{return popupSupported()?new URL(popupTab.url).hostname:'当前标签页';}catch{return'当前标签页';}}
@@ -76,13 +77,13 @@ function popupRender(){
   else if(allSites&&popupAutomation?.siteRule===false)popupEls.siteAutoNote.textContent='全部网站已开启；当前网站已排除。';
   else if(allSites)popupEls.siteAutoNote.textContent='全部网站已开启；关闭可排除当前网站。';
   else if(!configured&&popupAutomation?.keywordHint){popupEls.siteAutoNote.textContent=`域名含“${popupAutomation.keywordHint}”，像是文档类网站；开启后以后打开会自动辅助。`;popupEls.siteHintDismiss.hidden=false;}
-  else popupEls.siteAutoNote.textContent=configured?'下次打开此网站会自动辅助。':'授权后自动开始；有限上下文用于准备，支持记录只在本机。';
+  else popupEls.siteAutoNote.textContent=configured?'下次打开此网站会自动辅助。':'有限上下文用于准备；支持记录只在本机。';
   popupEls.siteHintDismiss.disabled=popupBusy;
-  popupEls.toggle.disabled=popupBusy||!supported;
-  popupEls.readerToggle.disabled=popupBusy||!supported;popupEls.readerToggle.textContent=popupReaderActive?'退出专注阅读':'进入专注阅读';popupEls.readerNote.textContent=popupReaderActive?'当前正文快照；退出后回到原网页。':'本地提取当前正文快照，不保存文章；退出返回原网页。';
+  popupEls.toggle.disabled=popupBusy||!supported;popupEls.toggle.checked=popupEnabled;
+  popupEls.readerToggle.disabled=popupBusy||!supported;popupEls.readerToggle.textContent=popupReaderActive?'退出专注':'专注阅读';popupEls.readerNote.textContent=popupReaderActive?'退出后返回原网页':'本地快照 · 不保存文章';
   popupEls.status.classList.toggle('active',popupEnabled);
-  if(popupEnabled){popupSetLive(popupEls.status,'本页已开启');popupEls.toggleLabel.textContent='暂停本页';popupEls.pageNote.textContent=popupState?.settings?.assistanceMode==='on-demand'?'当前为仅在需要时；保留主动求助。':'保留英文，只在当前位置提供少量支撑。';}
-  else{popupSetLive(popupEls.status,popupAutomation?.paused?'本页已暂停':'等待开启');popupEls.toggleLabel.textContent=popupAutomation?.paused?'继续辅助':'开启本页';popupEls.pageNote.textContent='开启不会改变网站的长期授权规则。';}
+  if(popupEnabled){popupSetLive(popupEls.status,'本页已开启');popupEls.pageNote.textContent=popupState?.settings?.assistanceMode==='on-demand'?'按需模式：仅响应主动求助。':'保留英文，按阅读位置提供少量支撑。';}
+  else{popupSetLive(popupEls.status,popupAutomation?.paused?'本页已暂停':'等待开启');popupEls.pageNote.textContent='仅作用于本页，不更改网站自动开启规则。';}
   const serviceProblem=popupState?.providerError||(['chatgpt','grok','antigravity'].includes(popupState?.settings?.providerKind)?popupState?.subscription?.error:'')||(!popupState?.providerConfigured?'辅助服务尚未连接。':'');
   popupEls.serviceWarning.hidden=!serviceProblem;
   popupEls.serviceWarningCopy.textContent=serviceProblem||'';
@@ -95,12 +96,13 @@ function popupRender(){
   else if(popupSentenceGroups.status==='paused')popupSetLive(popupEls.sentenceGroupsNote,'分析暂缓；页面恢复阅读状态后按需继续。');
   else if(popupSentenceGroups.enabled)popupSetLive(popupEls.sentenceGroupsNote,popupSentenceGroups.processed?'已开启，已处理 '+popupSentenceGroups.processed+' 句；滚动时按需继续。':'已开启，等待分析可见正文。');
   else popupSetLive(popupEls.sentenceGroupsNote,'已关闭；可随时为当前页面开启。');
+  popupEls.sentenceGroupsNote.hidden=Boolean(popupState?.providerConfigured&&popupSentenceGroupsLoaded&&!popupSentenceGroups.enabled&&popupSentenceGroups.status==='off'&&!popupSentenceGroups.error);
   if(popupSentenceGroups.error){popupEls.sentenceGroupsError.textContent=popupSentenceGroups.error;popupEls.sentenceGroupsError.hidden=false;}else{popupEls.sentenceGroupsError.textContent='';popupEls.sentenceGroupsError.hidden=true;}
   const emergencyVisible=Boolean(popupEmergency.active||popupEmergency.displayed||popupEmergency.phase!=='off');
   const resumable=!popupEmergency.active&&popupEmergency.total>0&&['stopped','error'].includes(popupEmergency.phase);
-  popupSetLive(popupEls.emergencyStatus,popupReaderActive?'请先退出专注阅读，再使用本页双语翻译。':popupEmergencyPhaseText());
-  popupEls.emergencyOpen.hidden=emergencyVisible||!popupEls.emergencyConfirm.hidden;
-  popupEls.emergencyOpen.disabled=popupBusy||!supported||popupReaderActive||!popupState?.providerConfigured;
+  popupSetLive(popupEls.emergencyStatus,popupReaderActive?'先退出专注阅读':popupEmergencyPhaseText());
+  popupEls.emergencyOpen.textContent=popupEmergency.active?'翻译进行中':emergencyVisible?'本页译文':'全文翻译';
+  popupEls.emergencyOpen.disabled=popupBusy||!supported||popupReaderActive||!popupState?.providerConfigured||emergencyVisible||!popupEls.emergencyConfirm.hidden;
   popupEls.emergencyProgress.hidden=!emergencyVisible;
   popupEls.emergencyProgressCopy.textContent='已译 '+popupEmergency.completed+' / 已识别 '+popupEmergency.total+' 段';
   popupEls.emergencyCounts.textContent='待阅读 '+popupEmergency.pending+' · 失败 '+popupEmergency.failed+' · 跳过 '+popupEmergency.skipped;
@@ -112,9 +114,10 @@ function popupRender(){
   popupEls.emergencyRetry.hidden=!(popupEmergency.active&&popupEmergency.failed>0);
   popupEls.emergencyRetry.disabled=popupBusy||!popupEmergency.active||popupEmergency.failed===0;
   popupEls.emergencyClear.disabled=popupBusy||!emergencyVisible;
-  popupEls.emergencyStart.textContent=popupEmergencyResume?'确认并继续':'确认并翻译本页';
+  popupEls.emergencyStart.textContent=popupEmergencyResume?'确认并继续':'确认并翻译本页';popupEls.emergencyConfirmTitle.textContent=popupEmergencyResume?'继续翻译，保留已有译文':'确认翻译当前页面';
   popupEls.emergencyStart.disabled=popupBusy||popupReaderActive||!supported||!popupState?.providerConfigured;
   popupEls.emergencyCancel.disabled=popupBusy;
+  for(const element of document.querySelectorAll('.popup-feedback, #reader-note'))element.title=element.textContent;
 }
 async function popupGetPageStatus(){if(!popupSupported()){popupTasks=[];return;}const snapshot=popupSentenceGroups;const result=await chrome.tabs.sendMessage(popupTab.id,{type:'SS_STATUS'},{frameId:0}).catch(()=>null);if(snapshot!==popupSentenceGroups)return;popupTasks=popupTaskSnapshot(result?.ok?result.data?.tasks:null);if(!result?.ok)return;popupEnabled=Boolean(result.data?.enabled);popupReaderActive=Boolean(result.data?.reader?.active);if(result.data?.sentenceGroups)popupSentenceGroups={...popupSentenceGroups,...result.data.sentenceGroups};if(result.data?.emergency)popupEmergency=popupEmergencySnapshot(result.data.emergency);}
 async function popupGetSentenceGroups(){const result=await request('SENTENCE_GROUPS_GET',{tabId:popupTab?.id});popupSentenceGroups={enabled:Boolean(result?.enabled),status:result?.enabled?'idle':'off',error:'',processed:0};popupSentenceGroupsLoaded=true;}
@@ -128,7 +131,7 @@ async function popupToggleSite(){
     popupAutomation=await request('AUTOMATION_PATCH',{patch:{sites},tabId:popupTab.id});
     await popupGetPageStatus();
   }catch(error){popupShowError(popupEls.siteAutoError,error);}
-  finally{popupBusy=false;popupRender();}
+  finally{popupBusy=false;popupRender();popupRestoreFocus(popupEls.siteAuto);}
 }
 async function popupDismissSiteHint(){
   if(!popupSupported()||popupBusy||!popupAutomation?.keywordHint)return;
@@ -151,9 +154,9 @@ async function popupToggleReader(){
     popupReaderActive=Boolean(result.data?.reader?.active);
     await popupGetPageStatus();
   }catch(error){popupShowError(popupEls.readerError,error);popupEls.readerError.focus();}
-  finally{popupBusy=false;popupRender();}
+  finally{popupBusy=false;popupRender();popupRestoreFocus(popupEls.readerToggle);}
 }
-async function popupTogglePage(){if(!popupSupported()||popupBusy)return;popupBusy=true;popupClearError(popupEls.actionError);popupRender();try{await request('PAGE_UI_INJECT',{tabId:popupTab.id});const result=await chrome.tabs.sendMessage(popupTab.id,{type:'SS_SET_ENABLED',enabled:!popupEnabled});if(!result?.ok)throw new Error(result?.error||'请刷新网页后重试。');popupEnabled=Boolean(result.data?.enabled);popupAutomation=await request('AUTOMATION_GET',{tabId:popupTab.id});}catch(error){popupShowError(popupEls.actionError,new Error(`无法更新当前页：${errorText(error)}`));}finally{popupBusy=false;popupRender();}}
+async function popupTogglePage(){if(!popupSupported()||popupBusy)return;const enabled=popupEls.toggle.checked;popupBusy=true;popupClearError(popupEls.actionError);popupRender();try{await request('PAGE_UI_INJECT',{tabId:popupTab.id});const result=await chrome.tabs.sendMessage(popupTab.id,{type:'SS_SET_ENABLED',enabled});if(!result?.ok)throw new Error(result?.error||'请刷新网页后重试。');popupEnabled=Boolean(result.data?.enabled);popupAutomation=await request('AUTOMATION_GET',{tabId:popupTab.id});}catch(error){popupShowError(popupEls.actionError,new Error(`无法更新当前页：${errorText(error)}`));}finally{popupBusy=false;popupRender();popupRestoreFocus(popupEls.toggle);}}
 async function popupToggleSentenceGroups(){
   if(!popupSupported()||popupBusy||!popupSentenceGroupsLoaded)return;const enabled=popupEls.sentenceGroups.checked;
   popupBusy=true;popupSentenceGroups.error='';popupRender();
@@ -165,7 +168,7 @@ async function popupToggleSentenceGroups(){
     popupSentenceGroups={...popupSentenceGroups,...result.data?.sentenceGroups};popupEnabled=Boolean(result.data?.enabled);
     popupAutomation=await request('AUTOMATION_GET',{tabId:popupTab.id});
   }catch(error){try{await popupGetSentenceGroups();}catch{}popupSentenceGroups.error='无法更新阅读解构：'+errorText(error);}
-  finally{popupBusy=false;popupRender();}
+  finally{popupBusy=false;popupRender();popupRestoreFocus(popupEls.sentenceGroups);}
 }
 function popupFocusEmergency(){const button=!popupEls.emergencyConfirm.hidden?popupEls.emergencyStart:popupEmergency.active?popupEls.emergencyStop:!popupEls.emergencyResume.hidden?popupEls.emergencyResume:popupEmergency.phase==='off'?popupEls.emergencyOpen:popupEls.emergencyClear;if(!button.disabled)button.focus();}
 function popupEmergencyPrompt(show,{resume=false,focus=true}={}){
@@ -220,7 +223,7 @@ async function popupEmergencyAction(type){
   }catch(error){popupEls.emergencyResult.classList.add('error');popupShowError(popupEls.emergencyResult,error);}
   finally{popupBusy=false;popupRender();popupFocusEmergency();}
 }
-function popupOpenOptions(section=''){chrome.runtime.openOptionsPage(()=>{if(section)chrome.tabs.query({url:chrome.runtime.getURL('ui/options.html*')},tabs=>{const tab=tabs.at(-1);if(tab?.id)chrome.tabs.update(tab.id,{url:chrome.runtime.getURL('ui/options.html#'+section)});});});}
+function popupOpenOptions(section=''){if(!section){chrome.runtime.openOptionsPage();return;}const url=chrome.runtime.getURL('ui/options.html#'+section);chrome.tabs.query({url:chrome.runtime.getURL('ui/options.html*')},tabs=>{const tab=tabs.at(-1);if(tab?.id){chrome.tabs.update(tab.id,{url,active:true});chrome.windows.update(tab.windowId,{focused:true});}else chrome.tabs.create({url});});}
 async function popupInit(){
   try{
     [popupTab]=await chrome.tabs.query({active:true,currentWindow:true});
@@ -238,7 +241,7 @@ async function popupWatchPage(){
   catch{/* 轮询为尽力而为，失败下一秒重试，不写入界面 */}
   finally{setTimeout(()=>void popupWatchPage(),1000);}
 }
-popupEls.toggle.addEventListener('click',()=>void popupTogglePage());popupEls.readerToggle.addEventListener('click',()=>void popupToggleReader());popupEls.siteAuto.addEventListener('change',()=>void popupToggleSite());popupEls.siteHintDismiss.addEventListener('click',()=>void popupDismissSiteHint());popupEls.sentenceGroups.addEventListener('change',()=>void popupToggleSentenceGroups());popupEls.options.addEventListener('click',()=>popupOpenOptions());popupEls.repairService.addEventListener('click',()=>popupOpenOptions('service'));popupEls.emergencyOpen.addEventListener('click',()=>popupEmergencyPrompt(true));popupEls.emergencyCancel.addEventListener('click',()=>popupEmergencyPrompt(false));popupEls.emergencyStart.addEventListener('click',()=>void popupEmergencyStart());popupEls.emergencyStop.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_STOP'));popupEls.emergencyResume.addEventListener('click',()=>popupEmergencyPrompt(true,{resume:true}));popupEls.emergencyRetry.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_RETRY'));popupEls.emergencyClear.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_END'));
+popupEls.toggle.addEventListener('change',()=>void popupTogglePage());popupEls.readerToggle.addEventListener('click',()=>void popupToggleReader());popupEls.siteAuto.addEventListener('change',()=>void popupToggleSite());popupEls.siteHintDismiss.addEventListener('click',()=>void popupDismissSiteHint());popupEls.sentenceGroups.addEventListener('change',()=>void popupToggleSentenceGroups());popupEls.options.addEventListener('click',()=>popupOpenOptions());popupEls.repairService.addEventListener('click',()=>popupOpenOptions('service'));popupEls.emergencyOpen.addEventListener('click',()=>popupEmergencyPrompt(true));popupEls.emergencyCancel.addEventListener('click',()=>popupEmergencyPrompt(false));popupEls.emergencyStart.addEventListener('click',()=>void popupEmergencyStart());popupEls.emergencyStop.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_STOP'));popupEls.emergencyResume.addEventListener('click',()=>popupEmergencyPrompt(true,{resume:true}));popupEls.emergencyRetry.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_RETRY'));popupEls.emergencyClear.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_END'));
 popupEls.emergencyConfirm.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();popupEmergencyPrompt(false);}});
 chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local'||!changes.settings)return;void Promise.all([request('STATE_GET'),request('AUTOMATION_GET',{tabId:popupTab?.id}).catch(()=>null)]).then(([state,automation])=>{popupState=state;if(automation)popupAutomation=automation;popupRender();}).catch(()=>{});});
 void popupInit().then(()=>setTimeout(()=>void popupWatchPage(),1000));

@@ -1,4 +1,6 @@
 import {expect,test} from 'bun:test';
+import {Window} from 'happy-dom';
+import {readFileSync} from 'node:fs';
 import {ALL_HOSTS,DEFAULT_KEYWORD_HINTS,KEYWORD_HINT_DISMISS_LIMIT,KEYWORD_PATTERN,dismissKeywordOrigin,hostKeyword,normalizeKeywordHints,registrationMatches,requiredPermissionOrigins,resolveAutomation,validateAutomation,validateVideo} from '../extension/activation.js';
 import {normalizeSettings} from '../extension/shared.js';
 
@@ -99,7 +101,73 @@ test('popup preserves the clicked site choice while rendering its busy state',as
     if(previousDocument===undefined)delete globalThis.document;else globalThis.document=previousDocument;
   }
 });
-
+for(const moveFocus of [false,true])test('popup '+(moveFocus?'preserves a new keyboard target':'restores page-toggle focus')+' after an asynchronous page action',async()=>{
+  const previousChrome=globalThis.chrome,previousDocument=globalThis.document;
+  const window=new Window({url:'https://popup.example/',settings:{disableJavaScriptFileLoading:true,disableCSSFileLoading:true}});
+  window.document.body.innerHTML=readFileSync(new URL('../extension/ui/popup.html',import.meta.url),'utf8');
+  const automation={allSites:false,sites:[],videoSites:false};
+  let release,enabled=false;
+  const pending=new Promise(resolve=>{release=resolve;});
+  globalThis.document=window.document;
+  globalThis.chrome={runtime:{async sendMessage(message){
+    if(message.type==='STATE_GET')return{ok:true,data:{settings:{assistanceMode:'on-demand'},providerConfigured:false}};
+    if(message.type==='PAGE_UI_INJECT')await pending;
+    return{ok:true,data:{automation,siteRule:null}};
+  }},storage:{onChanged:{addListener(){}}},tabs:{query:async()=>[{id:7,url:'https://docs.example/read'}],async sendMessage(_id,message){
+    if(message.type==='SS_SET_ENABLED')enabled=message.enabled;
+    return{ok:true,data:{enabled}};
+  }}};
+  try{
+    await import('../extension/ui/popup.js?focus-regression-'+moveFocus);
+    await new Promise(resolve=>setTimeout(resolve,0));
+    const toggle=window.document.querySelector('#toggle-page'),options=window.document.querySelector('#open-options');
+    toggle.focus();toggle.click();
+    // Chromium moves focus to the body when the busy render disables the control.
+    toggle.blur();
+    if(moveFocus)options.focus();
+    release();await new Promise(resolve=>setTimeout(resolve,0));
+    expect(window.document.activeElement).toBe(moveFocus?options:toggle);
+  }finally{
+    release();await window.happyDOM.abort();
+    if(previousChrome===undefined)delete globalThis.chrome;else globalThis.chrome=previousChrome;
+    if(previousDocument===undefined)delete globalThis.document;else globalThis.document=previousDocument;
+  }
+});
+for(const enabled of [false,true])test('popup reading switch restores '+(enabled?'enabled':'disabled')+' state after a rejected page action',async()=>{
+  const previousChrome=globalThis.chrome,previousDocument=globalThis.document;
+  const window=new Window({url:'https://popup.example/',settings:{disableJavaScriptFileLoading:true,disableCSSFileLoading:true}});
+  window.document.body.innerHTML=readFileSync(new URL('../extension/ui/popup.html',import.meta.url),'utf8');
+  const automation={allSites:false,sites:[],videoSites:false};
+  let release;
+  const pending=new Promise(resolve=>{release=resolve;});
+  globalThis.document=window.document;
+  globalThis.chrome={runtime:{async sendMessage(message){
+    if(message.type==='STATE_GET')return{ok:true,data:{settings:{assistanceMode:'on-demand'},providerConfigured:false}};
+    return{ok:true,data:{automation,siteRule:null}};
+  }},storage:{onChanged:{addListener(){}}},tabs:{query:async()=>[{id:7,url:'https://docs.example/read'}],async sendMessage(_id,message){
+    if(message.type==='SS_SET_ENABLED'){await pending;return{ok:false,error:'当前页面拒绝更新，请刷新后重试。'};}
+    return{ok:true,data:{enabled}};
+  }}};
+  try{
+    await import('../extension/ui/popup.js?switch-rejection-'+enabled);
+    await new Promise(resolve=>setTimeout(resolve,0));
+    const toggle=window.document.querySelector('#toggle-page');
+    expect(toggle.checked).toBe(enabled);
+    toggle.click();
+    await new Promise(resolve=>setTimeout(resolve,0));
+    expect(toggle.disabled).toBe(true);
+    release();await new Promise(resolve=>setTimeout(resolve,0));
+    expect(toggle.checked).toBe(enabled);
+    expect(toggle.disabled).toBe(false);
+    const error=window.document.querySelector('#action-error');
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain('当前页面拒绝更新');
+  }finally{
+    release();await window.happyDOM.abort();
+    if(previousChrome===undefined)delete globalThis.chrome;else globalThis.chrome=previousChrome;
+    if(previousDocument===undefined)delete globalThis.document;else globalThis.document=previousDocument;
+  }
+});
 
 test('popup renders the complete bilingual snapshot and confirms retained-session resume',async()=>{
   const previousChrome=globalThis.chrome,previousDocument=globalThis.document;

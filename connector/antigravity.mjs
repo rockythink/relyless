@@ -13,6 +13,7 @@ import {
 import {diagnosticError} from '../extension/diagnostics.mjs';
 import {SENTENCE_GROUPS_INSTRUCTIONS,SENTENCE_GROUPS_SCHEMA,normalizeSentenceGroupItems,prepareSentenceGroupItems,normalizeSentenceGroupResponse} from '../extension/sentence-groups.mjs';
 import {SUMMARY_INSTRUCTIONS,SUMMARY_SCHEMA,PERSONALIZATION_INSTRUCTIONS,PERSONALIZATION_SCHEMA} from '../extension/personalization.mjs';
+import {normalizeTranslationProgress} from '../extension/assistance-stream.mjs';
 
 const DEFAULT_TIMEOUT_MS = 90_000;
 const MAX_WORK_ITEMS = 3;
@@ -516,7 +517,7 @@ export class AntigravityClient extends EventEmitter {
       payload: { items: selected, ...(preferences ? { personalization: preferences } : {}) },
       schema: EMERGENCY_SCHEMA,
       parse: value => page ? inspectPageTranslationResult(value, selected) : normalizeEmergencyResult(value, selected),
-      onProgress: page ? undefined : onProgress,
+      onProgress: typeof onProgress === 'function' ? value => { const progress = normalizeTranslationProgress({items:value.items}, selected); if (progress) return onProgress(progress); } : undefined,
     });
   }
 

@@ -30,9 +30,9 @@ function parsePrefix(text,{partialStrings=false}={}) {
     if(!partial)return INCOMPLETE;
     try{let value=JSON.parse(text.slice(start,safeEnd)+'"');const last=value.charCodeAt(value.length-1);if(last>=0xd800&&last<=0xdbff)value=value.slice(0,-1);return{value,complete:false};}catch{return INVALID;}
   };
-  const value=depth=>{
+  const value=(depth,partial=partialStrings)=>{
     ws();if(at>=text.length)return INCOMPLETE;if(depth>8)return INVALID;
-    if(text[at]==='"')return string(partialStrings);
+    if(text[at]==='"')return string(partial);
     if(text[at]==='{')return object(depth);
     if(text[at]==='[')return array(depth);
     for(const[literal,result]of [['null',null],['true',true],['false',false]]){const remaining=text.slice(at);if(remaining.startsWith(literal)){at+=literal.length;return result;}if(literal.startsWith(remaining))return INCOMPLETE;}
@@ -51,7 +51,7 @@ function parsePrefix(text,{partialStrings=false}={}) {
     while(true){
       ws();if(at>=text.length)return{value:result,complete:false};const key=string();if(key===INCOMPLETE)return{value:result,complete:false};if(key===INVALID||keys.has(key))return INVALID;keys.add(key);
       ws();if(at>=text.length)return{value:result,complete:false};if(text[at++]!==':')return INVALID;
-      const item=value(depth+1);if(item===INVALID)return INVALID;if(item===INCOMPLETE)return{value:result,complete:false};
+      const item=value(depth+1,partialStrings&&key!=='id');if(item===INVALID)return INVALID;if(item===INCOMPLETE)return{value:result,complete:false};
       if(item&&typeof item==='object'&&Object.hasOwn(item,'complete')){result[key]=item.value;if(!item.complete)return{value:result,complete:false};}else result[key]=item;
       ws();if(at>=text.length)return{value:result,complete:false};const separator=text[at++];if(separator==='}')return{value:result,complete:true};if(separator!==',')return INVALID;
     }
@@ -161,7 +161,7 @@ export function translationProgress(text,items){
   if(typeof text!=='string'||text.length>CONTENT_LIMIT)return null;
   const parsed=parsePrefix(text,{partialStrings:true});if(parsed===INVALID)return null;
   const root=parsed.value;if(Object.keys(root).some(key=>key!=='items')||!Array.isArray(root.items)||!Array.isArray(items)||root.items.length>items.length)return null;
-  if(parsed.complete){try{return normalizeTranslationProgress(normalizeEmergencyResult(root,items),items);}catch{return null;}}
+  if(parsed.complete){try{return normalizeTranslationProgress(normalizeEmergencyResult(root,items.map(({id,text})=>({id,text}))),items);}catch{return null;}}
   const progress=[],seen=new Set();
   for(const item of root.items){
     if(!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).some(key=>!['id','translation'].includes(key)))return null;
