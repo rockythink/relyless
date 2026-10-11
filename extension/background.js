@@ -517,7 +517,7 @@ async function pruneBackgroundQueue(){
 async function cancelObsoleteAutomaticRequests(){
   await Promise.all([...automaticApiRequests].map(async pending=>{
     try{await pending.checkRequest();}catch(error){
-      if(['STALE','CANCELLED'].includes(error?.code)&&automaticApiRequests.has(pending)&&!pending.controller.signal.aborted)pending.controller.abort(Object.assign(new Error('本页自动请求已暂停，优先显示全文译文。'),{name:'AbortError',code:'STALE'}));
+      if(['STALE','CANCELLED'].includes(diagnosticError(error).code)&&automaticApiRequests.has(pending)&&!pending.controller.signal.aborted)pending.controller.abort(Object.assign(new Error('本页自动请求已暂停，优先显示全文译文。'),{name:'AbortError',code:'STALE'}));
     }
   }));
 }
@@ -721,15 +721,33 @@ async function sentenceGroupsBatch(message,sender){
   const service=state.settings.providerKind==='api'?activeApiProvider(state.settings):state.settings.subscriptionModel;
   if(!configured(state.settings))throw new Error('请先连接服务；原文保持不变。');if(state.settings.providerKind==='api')await requireApiPermission(service);
   await sentenceGroupCacheReady;
-  const serviceKey=await hashValue(JSON.stringify([state.settings.providerKind,service])),keys=await Promise.all(items.map(item=>hashValue(JSON.stringify([SENTENCE_GROUPS_POLICY_VERSION,serviceKey,item.sentence])))),groupsByKey=new Map(),newItems=[],claimed=new Set(),now=Date.now();
-  for(let index=0;index<items.length;index++){const cached=sentenceGroupCache.get(keys[index]);if(cached&&now-cached.at<SENTENCE_GROUP_CACHE_TTL)groupsByKey.set(keys[index],cached.groups);else if(!sentenceGroupInFlight.has(keys[index])&&!claimed.has(keys[index])){claimed.add(keys[index]);newItems.push({item:items[index],key:keys[index]});}}
-  if(newItems.length){
-    const operation=withBackgroundSlot(async()=>{const trace=diagnostics.trace(message),sourceItems=newItems.map(value=>value.item);let result;if(isSubscriptionKind(state.settings.providerKind))result=await providerOperation(()=>sentenceGroupsSubscription(sourceItems,state.settings.subscriptionModel,trace?.traceId,nativeKind(state.settings)),trace,state.settings.subscriptionModel,nativeKind(state.settings),JSON.stringify(sourceItems).length);else{result=await apiRequest(activeApiProvider(state.settings), {items:prepareSentenceGroupItems(sourceItems)}, SENTENCE_GROUPS_INSTRUCTIONS, SENTENCE_GROUPS_SCHEMA, {automatic:true,trace,beforeRequest:()=>requireLiveConsumer(backgroundGuards.get(operation))});}
-      try{const validated=isSubscriptionKind(state.settings.providerKind)?result:normalizeSentenceGroupsResult(result,sourceItems),mapped=new Map(validated.items.map((value,index)=>[newItems[index].key,value.groups]));await diagnostics.event(trace,'validation','ok');if(generation===providerGeneration){const at=Date.now();for(const [key,groups]of mapped){sentenceGroupCache.delete(key);sentenceGroupCache.set(key,{groups,at});}while(sentenceGroupCache.size>SENTENCE_GROUP_CACHE_LIMIT)sentenceGroupCache.delete(sentenceGroupCache.keys().next().value);await persistSentenceGroupCache(generation).catch(()=>{});}return mapped;}catch(error){await diagnostics.event(trace,'validation','error',diagnosticError(error));throw error;}},guard);
-    for(const value of newItems)sentenceGroupInFlight.set(value.key,operation);
-    void operation.finally(()=>{for(const value of newItems)if(sentenceGroupInFlight.get(value.key)===operation)sentenceGroupInFlight.delete(value.key);}).catch(()=>{});
+  const serviceKey=await hashValue(JSON.stringify([state.settings.providerKind,service])),keys=await Promise.all(items.map(item=>hashValue(JSON.stringify([SENTENCE_GROUPS_POLICY_VERSION,serviceKey,item.sentence])))),groupsByKey=new Map();
+  // A late explicit caller may join an already-aborted automatic flight. Re-adopt once,
+  // keeping the chosen route and valid shared results; provider failures are never retried here.
+  for(let adoption=0;adoption<2;adoption++){
+    const newItems=[],claimed=new Set(),now=Date.now();let cancelled=false;
+    for(let index=0;index<items.length;index++){if(groupsByKey.has(keys[index]))continue;const cached=sentenceGroupCache.get(keys[index]);if(cached&&now-cached.at<SENTENCE_GROUP_CACHE_TTL)groupsByKey.set(keys[index],cached.groups);else if(!sentenceGroupInFlight.has(keys[index])&&!claimed.has(keys[index])){claimed.add(keys[index]);newItems.push({item:items[index],key:keys[index]});}}
+    if(newItems.length){
+      const operation=withBackgroundSlot(async()=>{const trace=diagnostics.trace(message),sourceItems=newItems.map(value=>value.item);let result;if(isSubscriptionKind(state.settings.providerKind))result=await providerOperation(()=>sentenceGroupsSubscription(sourceItems,state.settings.subscriptionModel,trace?.traceId,nativeKind(state.settings)),trace,state.settings.subscriptionModel,nativeKind(state.settings),JSON.stringify(sourceItems).length);else{result=await apiRequest(activeApiProvider(state.settings), {items:prepareSentenceGroupItems(sourceItems)}, SENTENCE_GROUPS_INSTRUCTIONS, SENTENCE_GROUPS_SCHEMA, {automatic:true,trace,beforeRequest:()=>requireLiveConsumer(backgroundGuards.get(operation))});}
+        try{const validated=isSubscriptionKind(state.settings.providerKind)?result:normalizeSentenceGroupsResult(result,sourceItems),mapped=new Map(validated.items.map((value,index)=>[newItems[index].key,value.groups]));await diagnostics.event(trace,'validation','ok');if(generation===providerGeneration){const at=Date.now();for(const [key,groups]of mapped){sentenceGroupCache.delete(key);sentenceGroupCache.set(key,{groups,at});}while(sentenceGroupCache.size>SENTENCE_GROUP_CACHE_LIMIT)sentenceGroupCache.delete(sentenceGroupCache.keys().next().value);await persistSentenceGroupCache(generation).catch(()=>{});}return mapped;}catch(error){await diagnostics.event(trace,'validation','error',diagnosticError(error));throw error;}},guard);
+      for(const value of newItems)sentenceGroupInFlight.set(value.key,operation);
+      void operation.finally(()=>{for(const value of newItems)if(sentenceGroupInFlight.get(value.key)===operation)sentenceGroupInFlight.delete(value.key);}).catch(()=>{});
+    }
+    await Promise.all(keys.map(async key=>{
+      if(groupsByKey.has(key))return;
+      const operation=sentenceGroupInFlight.get(key);if(!operation)throw new Error('阅读解构结果已过期，请重试。');
+      backgroundGuards.get(operation).add(guard);
+      let result;
+      try{result=await operation;}catch(error){
+        if(message.explicit!==true||adoption!==0||!['STALE','CANCELLED'].includes(error?.code))throw error;
+        await guard();
+        if(sentenceGroupInFlight.get(key)===operation)sentenceGroupInFlight.delete(key);
+        cancelled=true;return;
+      }
+      const groups=result?.get(key);if(!groups)throw new Error('阅读解构服务未返回完整结果。');groupsByKey.set(key,groups);
+    }));
+    if(!cancelled)break;
   }
-  await Promise.all(keys.map(async key=>{if(groupsByKey.has(key))return;const operation=sentenceGroupInFlight.get(key);if(!operation)throw new Error('阅读解构结果已过期，请重试。');backgroundGuards.get(operation).add(guard);const result=await operation,groups=result?.get(key);if(!groups)throw new Error('阅读解构服务未返回完整结果。');groupsByKey.set(key,groups);}));
   await guard();
   return {items:items.map((item,index)=>({id:item.id,groups:groupsByKey.get(keys[index])}))};
 }

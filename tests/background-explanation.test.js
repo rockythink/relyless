@@ -512,7 +512,7 @@ async function pageTranslationPriorityFixture(run,{routing=false,domainMode}={})
     });
     await import('../extension/background.js?translation-priority='+crypto.randomUUID());
     for(const id of pages.keys()){await isolatedSend(fixture,{type:'PAGE_UI_INJECT',tabId:id});await isolatedSend(fixture,{type:'SENTENCE_GROUPS_SET',tabId:id,enabled:true});}
-    await run({fixture,page,structure,domain,begin,translate,track,requests,gate,until});
+    await run({fixture,pages,page,structure,domain,begin,translate,track,requests,gate,until});
   }finally{gate.resolve();await Promise.all(pending);globalThis.chrome=previous;globalThis.fetch=previousFetch;}
 }
 
@@ -546,6 +546,41 @@ test('page translation preserves explicitly requested domain detection',async()=
     expect(explicit.value.domain).toBe('data');expect(translation.value.items[0].translation).toBe('应急译文');
   },{domainMode:'api'});
 });
+test('new-page translation cancels an old-page routing transport only after navigation and waits for settlement',async()=>{
+  await pageTranslationPriorityFixture(async({fixture,pages,structure,begin,translate,requests,until})=>{
+    const settlement=Promise.withResolvers(),fetch=globalThis.fetch;
+    globalThis.fetch=async(...args)=>{try{return await fetch(...args);}catch(error){await settlement.promise;throw error;}};
+    try{
+      const automatic=structure(91,'When the old page navigates away, its routing judgment becomes obsolete.');await until(()=>requests.length===1);
+      expect(requests[0].kind).toBe('judge');pages.get(91).url='https://isolated.example/new-reading';
+      await isolatedSend(fixture,{type:'PAGE_UI_INJECT',tabId:91});
+      const {token}=await begin(91),translation=translate(91,token);
+      expect(requests[0].signal.aborted).toBe(true);expect(requests[0].signal.reason.code).toBe('STALE');
+      await until(()=>fixture.local.diagnostics.events.some(row=>row.operation==='EMERGENCY_TRANSLATE'&&row.stage==='request'&&row.status==='start'));
+      expect(automatic.settled).not.toBe(true);expect(translation.settled).not.toBe(true);expect(requests.map(row=>row.kind)).toEqual(['judge']);
+      settlement.resolve();await until(()=>automatic.settled&&translation.settled);
+      expect(automatic.error).toBeInstanceOf(Error);expect(translation.value.items).toEqual([{id:'e91',translation:'应急译文'}]);
+      expect(requests.map(row=>row.kind)).toEqual(['judge','translation']);expect(requests[1].url.startsWith('https://primary.example/')).toBe(true);
+      const events=fixture.local.diagnostics.events;expect(events.filter(row=>row.stage==='provider'&&row.status==='cancelled').map(row=>row.code)).toEqual(['STALE']);
+      expect(events.filter(row=>row.code==='FAILOVER'||row.code==='TIMEOUT')).toEqual([]);
+    }finally{settlement.resolve();}
+  },{routing:true});
+});
+
+for(const failure of [new Error('无法读取服务配置。'),Object.assign(new Error('服务授权已过期。'),{code:'AUTH'})])test('page translation retains a non-stale routing guard error: '+failure.message,async()=>{
+  await pageTranslationPriorityFixture(async({fixture,structure,begin,translate,requests,gate,until})=>{
+    const automatic=structure(92,'When configuration fails, preserve the real guard error.');await until(()=>requests.length===1);
+    const getTab=fixture.api.tabs.get;fixture.api.tabs.get=async id=>{if(id===92)throw failure;return getTab(id);};
+    const {token}=await begin(91),translation=translate(91,token);
+    expect(requests[0].signal.aborted).toBe(false);expect(automatic.settled).not.toBe(true);
+    gate.resolve();await Promise.all([automatic.done,translation.done]);
+    expect(automatic.error?.message).toBe(failure.message);expect(translation.value.items[0].translation).toBe('应急译文');
+    expect(requests.map(row=>row.kind)).toEqual(['judge','translation']);
+    expect(fixture.local.diagnostics.events.filter(row=>row.stage==='provider'&&row.status==='cancelled'||row.code==='FAILOVER'||row.code==='TIMEOUT')).toEqual([]);
+  },{routing:true});
+});
+
+
 test('confirmed page translation aborts obsolete automatic API work before its provider finishes',async()=>{
   await pageTranslationPriorityFixture(async({fixture,page,structure,begin,translate,track,requests,until})=>{
     const automatic=structure(91,'When the connection recovers, the client retries.');await until(()=>requests.length===1);
@@ -605,6 +640,57 @@ test('cancelled automatic requests remain in cost accounting without provider fa
     await isolatedSend(fixture,{type:'STATE_PATCH',patch:{usageBudget:{monthlyTokens:translationTokens}}});
     const estimate=await isolatedSend(fixture,{type:'EMERGENCY_BEGIN',tabId:91,url:'https://isolated.example/read',chars:200,confirmed:false});
     expect(estimate.budgetExceeded).toBe(true);expect(estimate.monthlyUsed).toBe(translationTokens+tokens(cancelled));expect(estimate.monthlyUsed).toBeGreaterThan(translationTokens);
+  });
+});
+
+for(const scenario of ['takeover','navigation'])test('late explicit sentence authorization adopts fresh inference after automatic '+scenario+' cancellation',async()=>{
+  await pageTranslationPriorityFixture(async({fixture,pages,structure,begin,requests,gate,until})=>{
+    const sentence='When authorization waits, the explicit explanation must still succeed.',authorization=Promise.withResolvers(),transport=Promise.withResolvers(),joined=Promise.withResolvers(),contains=fixture.api.permissions.contains,fetch=globalThis.fetch,digest=crypto.subtle.digest;
+    let authorizing=false,delayAuthorization=false;
+    globalThis.fetch=async(url,options)=>{try{return await fetch(url,options);}catch(error){if(['STALE','CANCELLED'].includes(error?.code))await transport.promise;throw error;}};
+    fixture.api.permissions.contains=async options=>{if(delayAuthorization){delayAuthorization=false;authorizing=true;await authorization.promise;}return contains(options);};
+    try{
+      const automatic=structure(91,sentence);await until(()=>requests.length===1);delayAuthorization=true;
+      // The last key hash finishes before flight adoption; the next turn runs after its microtasks.
+      crypto.subtle.digest=async(...args)=>{const result=await digest.apply(crypto.subtle,args);if(new TextDecoder().decode(args[1]).endsWith(JSON.stringify(sentence)+']'))setTimeout(()=>joined.resolve(),0);return result;};
+      const explicitId=scenario==='navigation'?92:91,explicit=structure(explicitId,sentence,true);await until(()=>authorizing);
+      if(scenario==='navigation'){pages.get(91).url='https://isolated.example/next';await isolatedSend(fixture,{type:'PAGE_UI_INJECT',tabId:91});}
+      await begin(91);expect(requests[0].signal.aborted).toBe(true);
+      authorization.resolve();await joined.promise;transport.resolve();gate.resolve();await Promise.all([automatic.done,explicit.done]);
+      expect(automatic.error).toBeInstanceOf(Error);expect(explicit.error).toBeUndefined();expect(explicit.value.items[0].id).toBe('s'+explicitId);expect(explicit.value.items[0].groups.some(group=>group.role==='predicate')).toBe(true);
+      expect(requests.map(row=>row.kind)).toEqual(['structure','structure']);expect(requests.every(row=>row.url.startsWith('https://primary.example/'))).toBe(true);
+      expect(fixture.local.diagnostics.events.filter(row=>row.code==='FAILOVER'||row.code==='TIMEOUT')).toEqual([]);
+    }finally{authorization.resolve();transport.resolve();gate.resolve();crypto.subtle.digest=digest;globalThis.fetch=fetch;fixture.api.permissions.contains=contains;}
+  });
+});
+
+test('an explicit sentence caller joining automatic inference keeps the shared flight live',async()=>{
+  await pageTranslationPriorityFixture(async({structure,begin,requests,gate,until})=>{
+    const sentence='When an explicit reader joins, automatic takeover must keep the answer.',joined=Promise.withResolvers(),digest=crypto.subtle.digest;
+    try{
+      const automatic=structure(91,sentence);await until(()=>requests.length===1);
+      crypto.subtle.digest=async(...args)=>{const result=await digest.apply(crypto.subtle,args);if(new TextDecoder().decode(args[1]).endsWith(JSON.stringify(sentence)+']'))setTimeout(()=>joined.resolve(),0);return result;};
+      const explicit=structure(91,sentence,true);await joined.promise;await begin(91);expect(requests[0].signal.aborted).toBe(false);
+      gate.resolve();await Promise.all([automatic.done,explicit.done]);expect(automatic.error).toBeInstanceOf(Error);expect(explicit.value.items[0].id).toBe('s91');expect(requests.map(row=>row.kind)).toEqual(['structure']);
+    }finally{gate.resolve();crypto.subtle.digest=digest;}
+  });
+});
+
+for(const failure of ['authentication','timeout','malformed','provider'])test('explicit sentence adoption never retries '+failure+' failure',async()=>{
+  await pageTranslationPriorityFixture(async({fixture,structure,begin,requests,gate,until})=>{
+    await isolatedSend(fixture,{type:'STATE_PATCH',patch:{apiServices:fixture.local.settings.apiServices.map(service=>({...service,fallbackServiceId:''}))}});
+    const fetch=globalThis.fetch;
+    globalThis.fetch=async(url,options)=>{
+      const response=await fetch(url,options),body=JSON.parse(options.body);if(body.response_format?.json_schema?.name==='relyless_capability')return response;
+      if(failure==='timeout')throw new DOMException('Aborted','AbortError');
+      if(failure==='authentication'||failure==='provider')return Response.json({error:{message:'fixture '+failure}}, {status:failure==='authentication'?401:503});
+      return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({items:[]})}}]});
+    };
+    try{
+      const explicit=structure(91,'When the provider fails, retain the real failure category.',true);await until(()=>requests.length===1);await begin(91);gate.resolve();await explicit.done;
+      expect(explicit.error).toBeInstanceOf(Error);expect(requests.map(row=>row.kind)).toEqual(['structure']);expect(requests[0].signal.aborted).toBe(false);
+      expect(fixture.local.diagnostics.events.filter(row=>row.code==='FAILOVER')).toEqual([]);
+    }finally{gate.resolve();globalThis.fetch=fetch;}
   });
 });
 
