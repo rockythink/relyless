@@ -207,10 +207,10 @@ test('a valid-looking delta without response.completed is never accepted',async(
 const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};};
 const remainsPending=async promise=>expect(await Promise.race([promise.then(()=>false,()=>false),new Promise(done=>setTimeout(()=>done(true),40))])).toBe(true);
 for(const action of ['cancelLogin','logout','close'])for(const revokeStatus of [200,503])test('owned callback cleanup '+action+' waits for revocation '+revokeStatus+' without retaining login ownership',async()=>{
-  let paused=false;const entered=deferred(),gate=deferred(),revoking=deferred(),revokeGate=deferred();
-  const f=await fixture({override:async(target,init)=>{if(paused&&target.pathname==='/keys'){entered.resolve();await gate.promise;}if(paused&&target.pathname==='/revoke'&&new URLSearchParams(init.body).get('token')==='refresh-2'){revoking.resolve();await revokeGate.promise;return new Response(null,{status:revokeStatus});}}});let outcome;
+  let paused=false;const entered=deferred(),gate=deferred(),revoking=deferred(),revokeGate=deferred(),storedRevoking=deferred();
+  const f=await fixture({override:async(target,init)=>{if(paused&&target.pathname==='/keys'){entered.resolve();await gate.promise;}if(paused&&target.pathname==='/revoke'){const token=new URLSearchParams(init.body).get('token');if(token==='refresh-1')storedRevoking.resolve(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')));if(token==='refresh-2'){revoking.resolve();await revokeGate.promise;return new Response(null,{status:revokeStatus});}}}});let outcome;
   try{await f.authorize();await f.client.cancelLogin();paused=true;const authorization=f.authorize();await entered.promise;outcome=f.client[action]().then(value=>({value}),error=>({error}));await remainsPending(outcome);expect(f.client.status().loginPending).toBe(false);
-    gate.resolve();await revoking.promise;await remainsPending(outcome);if(action==='logout')expect(JSON.parse(await readFile(join(f.dir,'siwc.json'),'utf8')).accounts[clientId].refresh_token).toBeUndefined();
+    gate.resolve();await revoking.promise;await remainsPending(outcome);if(action==='logout')expect((await storedRevoking.promise).accounts[clientId].refresh_token).toBeUndefined();
     revokeGate.resolve();const result=await outcome;expect((await authorization).response.status).toBe(400);
     if(revokeStatus===503)expect(result.error?.message).toContain('远程撤销未确认');else expect(result.error).toBeUndefined();
     if(action==='logout')expect(f.client.status().authenticated).toBe(false);
