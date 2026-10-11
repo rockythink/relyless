@@ -491,30 +491,61 @@ test('passive reading telemetry is rejected and removed from the export',async()
 });
 
 
-async function pageTranslationPriorityFixture(run,{routing=false}={}){
+async function pageTranslationPriorityFixture(run,{routing=false,domainMode}={}){
   const previous=globalThis.chrome,previousFetch=globalThis.fetch,gate=Promise.withResolvers(),pending=[],requests=[];
   const services=[{id:'primary',name:'Primary',providerId:'openai-compatible',baseUrl:'https://primary.example/v1',model:'priority-fixture',apiKey:'fixture-key',options:{thinking:'off'},fallbackServiceId:'fallback'},{id:'fallback',name:'Fallback',providerId:'openai-compatible',baseUrl:'https://fallback.example/v1',model:'fallback-fixture',apiKey:'fallback-key',options:{thinking:'off'}}];
-  const data={wordSchemaVersion:5,productSchemaVersion:1,words:[],settings:{providerKind:'api',apiServices:services,activeApiServiceId:'primary',assistanceMode:'ambient',requestConcurrency:1,rememberSupport:false,...(routing?{domainDetection:{jevApiKey:'judge-key',jevModel:'typesafe/jev-1.13.0',jevBaseUrl:'https://router.requesty.ai/v1'},routing:{enabled:true,operations:{assist:false,passage:false,emergency:false,conversation:false,sentenceGroups:true}}}:{})}},fixture=isolatedChrome(data,{id:'translation-priority'});
+  const data={wordSchemaVersion:5,productSchemaVersion:1,words:[],settings:{providerKind:'api',apiServices:services,activeApiServiceId:'primary',assistanceMode:'ambient',requestConcurrency:1,rememberSupport:false,...(routing?{domainDetection:{jevApiKey:'judge-key',jevModel:'typesafe/jev-1.13.0',jevBaseUrl:'https://router.requesty.ai/v1'},routing:{enabled:true,operations:{assist:false,passage:false,emergency:false,conversation:false,sentenceGroups:true}}}:{}),...(domainMode?{domainDetection:{mode:domainMode,useTranslationApi:true,apiModel:'priority-fixture',jevApiKey:'judge-key',jevModel:'typesafe/jev-1.13.0',jevBaseUrl:'https://router.requesty.ai/v1'}}:{})}},fixture=isolatedChrome(data,{id:'translation-priority'});
   const pages=new Map([91,92].map(id=>[id,{id,url:'https://isolated.example/read',active:true}])),page=id=>({url:pages.get(id).url,tab:{id},frameId:0});
   const until=async condition=>{for(let i=0;i<100;i++){if(condition())return;await new Promise(resolve=>setTimeout(resolve,0));}throw new Error('Translation priority did not settle');};
   const track=promise=>{const state={};state.done=promise.then(value=>{state.value=value;state.settled=true;},error=>{state.error=error;state.settled=true;});pending.push(state.done);return state;};
   const structure=(id,sentence,explicit=false)=>track(isolatedSend(fixture,{type:'SENTENCE_GROUPS_BATCH',explicit,items:[{id:'s'+id,sentence}]},page(id)));
   const begin=async id=>isolatedSend(fixture,{type:'EMERGENCY_BEGIN',tabId:id,url:pages.get(id).url,chars:200,confirmed:true});
   const translate=(id,token)=>track(isolatedSend(fixture,{type:'EMERGENCY_TRANSLATE',token,requestSeq:1,items:[pageItem('e'+id,'The client retries after the connection recovers.')]},page(id)));
+  const domain=(id,explicit=false)=>track(isolatedSend(fixture,{type:'RESOLVE_DOMAIN',explicit,title:'Data engineering',text:'Databases retain durable records and replicate transactions.'},page(id)));
   try{
     globalThis.chrome=fixture.api;fixture.api.tabs.get=async id=>({...pages.get(id)});
     globalThis.fetch=withCapabilityProbe(async(url,options)=>{
-      const judge=String(url).includes('router.requesty.ai'),payload=judge?null:JSON.parse(JSON.parse(options.body).messages[1].content),item=payload?.items?.[0],kind=judge?'judge':item?.sentence?(Object.hasOwn(item,'domain')?'support':'structure'):'translation';
+      const judge=String(url).includes('router.requesty.ai'),body=JSON.parse(options.body),payload=judge?null:JSON.parse(body.messages[1].content),item=payload?.items?.[0],kind=judge?(JSON.stringify(body).includes('Classify the English reading passage')?'domain':'judge'):payload?.text?'domain':item?.sentence?(Object.hasOwn(item,'domain')?'support':'structure'):'translation';
       requests.push({kind,url:String(url),signal:options.signal});
       if(kind!=='translation')await new Promise((resolve,reject)=>{const finish=(fn,value)=>{options.signal.removeEventListener('abort',abort);fn(value);},abort=()=>finish(reject,options.signal.reason||new DOMException('Aborted','AbortError'));gate.promise.then(()=>finish(resolve));if(options.signal.aborted)abort();else options.signal.addEventListener('abort',abort,{once:true});});
-      return judge?Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({tier:{selected:'routine'},confidence:{score:1}})}}]}):previousFetch(url,options);
+      return kind==='domain'?Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(judge?{domain:{selected:'data',confidence:1}}:{domain:'data'})}}]}):judge?Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({tier:{selected:'routine'},confidence:{score:1}})}}]}):previousFetch(url,options);
     });
     await import('../extension/background.js?translation-priority='+crypto.randomUUID());
     for(const id of pages.keys()){await isolatedSend(fixture,{type:'PAGE_UI_INJECT',tabId:id});await isolatedSend(fixture,{type:'SENTENCE_GROUPS_SET',tabId:id,enabled:true});}
-    await run({fixture,page,structure,begin,translate,track,requests,gate,until});
+    await run({fixture,page,structure,domain,begin,translate,track,requests,gate,until});
   }finally{gate.resolve();await Promise.all(pending);globalThis.chrome=previous;globalThis.fetch=previousFetch;}
 }
 
+for(const domainMode of ['api','jev'])test('page translation takes over automatic '+domainMode+' domain detection without caching cancellation',async()=>{
+  await pageTranslationPriorityFixture(async({fixture,domain,begin,translate,requests,until})=>{
+    const automatic=domain(91);await until(()=>requests.length===1);
+    const {token}=await begin(91),translation=translate(91,token);
+    await until(()=>automatic.settled&&translation.settled);
+    expect(requests[0].signal.aborted).toBe(true);expect(automatic.error).toBeInstanceOf(Error);
+    expect(translation.value.items[0].translation).toBe('应急译文');
+    const paused=domain(91);await paused.done;expect(paused.error).toBeInstanceOf(Error);expect(requests.map(row=>row.kind)).toEqual(['domain','translation']);
+    await isolatedSend(fixture,{type:'EMERGENCY_END',tabId:91,token});
+    const resumed=domain(91);await until(()=>requests.length===3);expect(requests[2].kind).toBe('domain');expect(requests[2].signal.aborted).toBe(false);
+  },{domainMode});
+});
+
+test('page translation preserves domain detection needed by another page',async()=>{
+  await pageTranslationPriorityFixture(async({fixture,domain,begin,translate,requests,gate,until})=>{
+    const first=domain(91);await until(()=>requests.length===1);const second=domain(92);
+    await until(()=>fixture.local.diagnostics.events.filter(row=>row.operation==='RESOLVE_DOMAIN'&&row.stage==='request'&&row.status==='start').length===2);
+    const {token}=await begin(91),translation=translate(91,token);expect(requests[0].signal.aborted).toBe(false);
+    gate.resolve();await Promise.all([first.done,second.done,translation.done]);
+    expect(first.error).toBeInstanceOf(Error);expect(second.value.domain).toBe('data');expect(translation.value.items[0].translation).toBe('应急译文');expect(requests.map(row=>row.kind)).toEqual(['domain','translation']);
+  },{domainMode:'api'});
+});
+
+test('page translation preserves explicitly requested domain detection',async()=>{
+  await pageTranslationPriorityFixture(async({domain,begin,translate,requests,gate,until})=>{
+    const explicit=domain(91,true);await until(()=>requests.length===1);const {token}=await begin(91),translation=translate(91,token);
+    expect(requests[0].signal.aborted).toBe(false);gate.resolve();await Promise.all([explicit.done,translation.done]);
+    expect(explicit.value.domain).toBe('data');expect(translation.value.items[0].translation).toBe('应急译文');
+  },{domainMode:'api'});
+});
 test('confirmed page translation aborts obsolete automatic API work before its provider finishes',async()=>{
   await pageTranslationPriorityFixture(async({fixture,page,structure,begin,translate,track,requests,until})=>{
     const automatic=structure(91,'When the connection recovers, the client retries.');await until(()=>requests.length===1);
