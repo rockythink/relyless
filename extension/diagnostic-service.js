@@ -45,7 +45,7 @@ export function createDiagnostics({storage,session,sync,nativeStatus}) {
       trace.provider=true;trace.metadata={...trace.metadata,provider:kind,modelRef:await fingerprint(model||''),providerRef:await fingerprint(address||kind)};
       const at=Date.now();await event(trace,'provider','start');
       try{const value=await operation();await event(trace,'provider','ok',{durationMs:Date.now()-at,...(typeof value==='string'?{outputChars:value.length}:{})});return value;}
-      catch(error){await event(trace,'provider','error',{...diagnosticError(error),durationMs:Date.now()-at});throw error;}
+      catch(error){const detail=diagnosticError(error),status=['STALE','CANCELLED','NOT_READY'].includes(detail.code)?'cancelled':'error';await event(trace,'provider',status,{...detail,durationMs:Date.now()-at});throw error;}
     },
     async render(message,sender){
       if(!Number.isInteger(sender.tab?.id)||sender.frameId!==0||!validTraceId(message.traceId)||!['ok','cancelled','error'].includes(message.status))throw new Error('诊断回执无效。');

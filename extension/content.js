@@ -1519,14 +1519,23 @@
     entry.error?.remove();const error=document.createElement('span');error.style.display='block';error.setAttribute('role','status');error.setAttribute('aria-live','polite');error.append(document.createTextNode('本段未译完 '));const button=document.createElement('button');button.type='button';button.textContent='重试这一段';button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();retryEmergency(unit);});error.addEventListener('pointerdown',event=>event.stopPropagation());error.append(button);entry.container.append(error);entry.error=error;
   }
   function inheritPageTranslationStyle(parent,container){
-    const style=getComputedStyle(parent);container.style.width='auto';container.style.minWidth='0';container.style.maxWidth='100%';container.style.webkitTextFillColor='currentColor';
-    for(const [name,value]of [['--ss-source-font',style.fontFamily],['--ss-source-size',style.fontSize],['--ss-source-leading','1.6'],['--ss-source-color',style.color==='rgba(0, 0, 0, 0)'?getComputedStyle(document.body).color:style.color]])container.style.setProperty(name,value);
+    const style=getComputedStyle(parent),heading=/^H[1-6]$/.test(parent.tagName),size=parseFloat(style.fontSize);
+    const leading=Math.max(heading?1.25:1.5,parseFloat(style.lineHeight)/size||0);
+    container.style.width='auto';container.style.minWidth='0';container.style.maxWidth='100%';container.style.webkitTextFillColor='currentColor';
+    for(const [name,value]of [['--ss-source-font',style.fontFamily],['--ss-source-size',style.fontSize],['--ss-source-leading',String(leading)],['--ss-source-weight',heading?style.fontWeight:'400'],['--ss-source-color',style.color==='rgba(0, 0, 0, 0)'?getComputedStyle(document.body).color:style.color]])if(container.style.getPropertyValue(name)!==value)container.style.setProperty(name,value);
+    container.dataset.shisuiTranslationLayout=heading?'heading':'body';
+    if(!heading||!container.textContent||container.querySelector('button')||!['block','flow-root'].includes(style.display))return;
+    // Measure text only; do not move or wrap the host heading to fit its translation.
+    const source=document.createRange(),translated=document.createRange();source.setStart(parent,0);source.setEndBefore(container);translated.selectNodeContents(container);
+    const sourceRect=source.getBoundingClientRect(),translatedRect=translated.getBoundingClientRect();
+    const available=parent.clientWidth-(parseFloat(style.paddingLeft)||0)-(parseFloat(style.paddingRight)||0);
+    if(sourceRect.height<=size*leading*1.2&&translatedRect.height<=size*leading*1.2&&sourceRect.width+translatedRect.width+size*.5<=available)container.dataset.shisuiTranslationLayout='inline-heading';
   }
   function renderEmergencyChunk(item,translation,session,preview=false) {
     const unit=item.unit;if(!validEmergencyUnit(unit,session)||unit.version!==item.version)return;
     let entry=session.containers.get(unit);
     if(!entry){const container=document.createElement('span');container.setAttribute(OWN,'emergency-translation');container.lang='zh-CN';container.setAttribute('aria-label','对应正文的中文翻译');container.style.display='block';unit.nodes.at(-1).after(container);entry={container,parts:new Map()};session.containers.set(unit,entry);inheritPageTranslationStyle(unit.parent,container);}
-    const part=entry.parts.get(item.index)||document.createElement('span');part.style.display='block';part.textContent=translation;part.setAttribute('aria-busy',String(preview));part.title=preview?'翻译中，尚未确认':'';entry.parts.set(item.index,part);entry.container.replaceChildren(...[...entry.parts].sort((a,b)=>a[0]-b[0]).map(([,node])=>node));
+    const part=entry.parts.get(item.index)||document.createElement('span');part.style.display=/^H[1-6]$/.test(unit.parent.tagName)?'inline':'block';part.textContent=translation;part.setAttribute('aria-busy',String(preview));part.title=preview?'翻译中，尚未确认':'';entry.parts.set(item.index,part);entry.container.replaceChildren(...[...entry.parts].sort((a,b)=>a[0]-b[0]).map(([,node])=>node));inheritPageTranslationStyle(unit.parent,entry.container);
   }
   const emergencyPending=new Set();
   function clearEmergencyPreviews(pending){

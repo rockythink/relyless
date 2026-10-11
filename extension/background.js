@@ -126,6 +126,7 @@ async function emergencyProvider(settings){const eff=settings.providerKind==='lo
 const injectedEmergencyPages=new Map();
 const workWaiters = [];
 const backgroundGuards = new WeakMap();
+const automaticApiRequests = new Set();
 let activeBackgroundWork = 0;
 let backgroundWorkLimit = 2;
 let providerGeneration = 0;
@@ -447,6 +448,8 @@ async function apiRequest(provider,payload,instructions,schema,{onContent,trace,
     const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),timeoutMs);
     const generation=providerGeneration;
     const checkRequest=async()=>{if(generation!==providerGeneration)throw staleWork();await beforeRequest?.();if(generation!==providerGeneration)throw staleWork();};
+    const pending={controller,checkRequest},automatic=beforeRequest&&[SUPPORT_INSTRUCTIONS,SUPPORT_CORRECTION_INSTRUCTIONS,SENTENCE_GROUPS_INSTRUCTIONS].includes(instructions);
+    if(automatic)automaticApiRequests.add(pending);
     const inputChars=JSON.stringify(payload).length+String(instructions||'').length+JSON.stringify(schema||null).length;
     let usageReport=null;
     const onUsage=usage=>{if(usage)usageReport={input:usage.input==null?usageReport?.input??null:(usageReport?.input||0)+usage.input,output:usage.output==null?usageReport?.output??null:(usageReport?.output||0)+usage.output};};
@@ -457,12 +460,13 @@ async function apiRequest(provider,payload,instructions,schema,{onContent,trace,
       if(!trace?.incognito)void recordModelUsage({provider:'api',service:current.name||current.model,model:current.model,operation:trace?.operation||'',ok:true,usage:usageReport,inputChars,outputChars:JSON.stringify(output).length,inputText:JSON.stringify(payload),outputText:JSON.stringify(output)});
       return output;
     } catch(error) {
+      if(['STALE','CANCELLED'].includes(controller.signal.reason?.code||error?.code))throw controller.signal.reason||error;
       if(!trace?.incognito)void recordModelUsage({provider:'api',service:current.name||current.model,model:current.model,operation:trace?.operation||'',ok:false,usage:usageReport,inputChars,inputText:JSON.stringify(payload)});
       let reported=error;
       if(controller.signal.aborted||error.name==='AbortError')reported=new Error(`请求超过 ${Math.round(timeoutMs/1000)} 秒，请稍后重试。${current.providerId==='stepfun'?'阶跃星辰推理较慢时，可把该服务的思考等级设为“低”。':''}`);else if(error instanceof TypeError)reported=new Error('无法连接服务，请检查网络、API 地址与服务跨域支持。');
       reported.failoverClass=classifyFailure(error);
       providerError=reported.message||'服务连接失败。';throw reported;
-    } finally {clearTimeout(timeout);}
+    } finally {clearTimeout(timeout);automaticApiRequests.delete(pending);}
   };
   let active=service;
   if(service.fallbackServiceId&&(serviceCooldowns.get(service.id)||0)>Date.now()){const cooled=await resolveFallback(service);if(cooled)active=cooled;}
@@ -505,6 +509,16 @@ async function pruneBackgroundQueue(){
   await Promise.all(workWaiters.slice().map(async work=>{
     try{await checkBackgroundWork(work);}catch(error){const index=workWaiters.indexOf(work);if(index>=0){workWaiters.splice(index,1);work.reject(error);}}
   }));
+}
+async function cancelObsoleteAutomaticRequests(){
+  await Promise.all([...automaticApiRequests].map(async pending=>{
+    try{await pending.checkRequest();}catch(error){
+      if(['STALE','CANCELLED'].includes(error?.code)&&automaticApiRequests.has(pending)&&!pending.controller.signal.aborted)pending.controller.abort(Object.assign(new Error('本页自动请求已暂停，优先显示全文译文。'),{name:'AbortError',code:'STALE'}));
+    }
+  }));
+}
+async function requireAutomaticReading(source){
+  const armed=await emergencySession(source.tabId);if(armed?.url===source.url)throw staleWork();
 }
 function withBackgroundSlot(operation,guard){
   let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;}),guards=new Set([guard]);
@@ -595,9 +609,9 @@ async function refreshRequestedDefinitions(items,decisions,state,expectedProvide
 }
 async function supportBatch(message,sender){
 
-  const source=await readingSource(sender);if(!source.active||await tabPaused(source.tabId))throw new Error('网页当前未活动，暂停自动提示。');const state=await load();if(state.settings.assistanceMode!=='ambient')throw new Error('当前为仅在需要时模式。');
+  const source=await readingSource(sender);if(!source.active||await tabPaused(source.tabId))throw new Error('网页当前未活动，暂停自动提示。');await requireAutomaticReading(source);const state=await load();if(state.settings.assistanceMode!=='ambient')throw new Error('当前为仅在需要时模式。');
   const article=normalizePreparationContext(message.article),supportGeneration=state.supportDataGeneration,generation=providerGeneration,base=normalizeSupportItems(message.items),history=!source.incognito&&canRemember(state)?state.words:[],readerByDomain=new Map(),requestPolicy=JSON.stringify(readingHistory.policy()),usedIds=new Set(base.map(item=>item.id)),owners=new Map(),tasks=[];
-  const guard=async()=>{const [latest,page]=await Promise.all([load(),readingSource(sender)]);if(requestPolicy!==JSON.stringify(readingHistory.policy())||generation!==providerGeneration||supportGeneration!==latest.supportDataGeneration||source.sourceHash!==page.sourceHash||!page.active||await tabPaused(source.tabId)||latest.settings.assistanceMode!=='ambient')throw staleWork();return latest;};
+  const guard=async()=>{const [latest,page]=await Promise.all([load(),readingSource(sender)]);if(requestPolicy!==JSON.stringify(readingHistory.policy())||generation!==providerGeneration||supportGeneration!==latest.supportDataGeneration||source.sourceHash!==page.sourceHash||!page.active||await tabPaused(source.tabId)||latest.settings.assistanceMode!=='ambient')throw staleWork();await requireAutomaticReading(page);return latest;};
   const nominations=analyzeBatch(base,analysisSettings(state),history);
   const enriched=base.map((item,index)=>{
     const nominated=nominations[index].terms;
@@ -693,13 +707,14 @@ async function sentenceGroupsBatch(message,sender){
   let state=await load();
   if(state.settings.providerKind==='local')state={...state,settings:dispatchSettings(state.settings)};
   if(state.settings.assistanceMode==='on-demand'&&message.explicit!==true)throw new Error('仅在需要时不自动解构正文；请先选择句子并主动请求。');
+  if(message.explicit!==true)await requireAutomaticReading(source);
   const items=normalizeSentenceGroupItems(message.items),generation=providerGeneration,modeGeneration=mode.generation;
   // 解构默认不判卷（频次高）；开启后按策略先选路，缓存键随之切换到实际服务。
   {const route=await chooseRoute('sentenceGroups',summarizeRequest('sentenceGroups',{text:items.map(item=>item.sentence).join('\n').slice(0,900)}),{settings:state.settings,guard:async()=>{},incognito:source.incognito});
    if(route.kind==='api'&&route.service)state={...state,settings:{...state.settings,providerKind:'api',activeApiServiceId:route.service.id}};
    else if(route.kind==='subscription')state={...state,settings:{...state.settings,providerKind:'chatgpt'}};}
   const service=state.settings.providerKind==='api'?activeApiProvider(state.settings):state.settings.subscriptionModel;
-  const guard=async()=>{const [latest,current,currentMode]=await Promise.all([load(),readingSource(sender),chrome.storage.session.get(modeKey).then(value=>value[modeKey])]);if(latest.settings.assistanceMode==='on-demand'&&message.explicit!==true||generation!==providerGeneration||state.supportDataGeneration!==latest.supportDataGeneration||current.sourceHash!==source.sourceHash||!current.active||await tabPaused(source.tabId)||!currentMode?.enabled||currentMode.page!==source.sourceHash||currentMode.generation!==modeGeneration)throw staleWork();};
+  const guard=async()=>{const [latest,current,currentMode]=await Promise.all([load(),readingSource(sender),chrome.storage.session.get(modeKey).then(value=>value[modeKey])]);if(latest.settings.assistanceMode==='on-demand'&&message.explicit!==true||generation!==providerGeneration||state.supportDataGeneration!==latest.supportDataGeneration||current.sourceHash!==source.sourceHash||!current.active||await tabPaused(source.tabId)||!currentMode?.enabled||currentMode.page!==source.sourceHash||currentMode.generation!==modeGeneration)throw staleWork();if(message.explicit!==true)await requireAutomaticReading(current);};
   if(!configured(state.settings))throw new Error('请先连接服务；原文保持不变。');if(state.settings.providerKind==='api')await requireApiPermission(service);
   await sentenceGroupCacheReady;
   const serviceKey=await hashValue(JSON.stringify([state.settings.providerKind,service])),keys=await Promise.all(items.map(item=>hashValue(JSON.stringify([SENTENCE_GROUPS_POLICY_VERSION,serviceKey,item.sentence])))),groupsByKey=new Map(),newItems=[],claimed=new Set(),now=Date.now();
@@ -796,10 +811,11 @@ async function emergencyBegin(message,sender){
   if(!isPdfViewerUrl(actual)&&!['http:','https:'].includes(new URL(actual).protocol))throw new Error('此网页不支持紧急翻译。');
   const estimate=await emergencyUsageEstimate(message.tabId,(await load(false)).settings,message.chars);
   if(estimate.budgetExceeded&&message.confirmed!==true)return {budgetExceeded:true,estimate:estimate.estimate,monthlyUsed:estimate.monthlyUsed,budget:estimate.budget};
-  return changeEmergency(async()=>{const loaded=await load(),state={...loaded,settings:dispatchSettings(loaded.settings)},generation=providerGeneration,token=crypto.randomUUID()+crypto.randomUUID(),provider=await emergencyProvider(state.settings),current=await chrome.tabs.get(message.tabId);
+  const result=await changeEmergency(async()=>{const loaded=await load(),state={...loaded,settings:dispatchSettings(loaded.settings)},generation=providerGeneration,token=crypto.randomUUID()+crypto.randomUUID(),provider=await emergencyProvider(state.settings),current=await chrome.tabs.get(message.tabId);
     if((current.url||sender?.url)!==message.url||generation!==providerGeneration)throw new Error('页面或服务已变化，请重新确认。');
     await chrome.storage.session.set({[emergencyKey(message.tabId)]:{token,url:message.url,generation:state.supportDataGeneration,provider,cancelledThrough:0}});
     return {token,estimate:estimate.estimate};});
+  await Promise.all([pruneBackgroundQueue(),cancelObsoleteAutomaticRequests()]);return result;
 }
 async function translateItems(items,settings,trace,{scope,onProgress,origin,sourceHash,incognito=false,guard=async()=>{}}) {
   if(!['page','passage'].includes(scope))throw new Error('无效的翻译范围。');

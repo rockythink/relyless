@@ -491,6 +491,69 @@ test('passive reading telemetry is rejected and removed from the export',async()
 });
 
 
+async function pageTranslationPriorityFixture(run){
+  const previous=globalThis.chrome,previousFetch=globalThis.fetch,gate=Promise.withResolvers(),pending=[],requests=[];
+  const services=[{id:'primary',name:'Primary',providerId:'openai-compatible',baseUrl:'https://primary.example/v1',model:'priority-fixture',apiKey:'fixture-key',options:{thinking:'off'},fallbackServiceId:'fallback'},{id:'fallback',name:'Fallback',providerId:'openai-compatible',baseUrl:'https://fallback.example/v1',model:'fallback-fixture',apiKey:'fallback-key',options:{thinking:'off'}}];
+  const data={wordSchemaVersion:5,productSchemaVersion:1,words:[],settings:{providerKind:'api',apiServices:services,activeApiServiceId:'primary',assistanceMode:'ambient',requestConcurrency:1,rememberSupport:false}},fixture=isolatedChrome(data,{id:'translation-priority'});
+  const pages=new Map([91,92].map(id=>[id,{id,url:'https://isolated.example/read',active:true}])),page=id=>({url:pages.get(id).url,tab:{id},frameId:0});
+  const until=async condition=>{for(let i=0;i<100;i++){if(condition())return;await new Promise(resolve=>setTimeout(resolve,0));}throw new Error('Translation priority did not settle');};
+  const track=promise=>{const state={};state.done=promise.then(value=>{state.value=value;state.settled=true;},error=>{state.error=error;state.settled=true;});pending.push(state.done);return state;};
+  const structure=(id,sentence,explicit=false)=>track(isolatedSend(fixture,{type:'SENTENCE_GROUPS_BATCH',explicit,items:[{id:'s'+id,sentence}]},page(id)));
+  const begin=async id=>isolatedSend(fixture,{type:'EMERGENCY_BEGIN',tabId:id,url:pages.get(id).url,chars:200,confirmed:true});
+  const translate=(id,token)=>track(isolatedSend(fixture,{type:'EMERGENCY_TRANSLATE',token,requestSeq:1,items:[pageItem('e'+id,'The client retries after the connection recovers.')]},page(id)));
+  try{
+    globalThis.chrome=fixture.api;fixture.api.tabs.get=async id=>({...pages.get(id)});
+    globalThis.fetch=withCapabilityProbe(async(url,options)=>{
+      const payload=JSON.parse(JSON.parse(options.body).messages[1].content),item=payload.items?.[0],kind=item?.sentence?(Object.hasOwn(item,'domain')?'support':'structure'):'translation';
+      requests.push({kind,url:String(url),signal:options.signal});
+      if(kind!=='translation')await new Promise((resolve,reject)=>{const finish=(fn,value)=>{options.signal.removeEventListener('abort',abort);fn(value);},abort=()=>finish(reject,options.signal.reason||new DOMException('Aborted','AbortError'));gate.promise.then(()=>finish(resolve));if(options.signal.aborted)abort();else options.signal.addEventListener('abort',abort,{once:true});});
+      return previousFetch(url,options);
+    });
+    await import('../extension/background.js?translation-priority='+crypto.randomUUID());
+    for(const id of pages.keys()){await isolatedSend(fixture,{type:'PAGE_UI_INJECT',tabId:id});await isolatedSend(fixture,{type:'SENTENCE_GROUPS_SET',tabId:id,enabled:true});}
+    await run({fixture,page,structure,begin,translate,track,requests,gate,until});
+  }finally{gate.resolve();await Promise.all(pending);globalThis.chrome=previous;globalThis.fetch=previousFetch;}
+}
+
+test('confirmed page translation aborts obsolete automatic API work before its provider finishes',async()=>{
+  await pageTranslationPriorityFixture(async({fixture,page,structure,begin,translate,track,requests,until})=>{
+    const automatic=structure(91,'When the connection recovers, the client retries.');await until(()=>requests.length===1);
+    const queued=track(isolatedSend(fixture,{type:'SUPPORT_BATCH',items:[{id:'s93',sentence:'Requests wait unless the connection recovers.',domain:'general',candidates:[{text:'unless'}]}]},page(91)));
+    await until(()=>queued.settled||fixture.local.diagnostics.events.some(row=>row.stage==='request'&&row.status==='start'&&row.inputIds?.includes('s93')));if(queued.error)throw queued.error;
+    const {token}=await begin(91),translation=translate(91,token);
+    await until(()=>automatic.settled&&queued.settled&&translation.settled);
+    expect(requests[0].signal.aborted).toBe(true);expect(automatic.error).toBeInstanceOf(Error);expect(queued.error).toBeInstanceOf(Error);
+    expect(translation.value.items).toEqual([{id:'e91',translation:'应急译文'}]);
+    expect(requests.map(row=>row.kind)).toEqual(['structure','translation']);expect(requests.every(row=>row.url.startsWith('https://primary.example/'))).toBe(true);
+    const cancelled=fixture.local.diagnostics.events.filter(row=>row.operation==='SENTENCE_GROUPS_BATCH'&&row.stage==='provider'&&row.status==='cancelled');expect(cancelled.map(row=>row.code)).toEqual(['STALE']);
+    expect(fixture.local.diagnostics.events.filter(row=>row.code==='FAILOVER'||row.code==='TIMEOUT')).toEqual([]);
+    await expect(isolatedSend(fixture,{type:'SENTENCE_GROUPS_BATCH',items:[{id:'later',sentence:'Automatic analysis must stay suspended.'}]},page(91))).rejects.toThrow();
+    await expect(isolatedSend(fixture,{type:'SUPPORT_BATCH',items:[{id:'later-support',sentence:'Requests wait unless the connection recovers.',domain:'general',candidates:[{text:'unless'}]}]},page(91))).rejects.toThrow();
+    await isolatedSend(fixture,{type:'EMERGENCY_END',tabId:91,token});
+    const restored=structure(91,'After returning to English, automatic analysis can resume.');await until(()=>requests.length===3);expect(requests[2].signal.aborted).toBe(false);
+  });
+});
+
+test('page translation preserves an explicit sentence request on the same page',async()=>{
+  await pageTranslationPriorityFixture(async({structure,begin,translate,requests,gate,until})=>{
+    const explicit=structure(91,'When the user asks, preserve this explicit explanation.',true);await until(()=>requests.length===1);
+    const {token}=await begin(91),translation=translate(91,token);
+    expect(requests[0].signal.aborted).toBe(false);gate.resolve();await Promise.all([explicit.done,translation.done]);
+    expect(explicit.value.items[0].id).toBe('s91');expect(translation.value.items[0].translation).toBe('应急译文');
+  });
+});
+
+test('page translation cannot abort shared automatic inference needed by another page',async()=>{
+  await pageTranslationPriorityFixture(async({fixture,structure,begin,translate,requests,gate,until})=>{
+    const sentence='When the pages share this sentence, keep the remaining consumer.',first=structure(91,sentence);await until(()=>requests.length===1);
+    const second=structure(92,sentence);await until(()=>fixture.local.diagnostics.events.some(row=>row.stage==='request'&&row.status==='start'&&row.inputIds?.includes('s92')));
+    const {token}=await begin(91),translation=translate(91,token);expect(requests[0].signal.aborted).toBe(false);
+    gate.resolve();await Promise.all([first.done,second.done,translation.done]);
+    expect(first.error).toBeInstanceOf(Error);expect(second.value.items[0].id).toBe('s92');expect(translation.value.items[0].translation).toBe('应急译文');
+    expect(requests.map(row=>row.kind)).toEqual(['structure','translation']);
+  });
+});
+
 async function queuedSupportFixture(run){
   const previous=globalThis.chrome,previousFetch=globalThis.fetch,gate=Promise.withResolvers(),pending=[],requests=[];
   const data={wordSchemaVersion:5,productSchemaVersion:1,words:[],settings:{providerKind:'api',provider:{baseUrl:'https://api.example/v1',model:'fixture',apiKey:'fixture-key'},rememberSupport:false}},fixture=isolatedChrome(data,{id:'queued-support'});
