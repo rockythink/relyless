@@ -99,8 +99,8 @@ PDF 单次读取上限 64 MiB、最多 500 页；过大文档或画布页会提�
 
 要求 Chrome 或 Edge **116 及以上版本**。
 
-1. 从 GitHub Releases 下载 `relyless-0.8.1.zip`。
-2. 解压后会得到 `relyless-0.8.1/`，其中包含：
+1. 从 GitHub Releases 下载 `relyless-0.8.2.zip`。
+2. 解压后会得到 `relyless-0.8.2/`，其中包含：
    - `extension/`
    - `connector/`
    - `README.md`
