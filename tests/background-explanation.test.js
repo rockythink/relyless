@@ -566,6 +566,17 @@ test('new-page translation cancels an old-page routing transport only after navi
     }finally{settlement.resolve();}
   },{routing:true});
 });
+test('navigation after routing completes does not cache a failed judgment for the next page',async()=>{
+  await pageTranslationPriorityFixture(async({fixture,pages,structure,requests,gate,until})=>{
+    const sentence='When a routing response arrives, the source must still be current.';
+    const automatic=structure(91,sentence);await until(()=>requests.length===1);
+    pages.get(91).url='https://isolated.example/new-reading';gate.resolve();await automatic.done;
+    expect(automatic.error).toBeInstanceOf(Error);expect(requests.map(row=>row.kind)).toEqual(['judge']);
+    await isolatedSend(fixture,{type:'PAGE_UI_INJECT',tabId:91});await isolatedSend(fixture,{type:'SENTENCE_GROUPS_SET',tabId:91,enabled:true});
+    const resumed=structure(91,sentence);await resumed.done;
+    expect(resumed.value.items[0].groups[0].role).toBe('clause');expect(requests.map(row=>row.kind)).toEqual(['judge','judge','structure']);
+  },{routing:true});
+});
 
 for(const failure of [new Error('无法读取服务配置。'),Object.assign(new Error('服务授权已过期。'),{code:'AUTH'})])test('page translation retains a non-stale routing guard error: '+failure.message,async()=>{
   await pageTranslationPriorityFixture(async({fixture,structure,begin,translate,requests,gate,until})=>{

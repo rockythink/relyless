@@ -1098,7 +1098,7 @@ async function chooseRoute(operation, summary, {settings, guard = async () => {}
     await guard();
     answers = value?.answers || null;
     if(generation!==routeCacheGeneration)return {...primary,reason:'judge-invalidated'};
-  } catch(error) {if(['STALE','CANCELLED'].includes(error?.code))throw error;routingStats.judgeFailed++;}
+  } catch(error) {if(['STALE','CANCELLED'].includes(diagnosticError(error).code))throw error;routingStats.judgeFailed++;}
   if(generation!==routeCacheGeneration)return {...primary,reason:'judge-invalidated'};
   if (!answers) {
     await remember('primary', 'judge-failed');
