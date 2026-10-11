@@ -491,10 +491,10 @@ test('passive reading telemetry is rejected and removed from the export',async()
 });
 
 
-async function pageTranslationPriorityFixture(run){
+async function pageTranslationPriorityFixture(run,{routing=false}={}){
   const previous=globalThis.chrome,previousFetch=globalThis.fetch,gate=Promise.withResolvers(),pending=[],requests=[];
   const services=[{id:'primary',name:'Primary',providerId:'openai-compatible',baseUrl:'https://primary.example/v1',model:'priority-fixture',apiKey:'fixture-key',options:{thinking:'off'},fallbackServiceId:'fallback'},{id:'fallback',name:'Fallback',providerId:'openai-compatible',baseUrl:'https://fallback.example/v1',model:'fallback-fixture',apiKey:'fallback-key',options:{thinking:'off'}}];
-  const data={wordSchemaVersion:5,productSchemaVersion:1,words:[],settings:{providerKind:'api',apiServices:services,activeApiServiceId:'primary',assistanceMode:'ambient',requestConcurrency:1,rememberSupport:false}},fixture=isolatedChrome(data,{id:'translation-priority'});
+  const data={wordSchemaVersion:5,productSchemaVersion:1,words:[],settings:{providerKind:'api',apiServices:services,activeApiServiceId:'primary',assistanceMode:'ambient',requestConcurrency:1,rememberSupport:false,...(routing?{domainDetection:{jevApiKey:'judge-key',jevModel:'typesafe/jev-1.13.0',jevBaseUrl:'https://router.requesty.ai/v1'},routing:{enabled:true,operations:{assist:false,passage:false,emergency:false,conversation:false,sentenceGroups:true}}}:{})}},fixture=isolatedChrome(data,{id:'translation-priority'});
   const pages=new Map([91,92].map(id=>[id,{id,url:'https://isolated.example/read',active:true}])),page=id=>({url:pages.get(id).url,tab:{id},frameId:0});
   const until=async condition=>{for(let i=0;i<100;i++){if(condition())return;await new Promise(resolve=>setTimeout(resolve,0));}throw new Error('Translation priority did not settle');};
   const track=promise=>{const state={};state.done=promise.then(value=>{state.value=value;state.settled=true;},error=>{state.error=error;state.settled=true;});pending.push(state.done);return state;};
@@ -504,10 +504,10 @@ async function pageTranslationPriorityFixture(run){
   try{
     globalThis.chrome=fixture.api;fixture.api.tabs.get=async id=>({...pages.get(id)});
     globalThis.fetch=withCapabilityProbe(async(url,options)=>{
-      const payload=JSON.parse(JSON.parse(options.body).messages[1].content),item=payload.items?.[0],kind=item?.sentence?(Object.hasOwn(item,'domain')?'support':'structure'):'translation';
+      const judge=String(url).includes('router.requesty.ai'),payload=judge?null:JSON.parse(JSON.parse(options.body).messages[1].content),item=payload?.items?.[0],kind=judge?'judge':item?.sentence?(Object.hasOwn(item,'domain')?'support':'structure'):'translation';
       requests.push({kind,url:String(url),signal:options.signal});
       if(kind!=='translation')await new Promise((resolve,reject)=>{const finish=(fn,value)=>{options.signal.removeEventListener('abort',abort);fn(value);},abort=()=>finish(reject,options.signal.reason||new DOMException('Aborted','AbortError'));gate.promise.then(()=>finish(resolve));if(options.signal.aborted)abort();else options.signal.addEventListener('abort',abort,{once:true});});
-      return previousFetch(url,options);
+      return judge?Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({tier:{selected:'routine'},confidence:{score:1}})}}]}):previousFetch(url,options);
     });
     await import('../extension/background.js?translation-priority='+crypto.randomUUID());
     for(const id of pages.keys()){await isolatedSend(fixture,{type:'PAGE_UI_INJECT',tabId:id});await isolatedSend(fixture,{type:'SENTENCE_GROUPS_SET',tabId:id,enabled:true});}
@@ -551,6 +551,29 @@ test('page translation cannot abort shared automatic inference needed by another
     gate.resolve();await Promise.all([first.done,second.done,translation.done]);
     expect(first.error).toBeInstanceOf(Error);expect(second.value.items[0].id).toBe('s92');expect(translation.value.items[0].translation).toBe('应急译文');
     expect(requests.map(row=>row.kind)).toEqual(['structure','translation']);
+  });
+});
+
+test('confirmed page translation cancels an automatic routing judgment without caching failure',async()=>{
+  await pageTranslationPriorityFixture(async({fixture,structure,begin,translate,requests,until})=>{
+    const sentence='When routing judges this automatic sentence, translation should take over.',automatic=structure(91,sentence);await until(()=>requests.length===1);
+    expect(requests[0].kind).toBe('judge');const {token}=await begin(91),translation=translate(91,token);await until(()=>automatic.settled&&translation.settled);
+    expect(automatic.error).toBeInstanceOf(Error);expect(translation.value.items[0].translation).toBe('应急译文');expect(requests[0].signal.aborted).toBe(true);
+    expect(requests.map(row=>row.kind)).toEqual(['judge','translation']);
+    await isolatedSend(fixture,{type:'EMERGENCY_END',tabId:91,token});structure(91,sentence);await until(()=>requests.length===3);expect(requests[2].kind).toBe('judge');
+  },{routing:true});
+});
+
+test('cancelled automatic requests remain in cost accounting without provider failure counts',async()=>{
+  await pageTranslationPriorityFixture(async({fixture,structure,begin,translate,requests,until})=>{
+    const automatic=structure(91,'When a billed request is cancelled, its input still counts.');await until(()=>requests.length===1);
+    const {token}=await begin(91),translation=translate(91,token);await until(()=>automatic.settled&&translation.settled);
+    const {usage}=await isolatedSend(fixture,{type:'USAGE_STATS',days:0});expect(usage.totals).toMatchObject({requests:2,errors:0});
+    const rows=fixture.local.modelUsage.rows,cancelled=rows.find(row=>row.operation==='SENTENCE_GROUPS_BATCH');expect(cancelled).toMatchObject({requests:1,errors:0});
+    const translated=rows.find(row=>row.operation==='EMERGENCY_TRANSLATE'),tokens=row=>row.input+row.output+row.estInput+row.estOutput,translationTokens=tokens(translated);
+    await isolatedSend(fixture,{type:'STATE_PATCH',patch:{usageBudget:{monthlyTokens:translationTokens}}});
+    const estimate=await isolatedSend(fixture,{type:'EMERGENCY_BEGIN',tabId:91,url:'https://isolated.example/read',chars:200,confirmed:false});
+    expect(estimate.budgetExceeded).toBe(true);expect(estimate.monthlyUsed).toBe(translationTokens+tokens(cancelled));expect(estimate.monthlyUsed).toBeGreaterThan(translationTokens);
   });
 });
 

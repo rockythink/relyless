@@ -52,6 +52,17 @@ test('storage failures remain visible and do not fail the reading operation',asy
   const snapshot=await service.snapshot();expect(snapshot.storageError).toBe(true);expect(JSON.stringify(snapshot)).not.toContain('quota-secret');
 });
 
+test('provider unavailability remains a failure while intentional cancellation does not',async()=>{
+  const service=createDiagnostics({storage:memory(),session:memory(),sync:async()=>false,nativeStatus:()=>({connected:false})});
+  for(const code of ['NOT_READY','STALE']){
+    const command={type:'SENTENCE_GROUPS_BATCH',items:[{id:'s1',sentence:'Private sentence.'}]},failure=Object.assign(new Error('Provider unavailable'),{code});
+    await expect(service.run(command,{},()=>service.provider(service.trace(command),'api','model','provider',async()=>{throw failure;}))).rejects.toBe(failure);
+  }
+  const snapshot=await service.snapshot();expect(snapshot.summary).toMatchObject({requests:2,failures:1,pending:0});
+  expect(snapshot.summary.issues).toContainEqual({code:'NOT_READY',operation:'SENTENCE_GROUPS_BATCH',count:1});
+  expect(snapshot.events.filter(row=>row.stage==='provider'&&row.status!=='start').map(row=>[row.status,row.code])).toEqual([['error','NOT_READY'],['cancelled','STALE']]);
+});
+
 test('summary deduplicates stages and detects repeated failures, slow requests and missing completion',()=>{
   const now=Date.now(),rows=[];
   for(let i=0;i<3;i++){const id=traceId.slice(0,-1)+i;rows.push(event({traceId:id,status:'start',at:now-20000}),event({traceId:id,stage:'provider'}),event({traceId:id,durationMs:12000}));}

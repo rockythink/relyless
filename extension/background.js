@@ -433,7 +433,7 @@ async function requireApiPermission(service) {
   const origins=apiServiceOrigins(service).map(origin=>origin+'/*');
   if(!await chrome.permissions.contains({origins}))throw new Error('尚未授权该服务，请到设置重新保存并授权。');
 }
-async function apiRequest(provider,payload,instructions,schema,{onContent,trace,beforeRequest}={}) {
+async function apiRequest(provider,payload,instructions,schema,{onContent,trace,beforeRequest,automatic=false}={}) {
   const preferences=readingHistory.policy()?.translation;if(preferences&&[ASSISTANCE_INSTRUCTIONS,SUPPORT_INSTRUCTIONS,SUPPORT_CORRECTION_INSTRUCTIONS,EMERGENCY_INSTRUCTIONS,PAGE_TRANSLATION_INSTRUCTIONS].includes(instructions))payload={...payload,personalization:preferences};
   const service=normalizeApiService(provider);await requireApiPermission(service);
   const settings=(await load(false)).settings;
@@ -448,8 +448,8 @@ async function apiRequest(provider,payload,instructions,schema,{onContent,trace,
     const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),timeoutMs);
     const generation=providerGeneration;
     const checkRequest=async()=>{if(generation!==providerGeneration)throw staleWork();await beforeRequest?.();if(generation!==providerGeneration)throw staleWork();};
-    const pending={controller,checkRequest},automatic=beforeRequest&&[SUPPORT_INSTRUCTIONS,SUPPORT_CORRECTION_INSTRUCTIONS,SENTENCE_GROUPS_INSTRUCTIONS].includes(instructions);
-    if(automatic)automaticApiRequests.add(pending);
+    const pending=automatic?{controller,checkRequest}:null;
+    if(pending)automaticApiRequests.add(pending);
     const inputChars=JSON.stringify(payload).length+String(instructions||'').length+JSON.stringify(schema||null).length;
     let usageReport=null;
     const onUsage=usage=>{if(usage)usageReport={input:usage.input==null?usageReport?.input??null:(usageReport?.input||0)+usage.input,output:usage.output==null?usageReport?.output??null:(usageReport?.output||0)+usage.output};};
@@ -460,8 +460,10 @@ async function apiRequest(provider,payload,instructions,schema,{onContent,trace,
       if(!trace?.incognito)void recordModelUsage({provider:'api',service:current.name||current.model,model:current.model,operation:trace?.operation||'',ok:true,usage:usageReport,inputChars,outputChars:JSON.stringify(output).length,inputText:JSON.stringify(payload),outputText:JSON.stringify(output)});
       return output;
     } catch(error) {
-      if(['STALE','CANCELLED'].includes(controller.signal.reason?.code||error?.code))throw controller.signal.reason||error;
-      if(!trace?.incognito)void recordModelUsage({provider:'api',service:current.name||current.model,model:current.model,operation:trace?.operation||'',ok:false,usage:usageReport,inputChars,inputText:JSON.stringify(payload)});
+      const cancelled=['STALE','CANCELLED'].includes(controller.signal.reason?.code||error?.code);
+      // Cancelled attempts retain known/estimated usage without claiming success or provider failure.
+      if(!trace?.incognito)void recordModelUsage({provider:'api',service:current.name||current.model,model:current.model,operation:trace?.operation||'',...(cancelled?{}:{ok:false}),usage:usageReport,inputChars,inputText:JSON.stringify(payload)});
+      if(cancelled)throw controller.signal.reason||error;
       let reported=error;
       if(controller.signal.aborted||error.name==='AbortError')reported=new Error(`请求超过 ${Math.round(timeoutMs/1000)} 秒，请稍后重试。${current.providerId==='stepfun'?'阶跃星辰推理较慢时，可把该服务的思考等级设为“低”。':''}`);else if(error instanceof TypeError)reported=new Error('无法连接服务，请检查网络、API 地址与服务跨域支持。');
       reported.failoverClass=classifyFailure(error);
@@ -650,7 +652,7 @@ async function supportBatch(message,sender){
             await requireLiveConsumer(backgroundGuards.get(operation));
             if(isSubscriptionKind(effSettings.providerKind))return providerOperation(()=>supportSubscription(requestItems,effSettings.subscriptionModel,article,diagnostics.trace(message)?.traceId,readingHistory.policy()?.translation,corrections,nativeKind(effSettings)),diagnostics.trace(message),effSettings.subscriptionModel,nativeKind(effSettings),JSON.stringify(requestItems).length+String(article||'').length);
             const instructions=corrections.length?SUPPORT_CORRECTION_INSTRUCTIONS:SUPPORT_INSTRUCTIONS;
-            const raw=await apiRequest(activeApiProvider(effSettings),{items:requestItems,article,...(corrections.length?{corrections}:{})},instructions,SUPPORT_SCHEMA,{beforeRequest:()=>requireLiveConsumer(backgroundGuards.get(operation)),trace:diagnostics.trace(message)});
+            const raw=await apiRequest(activeApiProvider(effSettings), {items:requestItems,article,...(corrections.length?{corrections}:{})}, instructions, SUPPORT_SCHEMA, {automatic:true,beforeRequest:()=>requireLiveConsumer(backgroundGuards.get(operation)),trace:diagnostics.trace(message)});
             return inspectSupportResponse(raw,requestItems,article);
           });
           await requireLiveConsumer(backgroundGuards.get(operation));
@@ -709,18 +711,18 @@ async function sentenceGroupsBatch(message,sender){
   if(state.settings.assistanceMode==='on-demand'&&message.explicit!==true)throw new Error('仅在需要时不自动解构正文；请先选择句子并主动请求。');
   if(message.explicit!==true)await requireAutomaticReading(source);
   const items=normalizeSentenceGroupItems(message.items),generation=providerGeneration,modeGeneration=mode.generation;
+  const guard=async()=>{const [latest,current,currentMode]=await Promise.all([load(),readingSource(sender),chrome.storage.session.get(modeKey).then(value=>value[modeKey])]);if(latest.settings.assistanceMode==='on-demand'&&message.explicit!==true||generation!==providerGeneration||state.supportDataGeneration!==latest.supportDataGeneration||current.sourceHash!==source.sourceHash||!current.active||await tabPaused(source.tabId)||!currentMode?.enabled||currentMode.page!==source.sourceHash||currentMode.generation!==modeGeneration)throw staleWork();if(message.explicit!==true)await requireAutomaticReading(current);};
   // 解构默认不判卷（频次高）；开启后按策略先选路，缓存键随之切换到实际服务。
-  {const route=await chooseRoute('sentenceGroups',summarizeRequest('sentenceGroups',{text:items.map(item=>item.sentence).join('\n').slice(0,900)}),{settings:state.settings,guard:async()=>{},incognito:source.incognito});
+  {const route=await chooseRoute('sentenceGroups',summarizeRequest('sentenceGroups',{text:items.map(item=>item.sentence).join('\n').slice(0,900)}),{settings:state.settings,guard,automatic:message.explicit!==true,trace:diagnostics.trace(message),incognito:source.incognito});
    if(route.kind==='api'&&route.service)state={...state,settings:{...state.settings,providerKind:'api',activeApiServiceId:route.service.id}};
    else if(route.kind==='subscription')state={...state,settings:{...state.settings,providerKind:'chatgpt'}};}
   const service=state.settings.providerKind==='api'?activeApiProvider(state.settings):state.settings.subscriptionModel;
-  const guard=async()=>{const [latest,current,currentMode]=await Promise.all([load(),readingSource(sender),chrome.storage.session.get(modeKey).then(value=>value[modeKey])]);if(latest.settings.assistanceMode==='on-demand'&&message.explicit!==true||generation!==providerGeneration||state.supportDataGeneration!==latest.supportDataGeneration||current.sourceHash!==source.sourceHash||!current.active||await tabPaused(source.tabId)||!currentMode?.enabled||currentMode.page!==source.sourceHash||currentMode.generation!==modeGeneration)throw staleWork();if(message.explicit!==true)await requireAutomaticReading(current);};
   if(!configured(state.settings))throw new Error('请先连接服务；原文保持不变。');if(state.settings.providerKind==='api')await requireApiPermission(service);
   await sentenceGroupCacheReady;
   const serviceKey=await hashValue(JSON.stringify([state.settings.providerKind,service])),keys=await Promise.all(items.map(item=>hashValue(JSON.stringify([SENTENCE_GROUPS_POLICY_VERSION,serviceKey,item.sentence])))),groupsByKey=new Map(),newItems=[],claimed=new Set(),now=Date.now();
   for(let index=0;index<items.length;index++){const cached=sentenceGroupCache.get(keys[index]);if(cached&&now-cached.at<SENTENCE_GROUP_CACHE_TTL)groupsByKey.set(keys[index],cached.groups);else if(!sentenceGroupInFlight.has(keys[index])&&!claimed.has(keys[index])){claimed.add(keys[index]);newItems.push({item:items[index],key:keys[index]});}}
   if(newItems.length){
-    const operation=withBackgroundSlot(async()=>{const trace=diagnostics.trace(message),sourceItems=newItems.map(value=>value.item);let result;if(isSubscriptionKind(state.settings.providerKind))result=await providerOperation(()=>sentenceGroupsSubscription(sourceItems,state.settings.subscriptionModel,trace?.traceId,nativeKind(state.settings)),trace,state.settings.subscriptionModel,nativeKind(state.settings),JSON.stringify(sourceItems).length);else{result=await apiRequest(activeApiProvider(state.settings),{items:prepareSentenceGroupItems(sourceItems)},SENTENCE_GROUPS_INSTRUCTIONS,SENTENCE_GROUPS_SCHEMA,{trace,beforeRequest:()=>requireLiveConsumer(backgroundGuards.get(operation))});}
+    const operation=withBackgroundSlot(async()=>{const trace=diagnostics.trace(message),sourceItems=newItems.map(value=>value.item);let result;if(isSubscriptionKind(state.settings.providerKind))result=await providerOperation(()=>sentenceGroupsSubscription(sourceItems,state.settings.subscriptionModel,trace?.traceId,nativeKind(state.settings)),trace,state.settings.subscriptionModel,nativeKind(state.settings),JSON.stringify(sourceItems).length);else{result=await apiRequest(activeApiProvider(state.settings), {items:prepareSentenceGroupItems(sourceItems)}, SENTENCE_GROUPS_INSTRUCTIONS, SENTENCE_GROUPS_SCHEMA, {automatic:true,trace,beforeRequest:()=>requireLiveConsumer(backgroundGuards.get(operation))});}
       try{const validated=isSubscriptionKind(state.settings.providerKind)?result:normalizeSentenceGroupsResult(result,sourceItems),mapped=new Map(validated.items.map((value,index)=>[newItems[index].key,value.groups]));await diagnostics.event(trace,'validation','ok');if(generation===providerGeneration){const at=Date.now();for(const [key,groups]of mapped){sentenceGroupCache.delete(key);sentenceGroupCache.set(key,{groups,at});}while(sentenceGroupCache.size>SENTENCE_GROUP_CACHE_LIMIT)sentenceGroupCache.delete(sentenceGroupCache.keys().next().value);await persistSentenceGroupCache(generation).catch(()=>{});}return mapped;}catch(error){await diagnostics.event(trace,'validation','error',diagnosticError(error));throw error;}},guard);
     for(const value of newItems)sentenceGroupInFlight.set(value.key,operation);
     void operation.finally(()=>{for(const value of newItems)if(sentenceGroupInFlight.get(value.key)===operation)sentenceGroupInFlight.delete(value.key);}).catch(()=>{});
@@ -1046,8 +1048,8 @@ function premiumTarget(settings, routing, operation) {
   if (!found || !apiServiceReady(found) || isJudgmentProvider(found.providerId)) return null;
   return {kind: 'api', service: found};
 }
-// 返回 {kind, service, reason}；任何失败都回落主路由，绝不阻塞请求。
-async function chooseRoute(operation, summary, {settings, guard = async () => {}, trace, incognito = false} = {}) {
+// 判定失败回落主路由；来源失效或取消向调用方返回，不写失败路由缓存。
+async function chooseRoute(operation, summary, {settings, guard = async () => {}, trace, incognito = false, automatic = false} = {}) {
   const routing = routingSettingsOf(settings);
   const primary = {kind: settings.providerKind === 'api' ? 'api' : 'subscription', service: settings.providerKind === 'api' ? activeApiProvider(settings) : null, reason: 'default'};
   if (!routing.enabled || !routing.operations[operation]) { routingStats.skipped++; return primary; }
@@ -1072,10 +1074,11 @@ async function chooseRoute(operation, summary, {settings, guard = async () => {}
   }
   let answers = null;
   try {
-    const value = await withBackgroundSlot(() => apiRequest(judge, {state: summary, questions: routingQuestions(getApiProvider(judge.providerId)?.protocol)}, undefined, undefined, {trace, beforeRequest: guard}), guard);
+    const value = await withBackgroundSlot(() => apiRequest(judge, {state: summary, questions: routingQuestions(getApiProvider(judge.providerId)?.protocol)}, undefined, undefined, {trace, beforeRequest: guard, automatic}), guard);
+    await guard();
     answers = value?.answers || null;
     if(generation!==routeCacheGeneration)return {...primary,reason:'judge-invalidated'};
-  } catch { routingStats.judgeFailed++; }
+  } catch(error) {if(['STALE','CANCELLED'].includes(error?.code))throw error;routingStats.judgeFailed++;}
   if(generation!==routeCacheGeneration)return {...primary,reason:'judge-invalidated'};
   if (!answers) {
     await remember('primary', 'judge-failed');
