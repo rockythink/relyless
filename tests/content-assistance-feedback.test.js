@@ -164,13 +164,19 @@ for(const mode of ['ambient','on-demand'])test('syntax selection clips inline no
     click([...document.querySelectorAll('[data-shisui-ui="passage-action"] button')].find(button=>button.textContent==='解构所选'));
     await waitFor(()=>pending.length===1);const item=pending.shift(),sentence=item.message.items[0].sentence;
     item.reply({ok:true,data:{items:[{id:item.message.items[0].id,groups:[{role:'clause',start:0,end:sentence.length,parent:-1},{role:'subject',start:0,end:10,parent:0},{role:'predicate',start:11,end:18,parent:0}]}]}});
-    await waitFor(()=>state.card===null);await waitFor(()=>[...CSS.highlights.keys()].some(name=>name.includes('-subject-')));state.settings.assistanceMode=mode;
-    await send({type:'SS_SET_SENTENCE_DENSITY',density:'medium'});
+    await waitFor(()=>state.card===null);await waitFor(()=>[...CSS.highlights.keys()].some(name=>name.includes('-subject-')));await new Promise(resolve=>setTimeout(resolve,220));state.settings.assistanceMode=mode;
+    // Do not let unrelated observer delivery mask the refresh render path.
+    if(mode==='on-demand'){state.settings.assistanceMode='ambient';await send({type:'SS_REFRESH'});state.settings.assistanceMode=mode;state.observer?.disconnect();await send({type:'SS_REFRESH'});}else await send({type:'SS_SET_SENTENCE_DENSITY',density:'medium'});
+    await waitFor(()=>[...CSS.highlights.keys()].some(name=>name.includes('-subject-')));
+
     const selected=document.createRange();selected.setStart(paragraph.querySelector('em').firstChild,0);selected.setEnd(paragraph.lastChild,5);getSelection().removeAllRanges();getSelection().addRange(selected);handlers.get('scheduleSentenceSelection')();
     const selectedRanges=()=>[...CSS.highlights].filter(([name])=>name.includes('-selection-')).map(([name,value])=>({name,text:[...value].map(range=>range.toString()).join('')}));
     await waitFor(()=>selectedRanges().find(row=>row.name.includes('base'))?.text==='client retr');
     const values=selectedRanges();expect(values.find(row=>row.name.includes('3978aa')).text).toBe('client');expect(values.find(row=>row.name.includes('ad672b')).text).toBe('retr');expect(values.find(row=>row.name.includes('base')).text).toBe('client retr');
     expect(getSelection().toString()).toBe('client retr');expect(paragraph.innerHTML).toBe(original);
+    const removedStyle=document.querySelector('[data-shisui-ui="sentence-selection-style"]');removedStyle.remove();
+    await waitFor(()=>document.querySelector('[data-shisui-ui="sentence-selection-style"]')?.isConnected);
+    expect(selectedRanges().find(row=>row.name.includes('3978aa')).text).toBe('client');expect(pending).toEqual([]);
     const selectionCommand=enabled=>({type:'SS_SET_SENTENCE_SELECTION',enabled,pageUrl:window.location.href});
     for(const [message,sender]of [[selectionCommand(false),{id:'foreign'}],[selectionCommand(false),{id:'abc',tab:{id:1}}],[{...selectionCommand(false),pageUrl:'https://example.test/old'},{id:'abc'}],[selectionCommand('false'),{id:'abc'}]])expect((await send(message,sender)).ok).toBe(false);
     expect((await send(selectionCommand(false))).data.sentenceGroups).toMatchObject({enabled:true,selectionColor:false});expect(selectedRanges()).toEqual([]);expect([...CSS.highlights.keys()].some(name=>name.includes('-subject-'))).toBe(true);expect(getSelection().toString()).toBe('client retr');
@@ -184,7 +190,7 @@ for(const mode of ['ambient','on-demand'])test('syntax selection clips inline no
     getSelection().addRange(selected);handlers.get('scheduleSentenceSelection')();await waitFor(()=>selectedRanges().length>0);
     await send({type:'SS_SET_SENTENCE_GROUPS',enabled:false});expect(selectedRanges()).toEqual([]);expect(paragraph.hasAttribute('data-shisui-structure-selection')).toBe(false);expect(getSelection().toString()).toBe('client retr');
     expect(document.querySelector('[data-shisui-ui="sentence-selection-style"]')).toBeNull();expect(pending).toEqual([]);expect((await send(selectionCommand(true))).ok).toBe(false);
-  },{structure:true,bodyHtml:'<main><p>The <em>client</em> retries with backoff.</p></main>'});
+  },{structure:true,observe:true,bodyHtml:'<main><p>The <em>client</em> retries with backoff.</p></main>'});
 });
 
 test('known save errors stay beside the originating button and do not change source text',async()=>{

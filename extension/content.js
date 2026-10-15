@@ -206,12 +206,12 @@
     // Native selection paints above custom highlights. Make only affected blocks'
     // native layer transparent; a base highlight preserves selection in role gaps.
     const selector='['+SENTENCE_SELECTION+'="'+runtime.id+'"]';
-    rules.push(selector+'::selection,'+selector+' *::selection{background-color:transparent!important;color:inherit!important}');
+    rules.push(selector+'::selection,'+selector+' *::selection{background-color:transparent!important;color:currentColor!important}');
     for(const block of sentenceSelection.blocks)if(!blocks.has(block))block.removeAttribute(SENTENCE_SELECTION);
     for(const block of blocks)if(!sentenceSelection.blocks.has(block))block.setAttribute(SENTENCE_SELECTION,runtime.id);sentenceSelection.blocks=blocks;
     for(const name of sentenceSelection.highlights.keys())if(!highlights.has(name))CSS.highlights.delete(name);
     for(const [name,highlight]of highlights)CSS.highlights.set(name,highlight);sentenceSelection.highlights=highlights;
-    if(!sentenceSelection.style){const style=document.createElement('style');style.setAttribute(OWN,'sentence-selection-style');document.documentElement.append(style);sentenceSelection.style=style;}
+    if(!sentenceSelection.style?.isConnected){const style=document.createElement('style');style.setAttribute(OWN,'sentence-selection-style');document.documentElement.append(style);sentenceSelection.style=style;}
     const css=rules.join('');if(sentenceSelection.style.textContent!==css)sentenceSelection.style.textContent=css;sentenceSelection.style.sheet.disabled=false;
   }
   function scheduleSentenceSelection(){if(!sentenceSelection.frame&&(sentenceGroups.parts.length||sentenceSelection.blocks.size))sentenceSelection.frame=requestAnimationFrame(renderSentenceSelection);}
@@ -323,7 +323,7 @@
         if(lookupBusy())await waitForLookupIdle();
         if(!sentenceCanRun()||generation!==sentenceGroups.generation||page!==location.href||surface!==readingScope()){reportResult(result,'cancelled');return;}
         if(!result||!Array.isArray(result.items)||result.items.length!==batch.length)throw new Error('结构分析未返回完整批次。');
-        const ids=new Set();for(const item of result.items){const job=batch.find(value=>value.id===item?.id);if(!job||ids.has(item.id)||!validSentenceGroups(item,job))throw new Error('阅读解构范围无效。');ids.add(item.id);if(validSentenceEntry(job)){sentenceGroups.entries.set(job.key,{...job,groups:item.groups});sentenceGroups.processed.add(job.key);sentenceGroups.failed.delete(job.key);}}
+        const ids=new Set();for(const item of result.items){const job=batch.find(value=>value.id===item?.id);if(!job||ids.has(item.id)||!validSentenceGroups(item,job))throw new Error('阅读解构范围无效。');ids.add(item.id);if(validSentenceEntry(job)){if(!sentenceGroups.entries.get(job.key)?.explicit)sentenceGroups.entries.set(job.key,{...job,groups:item.groups});sentenceGroups.processed.add(job.key);sentenceGroups.failed.delete(job.key);}}
         reportResult(result,'ok');renderSentenceGroups();activeBatch=[];pending=visibleSentenceJobs();
       }
       if(generation===sentenceGroups.generation&&surface===readingScope()){sentenceGroups.status=sentenceGroups.failed.size?'error':'idle';if(!sentenceGroups.failed.size)sentenceGroups.error='';}
@@ -1454,7 +1454,7 @@
       const result=await request('SENTENCE_GROUPS_BATCH',{items:[{id:job.id,sentence}],explicit:true});received=result;
       if(!current()){reportResult(result,'cancelled');return;}
       const item=result?.items?.[0];if(result?.items?.length!==1||!validSentenceGroups(item,job))throw new Error('阅读解构范围无效。');
-      sentenceGroups.entries.set(job.key,{...job,groups:item.groups,explicit:true});reportResult(result,'ok');closeCard();removeStructureCard();openStructureCard(job.key,x,y);scheduleSentenceRender();
+      sentenceGroups.entries.set(job.key,{...job,groups:item.groups,explicit:true});sentenceGroups.processed.add(job.key);sentenceGroups.failed.delete(job.key);reportResult(result,'ok');closeCard();removeStructureCard();openStructureCard(job.key,x,y);scheduleSentenceRender();
     }catch(error){reportResult(received,current()?'error':'cancelled');if(current()){const message=error.message||'阅读解构失败。';view.answer.textContent=message;view.answer.classList.add('error');view.answer.setAttribute('aria-busy','false');view.retry.hidden=false;view.retry.onclick=()=>{if(current())void decomposeSelection(target,x,y);};positionCard(view);setTaskStatus('lookup',message,{error:true});}}
     finally{if(state.card===view&&!current())closeCard();}
   }
@@ -1769,6 +1769,7 @@
       for(const panel of passageErrors)if(!panel.isConnected){passageErrors.delete(panel);detachedPassage=true;}
       if(detachedPassage){if(passageErrors.size||state.passageRequests.size)updatePassageStatus();else setTaskStatus('passage',null);}
       for(const panel of document.querySelectorAll('['+OWN+'="passage-translation"]')){const target=passageSources.get(panel);if (target?.kind === 'navigation' && !validPassageTarget(target)) removePassagePanel(panel)}
+      if(sentenceSelection.blocks.size&&!sentenceSelection.style?.isConnected)scheduleSentenceSelection();
       if(sentenceGroups.enabled&&mutations.some(mutation=>mutation.type==='attributes'&&touchesSentence(mutation.target))){scheduleSentenceRender();scheduleSentenceScan(180);}
       const marksChanged=mutations.some(mutation=>nodeElement(mutation.target)?.closest('.'+MARK_CLASS)||mutation.type==='childList'&&[...mutation.addedNodes,...mutation.removedNodes].some(node=>nodeElement(node)?.closest('.'+MARK_CLASS)));
       if(marksChanged)scheduleSentenceRender();
@@ -1793,7 +1794,7 @@
     if(state.card&&(!preserveContent||!validTarget(state.card.target))){state.card.refreshPreparedOnClose=false;closeCard();}
     cancelPassageRequests(true,preserveContent);if(!preserveContent)state.observer?.disconnect();clearAutomatic(preserveContent);state.root=null;state.blocks=[];
     if(!state.enabled)return;
-    installPageStyles();setupMutationObserver();
+    installPageStyles();setupMutationObserver();if(sentenceGroups.enabled)scheduleSentenceRender();
     try{await setupAutomatic(generation,contentGeneration);}catch{if(generation===state.generation&&contentGeneration===state.contentGeneration){state.failed=true;}}
     if(generation===state.generation&&contentGeneration===state.contentGeneration&&state.enabled&&state.card&&validTarget(state.card.target))positionCard(state.card);
   }
