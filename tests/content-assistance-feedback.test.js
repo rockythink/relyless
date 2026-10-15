@@ -153,16 +153,18 @@ test('selection decomposition keeps loading and retryable failure local, and dro
   },{structure:true});
 });
 
-test('syntax selection clips across inline nodes, keeps native gaps and clears on disable',async()=>{
+for(const mode of ['ambient','on-demand'])test('syntax selection clips inline nodes and ignores unrelated ShadowRoot selection in '+mode+' mode',async()=>{
   await withContent(async({window,state,paragraph,pending,handlers,event,click,send})=>{
     globalThis.Highlight=class extends Set{};
     const computed=getComputedStyle;globalThis.getComputedStyle=(element,pseudo)=>({...computed(element),font:'16px Arial',fontSize:'16px',lineHeight:'40px',color:'rgb(32, 33, 36)',backgroundColor:pseudo?'rgba(0, 0, 0, 0)':'rgb(255, 255, 255)'});
     window.HTMLCanvasElement.prototype.getContext=()=>({measureText:()=>({fontBoundingBoxDescent:4})});
+    // happy-dom omits the browser's cross-tree Range exception.
+    const compare=window.Range.prototype.compareBoundaryPoints;window.Range.prototype.compareBoundaryPoints=function(how,other){if(this.startContainer.getRootNode()!==other.startContainer.getRootNode())throw new window.DOMException('Ranges belong to different trees','WrongDocumentError');return compare.call(this,how,other);};
     const original=paragraph.innerHTML,range=document.createRange();range.selectNodeContents(paragraph);getSelection().addRange(range);handlers.get('showPassageAction')(event(paragraph,{type:'pointerup'}));
     click([...document.querySelectorAll('[data-shisui-ui="passage-action"] button')].find(button=>button.textContent==='解构所选'));
     await waitFor(()=>pending.length===1);const item=pending.shift(),sentence=item.message.items[0].sentence;
     item.reply({ok:true,data:{items:[{id:item.message.items[0].id,groups:[{role:'clause',start:0,end:sentence.length,parent:-1},{role:'subject',start:0,end:10,parent:0},{role:'predicate',start:11,end:18,parent:0}]}]}});
-    await waitFor(()=>state.card===null);state.settings.assistanceMode='ambient';
+    await waitFor(()=>state.card===null);await waitFor(()=>[...CSS.highlights.keys()].some(name=>name.includes('-subject-')));state.settings.assistanceMode=mode;
     await send({type:'SS_SET_SENTENCE_DENSITY',density:'medium'});
     const selected=document.createRange();selected.setStart(paragraph.querySelector('em').firstChild,0);selected.setEnd(paragraph.lastChild,5);getSelection().removeAllRanges();getSelection().addRange(selected);handlers.get('scheduleSentenceSelection')();
     const selectedRanges=()=>[...CSS.highlights].filter(([name])=>name.includes('-selection-')).map(([name,value])=>({name,text:[...value].map(range=>range.toString()).join('')}));
@@ -174,6 +176,10 @@ test('syntax selection clips across inline nodes, keeps native gaps and clears o
     expect((await send(selectionCommand(false))).data.sentenceGroups).toMatchObject({enabled:true,selectionColor:false});expect(selectedRanges()).toEqual([]);expect([...CSS.highlights.keys()].some(name=>name.includes('-subject-'))).toBe(true);expect(getSelection().toString()).toBe('client retr');
     expect((await send({type:'SS_STATUS'})).data.sentenceGroups.selectionColor).toBe(false);
     expect((await send(selectionCommand(true))).data.sentenceGroups.selectionColor).toBe(true);expect(selectedRanges().find(row=>row.name.includes('3978aa')).text).toBe('client');expect(pending).toEqual([]);
+    const nativeSelection=getSelection,host=document.createElement('div');document.body.append(host);const shadow=host.attachShadow({mode:'open'});shadow.textContent='Unrelated shadow text';const shadowRange=document.createRange();shadowRange.selectNodeContents(shadow);
+    globalThis.getSelection=()=>({rangeCount:1,isCollapsed:false,getRangeAt:()=>shadowRange});handlers.get('scheduleSentenceSelection')();
+    await waitFor(()=>selectedRanges().length===0);expect(paragraph.hasAttribute('data-shisui-structure-selection')).toBe(false);expect(document.querySelector('[data-shisui-ui="sentence-selection-style"]')).toBeNull();
+    globalThis.getSelection=nativeSelection;handlers.get('scheduleSentenceSelection')();await waitFor(()=>selectedRanges().length>0);host.remove();
     getSelection().removeAllRanges();handlers.get('scheduleSentenceSelection')();await waitFor(()=>selectedRanges().length===0);expect(paragraph.hasAttribute('data-shisui-structure-selection')).toBe(false);
     getSelection().addRange(selected);handlers.get('scheduleSentenceSelection')();await waitFor(()=>selectedRanges().length>0);
     await send({type:'SS_SET_SENTENCE_GROUPS',enabled:false});expect(selectedRanges()).toEqual([]);expect(paragraph.hasAttribute('data-shisui-structure-selection')).toBe(false);expect(getSelection().toString()).toBe('client retr');
@@ -480,3 +486,4 @@ for(const keepOther of [false,true])test('host removal of a pending passage '+(k
     expect((await send({type:'SS_STATUS'})).data.tasks.some(task=>task.key==='passage'&&task.busy)).toBe(keepOther);for(const item of pending.splice(0))item.reply({ok:true,data:{items:[{id:'p1',translation:'迟到的译文'}]}});await Promise.all(operations);expect(removed.isConnected).toBe(false);expect(document.querySelectorAll('[data-shisui-ui=passage-translation]').length).toBe(keepOther?1:0);
   },{observe:true});
 });
+

@@ -157,6 +157,7 @@
     return [...range.getClientRects()].some(rect=>Math.min(rect.right,right)>Math.max(rect.left,left)&&Math.min(rect.bottom,bottom)>Math.max(rect.top,top));
   }
   const sentenceCanRun=()=>sentenceGroups.enabled&&automatic()&&state.providerConfigured;
+  const sentenceCanRender=()=>isAlive()&&sentenceGroups.enabled&&state.enabled&&!state.paused&&!state.emergency&&state.providerConfigured&&document.visibilityState==='visible';
   function sentenceClip(block){
     let {left,top,right,bottom}=viewportRect();
     for(let parent=block;parent;parent=parent.parentElement){const style=getComputedStyle(parent),rect=parent.getBoundingClientRect();if(/hidden|clip|auto|scroll/.test(style.overflowX)){left=Math.max(left,rect.left);right=Math.min(right,rect.right);}if(/hidden|clip|auto|scroll/.test(style.overflowY)){top=Math.max(top,rect.top);bottom=Math.min(bottom,rect.bottom);}}
@@ -170,6 +171,7 @@
   }
   function clearSentenceHighlights(){clearSentenceSelection();for(const name of sentenceGroups.highlights.keys())CSS.highlights.delete(name);sentenceGroups.highlights.clear();sentenceGroups.style?.remove();sentenceGroups.style=null;sentenceGroups.hits=[];sentenceGroups.parts=[];}
   function selectedIntersection(range,selection){
+    if(range.startContainer.getRootNode()!==selection.startContainer.getRootNode())return null;
     if(range.compareBoundaryPoints(Range.END_TO_START,selection)>=0||range.compareBoundaryPoints(Range.START_TO_END,selection)<=0)return null;
     const clipped=range.cloneRange();
     if(clipped.compareBoundaryPoints(Range.START_TO_START,selection)<0)clipped.setStart(selection.startContainer,selection.startOffset);
@@ -178,14 +180,17 @@
   }
   function renderSentenceSelection(){
     cancelAnimationFrame(sentenceSelection.frame);sentenceSelection.frame=0;const selection=getSelection();
-    if(!sentenceCanRun()||!sentenceGroups.selectionColor||!selection?.rangeCount||selection.isCollapsed||matchMedia('(forced-colors: active)').matches){clearSentenceSelection();return;}
+    if(!sentenceCanRender()||!sentenceGroups.selectionColor||!selection?.rangeCount||selection.isCollapsed||matchMedia('(forced-colors: active)').matches){clearSentenceSelection();return;}
     if(sentenceSelection.style?.sheet)sentenceSelection.style.sheet.disabled=true;
-    const selected=selection.getRangeAt(0),highlights=new Map(),blocks=new Set(),rules=[],valid=new Map();
+    const selected=selection.getRangeAt(0),highlights=new Map(),blocks=new Set(),rules=[],valid=new Map(),mappings=new Map(),root=selected.startContainer.getRootNode(),ambient=automatic();
     const add=(name,range,priority,background,color)=>{
       let highlight=highlights.get(name);if(!highlight){highlight=new Highlight();highlight.priority=priority;highlights.set(name,highlight);rules.push('::highlight('+name+'){background-color:'+background+';color:'+color+'}');}highlight.add(range);
     };
     for(const part of sentenceGroups.parts){
-      if(!valid.has(part.key)){const entry=sentenceGroups.entries.get(part.key);valid.set(part.key,Boolean(entry&&validSentenceEntry(entry)));}if(!valid.get(part.key))continue;
+      const entry=sentenceGroups.entries.get(part.key);if(!entry||!ambient&&!entry.explicit)continue;
+      if(!mappings.has(part.block))mappings.set(part.block,part.block.isConnected&&part.block.getRootNode()===root&&inReadingSurface(part.block)&&selected.intersectsNode(part.block)?textMap(part.block):null);
+      const mapping=mappings.get(part.block);if(!mapping)continue;
+      if(!valid.has(part.key))valid.set(part.key,validSentenceEntry(entry,mapping));if(!valid.get(part.key))continue;
       const ranges=part.ranges.map(range=>selectedIntersection(range,selected)).filter(Boolean);if(!ranges.length)continue;
       const prefix='shisui-'+runtime.id+'-selection-';
       if(!blocks.has(part.block)){
@@ -221,7 +226,7 @@
       for(const rect of hit.range.getClientRects())if(x>=rect.left&&x<=rect.right&&Math.abs(y-(rect.bottom-descent+hit.offset+.75))<=4)return hit;
     }return null;
   }
-  function validSentenceEntry(entry){if(!entry.block?.isConnected||!inReadingSurface(entry.block))return false;const mapping=textMap(entry.block);return mapping.text===entry.sourceText&&mapping.text.slice(entry.start,entry.end)===entry.sentence;}
+  function validSentenceEntry(entry,mapping){if(!entry.block?.isConnected||!inReadingSurface(entry.block))return false;mapping||=textMap(entry.block);return mapping.text===entry.sourceText&&mapping.text.slice(entry.start,entry.end)===entry.sentence;}
   const structureRoles=globalThis.ShisuiDesign.structureRoles;
   const structureColors=globalThis.ShisuiDesign.structureColors;
   function sentenceColor(block,role){const rgb=getComputedStyle(block).color.match(/[\d.]+/g)?.slice(0,3).map(Number)||[32,32,32];return structureColors[structureRoles[role][1]][(.2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2])>145?1:0];}
@@ -266,9 +271,10 @@
   function renderSentenceGroups(){
     if(lookupBusy())return;
     cancelAnimationFrame(sentenceGroups.frame);sentenceGroups.frame=0;sentenceGroups.hits=[];sentenceGroups.parts=[];
-    if(!sentenceCanRun()){clearSentenceHighlights();updateStructureControl();return;}
+    if(!sentenceCanRender()){clearSentenceHighlights();updateStructureControl();return;}
     const highlights=new Map(),rules=[],room=new WeakMap(),descents=new Map();
     for(const [key,entry]of sentenceGroups.entries){
+      if(!automatic()&&!entry.explicit)continue;
       if(!entry.block?.isConnected||!inReadingSurface(entry.block)){sentenceGroups.entries.delete(key);sentenceGroups.processed.delete(key);continue;}
       const mapping=textMap(entry.block);if(mapping.text!==entry.sourceText||mapping.text.slice(entry.start,entry.end)!==entry.sentence){sentenceGroups.entries.delete(key);sentenceGroups.processed.delete(key);continue;}
       const density=sentenceGroups.density,style=getComputedStyle(entry.block),leading=parseFloat(style.lineHeight)||parseFloat(style.fontSize)*1.2;entry.tight=false;
@@ -1448,7 +1454,7 @@
       const result=await request('SENTENCE_GROUPS_BATCH',{items:[{id:job.id,sentence}],explicit:true});received=result;
       if(!current()){reportResult(result,'cancelled');return;}
       const item=result?.items?.[0];if(result?.items?.length!==1||!validSentenceGroups(item,job))throw new Error('阅读解构范围无效。');
-      sentenceGroups.entries.set(job.key,{...job,groups:item.groups});reportResult(result,'ok');closeCard();removeStructureCard();openStructureCard(job.key,x,y);
+      sentenceGroups.entries.set(job.key,{...job,groups:item.groups,explicit:true});reportResult(result,'ok');closeCard();removeStructureCard();openStructureCard(job.key,x,y);scheduleSentenceRender();
     }catch(error){reportResult(received,current()?'error':'cancelled');if(current()){const message=error.message||'阅读解构失败。';view.answer.textContent=message;view.answer.classList.add('error');view.answer.setAttribute('aria-busy','false');view.retry.hidden=false;view.retry.onclick=()=>{if(current())void decomposeSelection(target,x,y);};positionCard(view);setTaskStatus('lookup',message,{error:true});}}
     finally{if(state.card===view&&!current())closeCard();}
   }
