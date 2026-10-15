@@ -15,7 +15,9 @@
   <label class="popup-switch-copy" for="sentence-groups"><span id="sentence-groups-title" class="popup-control-title">阅读解构</span><span id="sentence-structure-key">标出句子主干 · 产生额外模型用量</span><span id="sentence-groups-error" class="inline-message error popup-feedback" role="alert" hidden></span></label>
   <div class="switch"><input id="sentence-groups" type="checkbox" disabled aria-labelledby="sentence-groups-title" aria-describedby="sentence-groups-note sentence-structure-key sentence-groups-error"><span aria-hidden="true"></span></div>
   <p id="sentence-groups-note" class="popup-feedback" aria-live="polite">已关闭；可随时为当前页面开启。</p>
-
+  <div id="sentence-selection-option" class="sentence-suboption" role="group" aria-label="阅读解构子功能" hidden>
+    <label class="check-row" for="sentence-selection"><input id="sentence-selection" type="checkbox" disabled aria-describedby="sentence-selection-note sentence-groups-error"><span>划选语法配色<small id="sentence-selection-note">仅本页 · 刷新后恢复默认</small></span></label>
+  </div>
 </section>
 <section class="popup-switch-panel site-auto-panel" aria-labelledby="site-auto-title">
   <label class="popup-switch-copy" for="site-auto"><span id="site-auto-title" class="popup-control-title">此网站以后自动开启</span><span id="site-auto-note" class="popup-feedback">有限上下文用于准备；支持记录只在本机。</span><span id="site-auto-error" class="inline-message error popup-feedback" role="alert" hidden></span></label>
@@ -34,7 +36,7 @@
 
   <div id="emergency-confirm" class="emergency-confirm" role="group" aria-labelledby="emergency-confirm-title" hidden>
     <b id="emergency-confirm-title">确认翻译当前页面</b>
-    <p>保留英文，按阅读位置分批处理。原文、标题、章节及有限相邻文本发送给所选服务，按服务规则计费；停止不能撤回已发送请求。</p>
+    <p>保留英文，按阅读位置分批翻译。原文、标题、章节及有限相邻文本发给所选服务并计费；停止不撤回已发送请求。</p>
     <p id="emergency-estimate" class="muted" hidden></p>
     <p id="emergency-budget" class="inline-message error" role="alert" hidden></p>
     <div class="provider-actions"><button id="emergency-start" class="primary-action" type="button">确认并翻译本页</button><button id="emergency-cancel" class="icon-text-button" type="button">取消</button></div>

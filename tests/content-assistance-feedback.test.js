@@ -56,7 +56,7 @@ const waitFor=async predicate=>{const deadline=Date.now()+1200;while(!await pred
 async function withContent(run,{structure=false,lookupDisplay='annotation',observe=false,settingsPatch={},bodyHtml,runtimeHandler}={}){
   const window=new Window({url:'https://example.test/article'}),original=new Map(),handlers=new Map(),pending=[],shadows=new WeakMap();
   const rect={left:40,top:80,right:340,bottom:100,width:300,height:20,x:40,y:80};
-  const globals={window,document:window.document,location:window.location,Node:window.Node,NodeFilter:window.NodeFilter,HTMLElement:window.HTMLElement,MutationObserver:window.MutationObserver,
+  const globals={window,document:window.document,location:window.location,Node:window.Node,NodeFilter:window.NodeFilter,Range:window.Range,HTMLElement:window.HTMLElement,MutationObserver:window.MutationObserver,
     getComputedStyle:element=>({opacity:'1',display:element.tagName==='SPAN'?'inline':'block',visibility:'visible',contentVisibility:'visible',clip:'auto',clipPath:'none',overflowX:'visible',overflowY:'visible'}),
     matchMedia:()=>({addEventListener(){},removeEventListener(){}}),innerWidth:1000,innerHeight:800,scrollX:0,scrollY:0,
     requestAnimationFrame:callback=>setTimeout(callback,1),cancelAnimationFrame:clearTimeout,IntersectionObserver:class{observe(){}disconnect(){}},
@@ -87,6 +87,7 @@ async function withContent(run,{structure=false,lookupDisplay='annotation',obser
   try{
     delete globalThis.ShisuiContent;new Function(source('content/kernel.js'))();
     const state=ShisuiContent.state;state.enabled=true;state.settings=settings;state.providerConfigured=true;state.domainResolved=true;
+    if(structure)new Function(source('design.js'))();
     new Function(source('content.js'))();await new Promise(resolve=>setTimeout(resolve,0));
     if(observe){state.enabled=false;await new Promise(resolve=>listener({type:'SS_SET_ENABLED',enabled:true},{id:'abc'},resolve));}
     await run({window,state,paragraph,pending,handlers,event,lookup,shadows,click:button=>{if(button.onclick)button.onclick(event(button));else{const action=elementListeners.get(button)?.get('click');if(action)action(event(button));else button.click();}},send:(message,sender={id:'abc'})=>new Promise(resolve=>{if(listener(message,sender,resolve)!==true)resolve();})});
@@ -150,6 +151,34 @@ test('selection decomposition keeps loading and retryable failure local, and dro
     await waitFor(()=>state.card?.answer.classList.contains('error'));expect(state.card.answer.textContent).toContain('解构服务不可用');expect(state.card.retry.hidden).toBe(false);
     state.card.retry.click();await waitFor(()=>pending.length===1);state.card.card.querySelector('.dismiss').click();pending.shift().reply({ok:false,error:'迟到的解构错误'});await new Promise(resolve=>setTimeout(resolve,0));expect(state.card).toBeNull();
   },{structure:true});
+});
+
+test('syntax selection clips across inline nodes, keeps native gaps and clears on disable',async()=>{
+  await withContent(async({window,state,paragraph,pending,handlers,event,click,send})=>{
+    globalThis.Highlight=class extends Set{};
+    const computed=getComputedStyle;globalThis.getComputedStyle=(element,pseudo)=>({...computed(element),font:'16px Arial',fontSize:'16px',lineHeight:'40px',color:'rgb(32, 33, 36)',backgroundColor:pseudo?'rgba(0, 0, 0, 0)':'rgb(255, 255, 255)'});
+    window.HTMLCanvasElement.prototype.getContext=()=>({measureText:()=>({fontBoundingBoxDescent:4})});
+    const original=paragraph.innerHTML,range=document.createRange();range.selectNodeContents(paragraph);getSelection().addRange(range);handlers.get('showPassageAction')(event(paragraph,{type:'pointerup'}));
+    click([...document.querySelectorAll('[data-shisui-ui="passage-action"] button')].find(button=>button.textContent==='解构所选'));
+    await waitFor(()=>pending.length===1);const item=pending.shift(),sentence=item.message.items[0].sentence;
+    item.reply({ok:true,data:{items:[{id:item.message.items[0].id,groups:[{role:'clause',start:0,end:sentence.length,parent:-1},{role:'subject',start:0,end:10,parent:0},{role:'predicate',start:11,end:18,parent:0}]}]}});
+    await waitFor(()=>state.card===null);state.settings.assistanceMode='ambient';
+    await send({type:'SS_SET_SENTENCE_DENSITY',density:'medium'});
+    const selected=document.createRange();selected.setStart(paragraph.querySelector('em').firstChild,0);selected.setEnd(paragraph.lastChild,5);getSelection().removeAllRanges();getSelection().addRange(selected);handlers.get('scheduleSentenceSelection')();
+    const selectedRanges=()=>[...CSS.highlights].filter(([name])=>name.includes('-selection-')).map(([name,value])=>({name,text:[...value].map(range=>range.toString()).join('')}));
+    await waitFor(()=>selectedRanges().find(row=>row.name.includes('base'))?.text==='client retr');
+    const values=selectedRanges();expect(values.find(row=>row.name.includes('3978aa')).text).toBe('client');expect(values.find(row=>row.name.includes('ad672b')).text).toBe('retr');expect(values.find(row=>row.name.includes('base')).text).toBe('client retr');
+    expect(getSelection().toString()).toBe('client retr');expect(paragraph.innerHTML).toBe(original);
+    const selectionCommand=enabled=>({type:'SS_SET_SENTENCE_SELECTION',enabled,pageUrl:window.location.href});
+    for(const [message,sender]of [[selectionCommand(false),{id:'foreign'}],[selectionCommand(false),{id:'abc',tab:{id:1}}],[{...selectionCommand(false),pageUrl:'https://example.test/old'},{id:'abc'}],[selectionCommand('false'),{id:'abc'}]])expect((await send(message,sender)).ok).toBe(false);
+    expect((await send(selectionCommand(false))).data.sentenceGroups).toMatchObject({enabled:true,selectionColor:false});expect(selectedRanges()).toEqual([]);expect([...CSS.highlights.keys()].some(name=>name.includes('-subject-'))).toBe(true);expect(getSelection().toString()).toBe('client retr');
+    expect((await send({type:'SS_STATUS'})).data.sentenceGroups.selectionColor).toBe(false);
+    expect((await send(selectionCommand(true))).data.sentenceGroups.selectionColor).toBe(true);expect(selectedRanges().find(row=>row.name.includes('3978aa')).text).toBe('client');expect(pending).toEqual([]);
+    getSelection().removeAllRanges();handlers.get('scheduleSentenceSelection')();await waitFor(()=>selectedRanges().length===0);expect(paragraph.hasAttribute('data-shisui-structure-selection')).toBe(false);
+    getSelection().addRange(selected);handlers.get('scheduleSentenceSelection')();await waitFor(()=>selectedRanges().length>0);
+    await send({type:'SS_SET_SENTENCE_GROUPS',enabled:false});expect(selectedRanges()).toEqual([]);expect(paragraph.hasAttribute('data-shisui-structure-selection')).toBe(false);expect(getSelection().toString()).toBe('client retr');
+    expect(document.querySelector('[data-shisui-ui="sentence-selection-style"]')).toBeNull();expect(pending).toEqual([]);expect((await send(selectionCommand(true))).ok).toBe(false);
+  },{structure:true,bodyHtml:'<main><p>The <em>client</em> retries with backoff.</p></main>'});
 });
 
 test('known save errors stay beside the originating button and do not change source text',async()=>{

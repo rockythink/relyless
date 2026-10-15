@@ -1,6 +1,8 @@
 import {request, errorText, upsertSiteEntry} from '../shared.js';
 
 const popupEls={status:document.querySelector('#page-status'),hostname:document.querySelector('#site-hostname'),siteAuto:document.querySelector('#site-auto'),siteAutoNote:document.querySelector('#site-auto-note'),siteHintDismiss:document.querySelector('#site-hint-dismiss'),siteAutoError:document.querySelector('#site-auto-error'),toggle:document.querySelector('#toggle-page'),pageNote:document.querySelector('#page-note'),actionError:document.querySelector('#action-error'),readerToggle:document.querySelector('#toggle-reader'),readerNote:document.querySelector('#reader-note'),readerError:document.querySelector('#reader-error'),sentenceGroups:document.querySelector('#sentence-groups'),sentenceGroupsNote:document.querySelector('#sentence-groups-note'),sentenceGroupsError:document.querySelector('#sentence-groups-error'),options:document.querySelector('#open-options'),serviceWarning:document.querySelector('#service-warning'),serviceWarningCopy:document.querySelector('#service-warning-copy'),repairService:document.querySelector('#repair-service'),emergencyEstimate:document.querySelector('#emergency-estimate'),emergencyBudget:document.querySelector('#emergency-budget')};
+popupEls.sentenceSelection=document.querySelector('#sentence-selection');
+popupEls.sentenceSelectionOption=document.querySelector('#sentence-selection-option');
 const popupUnsupported=document.querySelector('#unsupported-page');
 const popupPageControls=document.querySelector('#page-controls');
 for(const name of ['panel','open','confirm','confirm-title','start','cancel','progress','progress-copy','counts','actions','stop','resume','retry','clear','result','status']){
@@ -12,7 +14,7 @@ let popupState=null;
 let popupAutomation=null;
 let popupTab=null;
 let popupEnabled=false;
-let popupSentenceGroups={enabled:false,status:'off',error:'',processed:0};
+let popupSentenceGroups={enabled:false,selectionColor:true,status:'off',error:'',processed:0};
 let popupReaderActive=false;
 let popupSentenceGroupsLoaded=false;
 let popupBusy=false;
@@ -98,6 +100,9 @@ function popupRender(){
   else popupSetLive(popupEls.sentenceGroupsNote,'已关闭；可随时为当前页面开启。');
   popupEls.sentenceGroupsNote.hidden=Boolean(popupState?.providerConfigured&&popupSentenceGroupsLoaded&&!popupSentenceGroups.enabled&&popupSentenceGroups.status==='off'&&!popupSentenceGroups.error);
   if(popupSentenceGroups.error){popupEls.sentenceGroupsError.textContent=popupSentenceGroups.error;popupEls.sentenceGroupsError.hidden=false;}else{popupEls.sentenceGroupsError.textContent='';popupEls.sentenceGroupsError.hidden=true;}
+  popupEls.sentenceSelectionOption.hidden=!popupSentenceGroupsLoaded||!popupSentenceGroups.enabled;
+  popupEls.sentenceSelection.checked=popupSentenceGroups.selectionColor!==false;
+  popupEls.sentenceSelection.disabled=popupBusy||!supported||!popupSentenceGroupsLoaded||!popupSentenceGroups.enabled;
   const emergencyVisible=Boolean(popupEmergency.active||popupEmergency.displayed||popupEmergency.phase!=='off');
   const resumable=!popupEmergency.active&&popupEmergency.total>0&&['stopped','error'].includes(popupEmergency.phase);
   popupSetLive(popupEls.emergencyStatus,popupReaderActive?'先退出专注阅读':popupEmergencyPhaseText());
@@ -170,6 +175,16 @@ async function popupToggleSentenceGroups(){
   }catch(error){try{await popupGetSentenceGroups();}catch{}popupSentenceGroups.error='无法更新阅读解构：'+errorText(error);}
   finally{popupBusy=false;popupRender();popupRestoreFocus(popupEls.sentenceGroups);}
 }
+async function popupToggleSentenceSelection(){
+  if(!popupSupported()||popupBusy||!popupSentenceGroups.enabled)return;
+  const enabled=popupEls.sentenceSelection.checked;popupBusy=true;popupSentenceGroups.error='';popupRender();
+  try{
+    const result=await chrome.tabs.sendMessage(popupTab.id,{type:'SS_SET_SENTENCE_SELECTION',enabled,pageUrl:popupTab.url},{frameId:0});
+    if(!result?.ok)throw new Error(result?.error||'网页未能应用划选配色，请刷新后重试。');
+    popupSentenceGroups={...popupSentenceGroups,...result.data?.sentenceGroups};
+  }catch(error){await popupGetPageStatus().catch(()=>{});popupSentenceGroups.error='无法更新划选配色：'+errorText(error);}
+  finally{popupBusy=false;popupRender();popupRestoreFocus(popupEls.sentenceSelection);}
+}
 function popupFocusEmergency(){const button=!popupEls.emergencyConfirm.hidden?popupEls.emergencyStart:popupEmergency.active?popupEls.emergencyStop:!popupEls.emergencyResume.hidden?popupEls.emergencyResume:popupEmergency.phase==='off'?popupEls.emergencyOpen:popupEls.emergencyClear;if(!button.disabled)button.focus();}
 function popupEmergencyPrompt(show,{resume=false,focus=true}={}){
   popupEmergencyResume=Boolean(show&&resume&&!popupEmergency.active&&popupEmergency.total>0&&['stopped','error'].includes(popupEmergency.phase));
@@ -182,7 +197,7 @@ async function popupEmergencyEstimate(){
     await request('PAGE_UI_INJECT',{tabId:popupTab.id});
     const view=await request('EMERGENCY_ESTIMATE',{tabId:popupTab.id,url:popupTab.url});
     if(!view?.estimate)return;
-    popupEls.emergencyEstimate.textContent=`预计约 ${view.estimate} tokens${view.budget?` · 本月已用约 ${view.monthlyUsed} / 限额 ${view.budget}`:''}`;
+    popupEls.emergencyEstimate.textContent=`预计 ${view.estimate} tokens${view.budget?` · 本月约 ${view.monthlyUsed} / 限额 ${view.budget}`:''}`;
     popupEls.emergencyEstimate.hidden=false;
     if(view.budgetExceeded){popupEls.emergencyBudget.textContent=`按预估将超出本月预算限额 ${view.budget} tokens。`;popupEls.emergencyBudget.hidden=false;}
   }catch{popupEls.emergencyEstimate.hidden=true;}
@@ -197,7 +212,7 @@ async function popupEmergencyStart(){
     if(current.url!==popupTab.url)throw new Error('网页已切换，请重新打开扩展弹窗后确认。');
     await request('PAGE_UI_INJECT',{tabId:popupTab.id});
     const begin=await request('EMERGENCY_BEGIN',{tabId:popupTab.id,url:popupTab.url,confirmed:popupBudgetConfirmed});
-    if(begin?.budgetExceeded){popupBudgetConfirmed=true;popupEls.emergencyBudget.textContent=`超出本月用量预算（已用约 ${begin.monthlyUsed} tokens + 预计 ${begin.estimate} > 限额 ${begin.budget}），仍要继续？`;popupEls.emergencyBudget.hidden=false;popupEls.emergencyStart.textContent='仍要翻译本页';return;}
+    if(begin?.budgetExceeded){popupBudgetConfirmed=true;popupEls.emergencyBudget.textContent=`超预算：本月约 ${begin.monthlyUsed} + 本次预计 ${begin.estimate} > 限额 ${begin.budget} tokens。仍要继续？`;popupEls.emergencyBudget.hidden=false;popupEls.emergencyStart.textContent='仍要翻译本页';return;}
     ({token}=begin);
     const result=await chrome.tabs.sendMessage(popupTab.id,{type:'SS_EMERGENCY_START',token,resume},{frameId:0});
     if(!result?.ok)throw new Error(result?.error||'无法启动本页翻译，请刷新网页后重试。');
@@ -242,6 +257,7 @@ async function popupWatchPage(){
   finally{setTimeout(()=>void popupWatchPage(),1000);}
 }
 popupEls.toggle.addEventListener('change',()=>void popupTogglePage());popupEls.readerToggle.addEventListener('click',()=>void popupToggleReader());popupEls.siteAuto.addEventListener('change',()=>void popupToggleSite());popupEls.siteHintDismiss.addEventListener('click',()=>void popupDismissSiteHint());popupEls.sentenceGroups.addEventListener('change',()=>void popupToggleSentenceGroups());popupEls.options.addEventListener('click',()=>popupOpenOptions());popupEls.repairService.addEventListener('click',()=>popupOpenOptions('service'));popupEls.emergencyOpen.addEventListener('click',()=>popupEmergencyPrompt(true));popupEls.emergencyCancel.addEventListener('click',()=>popupEmergencyPrompt(false));popupEls.emergencyStart.addEventListener('click',()=>void popupEmergencyStart());popupEls.emergencyStop.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_STOP'));popupEls.emergencyResume.addEventListener('click',()=>popupEmergencyPrompt(true,{resume:true}));popupEls.emergencyRetry.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_RETRY'));popupEls.emergencyClear.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_END'));
+popupEls.sentenceSelection.addEventListener('change',()=>void popupToggleSentenceSelection());
 popupEls.emergencyConfirm.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();popupEmergencyPrompt(false);}});
 chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local'||!changes.settings)return;void Promise.all([request('STATE_GET'),request('AUTOMATION_GET',{tabId:popupTab?.id}).catch(()=>null)]).then(([state,automation])=>{popupState=state;if(automation)popupAutomation=automation;popupRender();}).catch(()=>{});});
 void popupInit().then(()=>setTimeout(()=>void popupWatchPage(),1000));
