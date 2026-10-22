@@ -47,7 +47,13 @@
   const inReadingSurface = node => Boolean(node && (!state.reader || isReaderContent(node)));
   function hiddenStyle(style) { return style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.contentVisibility === 'hidden' || Number(style.opacity) === 0 || style.clip === 'rect(0px, 0px, 0px, 0px)' || style.clipPath === 'inset(50%)' || style.overflow === 'hidden' && parseFloat(style.width) <= 1 && parseFloat(style.height) <= 1; }
   function isVisible(element) {
-    if (!element?.isConnected || !element.getClientRects().length) return false;
+    if (!element?.isConnected) return false;
+    // display: contents 不生成自己的盒子（MDN 的 main 就是这样），改看其内容是否有可见的盒子。
+    if (!element.getClientRects().length) {
+      if (getComputedStyle(element).display !== 'contents') return false;
+      const range = document.createRange(); range.selectNodeContents(element);
+      if (!range.getClientRects().length) return false;
+    }
     for (let parent = element; parent; parent = parent.parentElement) if (hiddenStyle(getComputedStyle(parent))) return false;
     return true;
   }
