@@ -606,6 +606,8 @@ test('turning off page reading keeps a confirmed translation when word marks unw
     await new Promise(resolve=>setTimeout(resolve,0));
     expect(paragraph.querySelector('.shisui-term-mark')).toBeNull();
     expect(paragraph.querySelector('[data-shisui-ui=emergency-translation]')?.textContent).toBe('保留的译文');
+    // 保留的译文仍需页面样式（字号、颜色、间距）；样式只作用于扩展自己的节点。
+    expect(document.getElementById('shisui-content-style')).not.toBeNull();
   });
 });
 
