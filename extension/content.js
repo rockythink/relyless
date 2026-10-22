@@ -725,14 +725,23 @@
       identities.add(identity(target));occupied.add(job.block);if(stage==='quiet')quiet++;else prominent++;
     }
   }
+  // 超长的块（例如整篇用 <br> 分段的旧式网页）不整块跳过：从第一句可见的句子起截取一段分析。
+  function visibleWindow(block,text,limit){
+    const mapping=textMap(block),sentences=segments(text);
+    const first=sentences.findIndex(item=>{const range=rangeFor(mapping,item.index,item.index+item.segment.length);return Boolean(range&&visibleRange(range,block));});
+    if(first<0)return null;
+    const start=sentences[first].index;let end=start;
+    for(const item of sentences.slice(first)){const next=item.index+item.segment.length;if(next-start>limit&&end>start)break;end=next;}
+    return end-start<=limit?{text:text.slice(start,end),offset:start}:null;
+  }
   async function buildJobs(blocks,generation,viewport) {
     let budget=8000,inputLength=0;const samples=[];
-    for(const block of blocks){const text=blockText(block);if(text.length>budget)continue;budget-=text.length;const inputStart=inputLength;samples.push({block,text,inputStart});inputLength+=text.length+1;}
+    for(const block of blocks){const full=blockText(block);let text=full,offset=0;if(full.length>budget){const window=visibleWindow(block,full,Math.min(budget,4000));if(!window)continue;({text,offset}=window);}budget-=text.length;const inputStart=inputLength;samples.push({block,text,inputStart,offset});inputLength+=text.length+1;}
     if(!samples.length||!automatic()||generation!==state.generation||viewport!==state.viewportGeneration||blocks.some(block=>!inReadingSurface(block)))return null;
     const analyzedText=samples.map(item=>item.text).join('\n'),local=await request('ANALYZE',{text:analyzedText,domain:state.domain});
     if(!automatic()||generation!==state.generation||viewport!==state.viewportGeneration||blocks.some(block=>!inReadingSurface(block)))return null;
     const jobs=[];
-    for(const {block,text,inputStart}of samples)for(const sentence of segments(text)){
+    for(const {block,text,inputStart,offset}of samples)for(const sentence of segments(text)){
       if(sentence.segment.length>2000)continue;
       const absoluteStart=inputStart+sentence.index,absoluteEnd=absoluteStart+sentence.segment.length,matches=[];
       for(const [order,term]of(local.terms||[]).entries())for(const occurrence of term.occurrences||[]){
@@ -742,8 +751,8 @@
       }
       matches.sort((a,b)=>b.priority-a.priority||a.order-b.order||a.start-b.start);
       const candidates=[],candidateKeys=new Set();for(const {text,wordId}of matches){const key=wordId+'\n'+text;if(candidateKeys.has(key))continue;candidateKeys.add(key);candidates.push({text,wordId});if(candidates.length===3)break;}
-      const range=rangeFor(textMap(block),sentence.index,sentence.index+sentence.segment.length);
-      jobs.push({id:'s'+(++nextSentence),block,start:sentence.index,end:sentence.index+sentence.segment.length,sentence:sentence.segment,domain:state.domain,candidates,rank:matches.reduce((max,item)=>Math.max(max,item.priority),0),visible:Boolean(range&&visibleRange(range,block))});
+      const range=rangeFor(textMap(block),offset+sentence.index,offset+sentence.index+sentence.segment.length);
+      jobs.push({id:'s'+(++nextSentence),block,start:offset+sentence.index,end:offset+sentence.index+sentence.segment.length,sentence:sentence.segment,domain:state.domain,candidates,rank:matches.reduce((max,item)=>Math.max(max,item.priority),0),visible:Boolean(range&&visibleRange(range,block))});
     }
     const ordered=jobs.sort((a,b)=>Number(b.visible)-Number(a.visible)||b.rank-a.rank),chosen=[...ordered.filter(job=>job.visible).slice(0,6),...ordered.filter(job=>!job.visible).slice(0,2)];let size=0;const batch=chosen.filter(job=>{const length=job.sentence.length+job.candidates.reduce((sum,item)=>sum+item.text.length,0);if(size+length>8000)return false;size+=length;return true;});return {samples,batch};
   }
@@ -1505,6 +1514,11 @@
     const value=text.trim().replace(/[.,;:!?]+$/,'');
     return !/\s/.test(value)&&/[._/\\:=#@$\d]|[a-z][A-Z]/.test(value);
   }
+  function paragraphBreaks(element){
+    let previous='';
+    for(const child of element.childNodes){if(child.nodeType===Node.TEXT_NODE&&!child.nodeValue.trim())continue;const current=child.nodeName==='BR'?'BR':'';if(current&&previous)return true;previous=current;}
+    return false;
+  }
   function emergencyBlocks(root) {
     const units=[];
     function visit(parent){
@@ -1517,6 +1531,10 @@
           if(node.matches(SKIP)||node.namespaceURI!==parent.namespaceURI||hiddenStyle(getComputedStyle(node))){flush();continue;}
           const display=getComputedStyle(node).display;
           if(layout||node.matches(BLOCK_SELECTOR)||!/^inline(?:$|-)/.test(display)&&display!=='contents'&&node.tagName!=='BR'){flush();visit(node);continue;}
+          // 整篇正文包在一个行内元素里、用 <br><br> 分段（如 <font>）时，把它当容器往下拆。
+          if(paragraphBreaks(node)){flush();visit(node);continue;}
+          // 旧式网页用连续两个 <br> 分段：在此断开，译文跟在各自段落后，不堆到整篇末尾。
+          if(node.tagName==='BR'){const last=nodes.findLast(item=>item.nodeType!==Node.TEXT_NODE||item.nodeValue.trim());if(!last){nodes=[];continue;}if(last.nodeType===Node.ELEMENT_NODE&&last.tagName==='BR'){while(nodes.length&&(nodes.at(-1).nodeType===Node.TEXT_NODE&&!nodes.at(-1).nodeValue.trim()||nodes.at(-1).tagName==='BR'))nodes.pop();flush();continue;}}
         }
         if(node.nodeType===Node.TEXT_NODE||node.nodeType===Node.ELEMENT_NODE)nodes.push(node);
       }flush();

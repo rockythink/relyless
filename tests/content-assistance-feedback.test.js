@@ -116,6 +116,22 @@ test('late prepared support cannot withdraw a confirmed annotation during viewpo
   }});
 });
 
+test('an oversized block still gets hints for its visible sentences',async()=>{
+  const sentence='Give it a concrete task in ordinary language so the assistant can inspect the request and verify the work.';
+  const long=Array(90).fill(sentence).join(' '),analyzed=[],batches=[];
+  await withContent(async()=>{
+    // 整块超过 8000 字符时，只分析从第一句可见句子起的一段，而不是整块跳过；短段落只贡献一句。
+    await waitFor(()=>batches.flat().length>1);
+    expect(analyzed.every(text=>text.length<=sentence.length+1+4000)).toBe(true);
+    expect(batches.flat().every(item=>item.sentence.trim()===sentence)).toBe(true);
+  },{observe:true,settingsPatch:{assistanceMode:'ambient',rememberSupport:true},bodyHtml:'<main lang="en"><p>'+sentence+'</p><p>'+long+'</p></main>',runtimeHandler:(message,callback)=>{
+    if(message.type==='ANALYZE'){analyzed.push(message.text);const start=message.text.indexOf('ordinary');callback({ok:true,data:{terms:[{id:'ordinary-general',priority:10,occurrences:[{start,end:start+'ordinary'.length,text:'ordinary'}]}]}});return true;}
+    if(message.type==='SUPPORT_BATCH'){batches.push(message.items);callback({ok:true,data:{items:message.items.map(item=>({id:item.id,target:null,meaning:null,sentenceTranslation:null,coverage:'excerpt'}))}});return true;}
+    if(message.type==='PREPARED_SUPPORT'){callback({ok:true,data:{items:message.items.map(item=>({id:item.id,targets:[]}))}});return true;}
+    return false;
+  }});
+});
+
 test('a remembered word with help history still renders its support batch',async()=>{
   const sentence='Give it a concrete task in ordinary language so the assistant can inspect the request, preserve context, explain the result, and verify the completed work.';
   const start=sentence.indexOf('ordinary');
@@ -274,6 +290,30 @@ test('a late dismissed annotation cannot clear a newer help card task',async()=>
     old.reply({ok:false,error:'迟到的词注错误'});await new Promise(resolve=>setTimeout(resolve,200));
     expect(state.card).toBe(current);expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='lookup')?.busy).toBe(true);
   });
+});
+
+test('page translation reads an article whose main element uses display contents',async()=>{
+  await withContent(async({pending,send})=>{
+    const main=document.querySelector('main'),style=globalThis.getComputedStyle;
+    main.getClientRects=()=>[];globalThis.getComputedStyle=element=>element===main?{...style(element),display:'contents'}:style(element);
+    try{
+      const started=await send({type:'SS_EMERGENCY_START',token:'page-token',resume:false});
+      expect(started.ok).toBe(true);await waitFor(()=>pending.length>0);
+      expect(pending[0].message.items.map(item=>item.text)).toEqual(['The client retries with backoff and keeps the reading context.']);
+    }finally{globalThis.getComputedStyle=style;}
+  },{bodyHtml:'<main lang="en"><p>The client retries with backoff and keeps the reading context.</p></main>'});
+});
+
+test('page translation splits paragraphs separated by double line breaks',async()=>{
+  await withContent(async({pending,send})=>{
+    await send({type:'SS_EMERGENCY_START',token:'page-token',resume:false});await waitFor(()=>pending.length>0);
+    expect(pending[0].message.items.map(item=>item.text)).toEqual(['The first paragraph explains how the client retries.','The second paragraph keeps a single\nline break inside.']);
+  },{bodyHtml:'<main lang="en"><div>The first paragraph explains how the client retries.<br><br>\n<br>The second paragraph keeps a single<br>line break inside.</div></main>'});
+  // 整篇包在一个行内元素里（如 <font>）也按段拆开。
+  await withContent(async({pending,send})=>{
+    await send({type:'SS_EMERGENCY_START',token:'page-token',resume:false});await waitFor(()=>pending.length>0);
+    expect(pending[0].message.items.map(item=>item.text)).toEqual(['An opening paragraph gives the page a normal reading block.','The first paragraph explains how the client retries.','The second paragraph keeps the original reading context.']);
+  },{bodyHtml:'<main lang="en"><p>An opening paragraph gives the page a normal reading block.</p><div><span>The first paragraph explains how the client retries.<br><br>The second paragraph keeps the original reading context.</span></div></main>'});
 });
 
 test('page translation skips code-only cells and bare identifiers but keeps prose around inline code',async()=>{
