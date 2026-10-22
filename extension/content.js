@@ -1689,7 +1689,8 @@
       if(byId.size!==result.items.length||failures.size!==result.errors.length||byId.size+failures.size!==batch.length||batch.some(item=>byId.has(item.id)===failures.has(item.id)))throw new Error('全文翻译结果映射无效。');
       session.cacheHits=(session.cacheHits||0)+(result?.cacheHits||0);
       for(const item of batch){const unit=item.unit;if(failures.has(item.id)){unit.state='failed';renderEmergencyFailure(unit,session);continue;}renderEmergencyChunk(item,byId.get(item.id),session);unit.done.add(item.index);unit.state=unit.done.size===unit.chunks.length?'complete':'deferred';}
-      reportResult(result,result.errors.length?'error':'ok');
+      // 条目失败已由后台 validation 阶段记录，这里只回报页面是否按结果完成呈现。
+      reportResult(result,'ok');
     }catch(error){reportResult(result,error.code==='STALE'||error.code==='CANCELLED'?'cancelled':'error');if(session.active&&state.emergency===session&&generation===session.generation&&!pending.cancelled)session.error ||= error.message;}
     finally{clearEmergencyPreviews(pending);emergencyPending.delete(pending);if(session.generation===generation)for(const item of batch)if(item.unit.state==='translating')item.unit.state='deferred';}
   }

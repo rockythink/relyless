@@ -277,12 +277,15 @@ test('a late dismissed annotation cannot clear a newer help card task',async()=>
 });
 
 test('partial page translation failures retain successes and retry controls while reporting an error until recovery',async()=>{
+  const receipts=[];
   await withContent(async({paragraph,pending,send,click})=>{
     const second=document.createElement('p');second.textContent='The server preserves the original reading context.';paragraph.after(second);
     expect((await send({type:'SS_EMERGENCY_START',token:'token',resume:false})).ok).toBe(true);await waitFor(()=>pending.length===1);
     const batch=pending.shift(),[success,failure]=batch.message.items;expect(batch.message.items.length).toBe(2);
-    batch.reply({ok:true,data:{items:[{id:success.id,translation:'已确认的译文。'}],errors:[{id:failure.id,code:'MODEL_FORMAT'}]}});
+    batch.reply({ok:true,traceId:'trace-partial',data:{items:[{id:success.id,translation:'已确认的译文。'}],errors:[{id:failure.id,code:'MODEL_FORMAT'}]}});
     await waitFor(()=>!ShisuiContent.state.emergency.running);
+    // 条目失败由后台 validation 阶段记录；网页已按结果呈现成功与失败，回执不应报成渲染失败。
+    await waitFor(()=>receipts.length===1);expect(receipts).toEqual([{traceId:'trace-partial',status:'ok'}]);
     const status=(await send({type:'SS_STATUS'})).data;expect(status.emergency.phase).toBe('partial');expect(status.emergency.completed).toBe(1);expect(status.emergency.failed).toBe(1);
     expect(status.tasks.find(task=>task.key==='emergency')?.error).toBe(true);
     const translated=paragraph.querySelector('[data-shisui-ui="emergency-translation"]');expect(translated.textContent).toContain('已确认的译文');
@@ -291,7 +294,7 @@ test('partial page translation failures retain successes and retry controls whil
     resumed.reply({ok:true,data:{items:resumed.message.items.map(item=>({id:item.id,translation:'重试成功的译文。'})),errors:[]}});await waitFor(()=>!ShisuiContent.state.emergency.running);
     expect(paragraph.querySelector('[data-shisui-ui="emergency-translation"]')).toBe(translated);expect(second.querySelector('button')).toBeNull();
     const recovered=(await send({type:'SS_STATUS'})).data;expect(recovered.emergency.phase).toBe('complete');expect(recovered.tasks.find(task=>task.key==='emergency')?.error).toBe(false);
-  });
+  },{runtimeHandler:(message,callback)=>{if(message.type!=='DIAGNOSTICS_RENDER')return false;receipts.push({traceId:message.traceId,status:message.status});callback({ok:true,data:{}});return true;}});
 });
 
 test('trusted same-document navigation clears old tasks and rejects late help results without new passive work',async()=>{
