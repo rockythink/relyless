@@ -151,7 +151,7 @@ test('sentence hierarchy is authorized, cached, presentation-independent, and dr
   await expect(send({type:'SENTENCE_GROUPS_SET',tabId:7,enabled:true})).rejects.toThrow('不能开启');
   await send({type:'PAGE_UI_INJECT',tabId:7},extensionSender);
   expect(await send({type:'SENTENCE_GROUPS_SET',tabId:7,enabled:true},extensionSender)).toEqual({enabled:true});
-  expect(await send({type:'SENTENCE_GROUPS_GET'})).toMatchObject({enabled:true,density:'medium'});
+  expect(await send({type:'SENTENCE_GROUPS_GET'})).toMatchObject({enabled:true,density:'medium',lineStyle:'solid',mark:'underline'});
   const items=[{id:'sentence-1',sentence:'After cache warms, requests return quickly.'}],before=providerCalls;
   const [first,repeated]=await Promise.all([send({type:'SENTENCE_GROUPS_BATCH',items}),send({type:'SENTENCE_GROUPS_BATCH',items})]);
   expect(first).toEqual(repeated);expect(first.items[0].groups).toEqual([{start:0,end:43,role:'clause',parent:-1},{start:0,end:18,role:'adverbial',parent:0},{start:19,end:27,role:'subject',parent:0},{start:28,end:43,role:'predicate',parent:0}]);expect(providerCalls).toBe(before+1);
@@ -161,9 +161,13 @@ test('sentence hierarchy is authorized, cached, presentation-independent, and dr
   await send({type:'SENTENCE_GROUPS_BATCH',items});expect(providerCalls).toBe(before+1);
   await send({type:'SENTENCE_GROUPS_LINE_STYLE_SET',lineStyle:'wavy'},extensionSender);
   expect(await send({type:'SENTENCE_GROUPS_GET'})).toMatchObject({enabled:true,lineStyle:'wavy'});
+  await send({type:'SENTENCE_GROUPS_MARK_SET',mark:'wash'},extensionSender);
+  expect(await send({type:'SENTENCE_GROUPS_GET'})).toMatchObject({enabled:true,mark:'wash'});
   expect(await send({type:'SENTENCE_GROUPS_BATCH',items})).toEqual(first);expect(providerCalls).toBe(before+1);
   await expect(send({type:'SENTENCE_GROUPS_LINE_STYLE_SET',lineStyle:'invalid'},extensionSender)).rejects.toThrow();
   await expect(send({type:'SENTENCE_GROUPS_LINE_STYLE_SET',lineStyle:'dashed'})).rejects.toThrow();
+  await expect(send({type:'SENTENCE_GROUPS_MARK_SET',mark:'bracket'},extensionSender)).rejects.toThrow();
+  await expect(send({type:'SENTENCE_GROUPS_MARK_SET',mark:'wash'})).rejects.toThrow();
   await expect(send({type:'SENTENCE_GROUPS_DENSITY_SET',density:'dense'},extensionSender)).rejects.toThrow();
   await expect(send({type:'SENTENCE_GROUPS_DENSITY_SET',density:'coarse'})).rejects.toThrow();
   invalidSentenceGroups=true;
@@ -176,7 +180,8 @@ test('sentence hierarchy is authorized, cached, presentation-independent, and dr
   await expect(send({type:'SENTENCE_GROUPS_SET',enabled:false})).rejects.toThrow('未获');
   const stoppedAt=providerCalls;await expect(send({type:'SENTENCE_GROUPS_BATCH',items})).rejects.toThrow();
   await send({type:'SENTENCE_GROUPS_LINE_STYLE_SET',lineStyle:'solid'},extensionSender);
-  expect(await send({type:'SENTENCE_GROUPS_GET'})).toMatchObject({enabled:false,lineStyle:'solid'});expect(providerCalls).toBe(stoppedAt);
+  await send({type:'SENTENCE_GROUPS_MARK_SET',mark:'underline'},extensionSender);
+  expect(await send({type:'SENTENCE_GROUPS_GET'})).toMatchObject({enabled:false,lineStyle:'solid',mark:'underline'});expect(providerCalls).toBe(stoppedAt);
 });
 test('on-demand sentence hierarchy rejects background scans but serves deliberate selection',async()=>{
   await send({type:'PAGE_UI_INJECT',tabId:7},extensionSender);

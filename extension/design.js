@@ -116,7 +116,13 @@
   const cssFor = (selector, theme = 'auto') => `${selector} { ${common} ${theme === 'dark' ? dark : light} }${theme === 'auto' ? `\n@media (prefers-color-scheme: dark) { ${selector} { ${dark} } }` : ''}`;
   const structureRoles = Object.freeze({clause:Object.freeze(['原句','neutral']),subject:Object.freeze(['主语','subject']),predicate:Object.freeze(['谓语','predicate']),object:Object.freeze(['宾语','object']),predicative:Object.freeze(['表语','object']),complement:Object.freeze(['补语','object']),adverbial:Object.freeze(['状语','adverbial']),attributive:Object.freeze(['定语','attributive'])});
   const structureColors = Object.freeze({subject:Object.freeze(['#3978aa','#8ebae0']),predicate:Object.freeze(['#ad672b','#e1ae7e']),object:Object.freeze(['#397c54','#91c5a4']),adverbial:Object.freeze(['#845ca6','#bea0dc']),attributive:Object.freeze(['#247f83','#80c3c6']),neutral:Object.freeze(['#70777c','#afb7be'])});
-  globalThis.ShisuiDesign = Object.freeze({cssFor,structureRoles,structureColors});
+  const sentenceMarkModes = Object.freeze(['underline','wash']);
+  const sentenceMarkMode = value => sentenceMarkModes.includes(value) ? value : 'underline';
+  function sentenceMarkCss(name, color, nested, dark) {
+    const amount = nested ? (dark ? 24 : 18) : (dark ? 40 : 32);
+    return '::highlight(' + name + '){background-color:color-mix(in srgb,' + color + ' ' + amount + '%,transparent)}';
+  }
+  globalThis.ShisuiDesign = Object.freeze({cssFor,structureRoles,structureColors,sentenceMarkModes,sentenceMarkMode,sentenceMarkCss});
 
   // Only extension-owned HTML opts into page-root tokens. Script injection into a
   // website has no currentScript and must never apply this theme to the website.

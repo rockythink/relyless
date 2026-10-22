@@ -225,6 +225,42 @@ for(const mode of ['ambient','on-demand'])test('syntax selection clips inline no
   },{structure:true,observe:true,bodyHtml:'<main><p>The <em>client</em> retries with backoff.</p></main>'});
 });
 
+test('sentence marks keep the underline default and hide lines that have no room',async()=>{
+  await withContent(async({paragraph,pending,handlers,event,click,send})=>{
+    globalThis.Highlight=class extends Set{};
+    const computed=getComputedStyle;let lineHeight='40px';
+    globalThis.getComputedStyle=(element,pseudo)=>({...computed(element),font:'16px Arial',fontSize:'16px',lineHeight,color:'rgb(32, 33, 36)',backgroundColor:pseudo?'rgba(0, 0, 0, 0)':'rgb(255, 255, 255)'});
+    window.HTMLCanvasElement.prototype.getContext=()=>({measureText:()=>({fontBoundingBoxDescent:4})});
+    const range=document.createRange();range.selectNodeContents(paragraph);getSelection().addRange(range);handlers.get('showPassageAction')(event(paragraph,{type:'pointerup'}));
+    click([...document.querySelectorAll('[data-shisui-ui="passage-action"] button')].find(button=>button.textContent==='解构所选'));
+    await waitFor(()=>pending.length===1);const item=pending.shift(),sentence=item.message.items[0].sentence;
+    item.reply({ok:true,data:{items:[{id:item.message.items[0].id,groups:[{role:'clause',start:0,end:sentence.length,parent:-1},{role:'subject',start:0,end:10,parent:0},{role:'adverbial',start:11,end:sentence.length,parent:0}]}]}});
+    await waitFor(()=>[...CSS.highlights.keys()].some(name=>name.includes('-subject-')));
+    const original=paragraph.innerHTML,style=()=>document.querySelector('[data-shisui-ui="sentence-style"]')?.textContent||'';
+    expect(style()).toContain('text-decoration-line:underline');
+    expect(style()).toContain('text-decoration-style:solid');
+    expect(style()).not.toContain('background-color');
+    expect((await send({type:'SS_STATUS'})).data.sentenceGroups.mark).toBe('underline');
+    expect((await send({type:'SS_SET_SENTENCE_LINE_STYLE',lineStyle:'dashed'})).ok).toBe(true);
+    await waitFor(()=>style().includes('text-decoration-style:dashed'));
+    expect((await send({type:'SS_SET_SENTENCE_MARK',mark:'wash'})).ok).toBe(true);
+    await waitFor(()=>style().includes('background-color')&&!style().includes('text-decoration-line'));
+    expect(paragraph.innerHTML).toBe(original);
+    expect((await send({type:'SS_SET_SENTENCE_MARK',mark:'ink'})).ok).toBe(false);
+    expect((await send({type:'SS_STATUS'})).data.sentenceGroups.mark).toBe('wash');
+    const rects=Range.prototype.getClientRects;
+    Range.prototype.getClientRects=function(){return [{left:1,right:40,top:1,bottom:21,height:20,width:39}];};
+    window.HTMLCanvasElement.prototype.getContext=()=>({measureText:()=>({fontBoundingBoxDescent:1})});
+    lineHeight='16px';
+    expect((await send({type:'SS_SET_SENTENCE_MARK',mark:'underline'})).ok).toBe(true);
+    expect(style()).not.toContain('text-decoration-line');
+    expect((await send({type:'SS_SET_SENTENCE_MARK',mark:'wash'})).ok).toBe(true);
+    await waitFor(()=>style().includes('background-color'));
+    expect(paragraph.innerHTML).toBe(original);
+    Range.prototype.getClientRects=rects;
+  },{structure:true,observe:true,bodyHtml:'<main><p>The <em>client</em> retries with backoff.</p></main>'});
+});
+
 test('known save errors stay beside the originating button and do not change source text',async()=>{
   await withContent(async({state,paragraph,pending,lookup})=>{
     state.settings.lookupDisplay='card';lookup();await waitFor(()=>pending.length===1);

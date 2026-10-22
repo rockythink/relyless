@@ -690,12 +690,15 @@ async function supportBatch(message,sender){
 }
 const SENTENCE_GROUPS_DENSITY_KEY='sentenceGroupsDensity';
 const SENTENCE_GROUPS_LINE_STYLE_KEY='sentenceGroupsLineStyle';
+const SENTENCE_GROUPS_MARK_KEY='sentenceGroupsMark';
+const SENTENCE_MARK_MODES=['underline','wash'];
 const sentenceGroupsLineStyle=value=>['solid','dashed','dotted','wavy'].includes(value)?value:'solid';
 const sentenceGroupsDensity=value=>['coarse','medium','fine'].includes(value)?value:'medium';
+const sentenceGroupsMark=value=>SENTENCE_MARK_MODES.includes(value)?value:'underline';
 async function sentenceGroupsMode(message,sender,trusted){
   const tabId=trusted?message.tabId:sender.tab?.id;if(!Number.isInteger(tabId)||(!trusted&&sender.frameId!==0))throw new Error('阅读解构只能用于网页主框架。');
-  const [page,densityData,paused]=await Promise.all([trusted?tabPage(tabId):readingSource(sender),chrome.storage.local.get([SENTENCE_GROUPS_DENSITY_KEY,SENTENCE_GROUPS_LINE_STYLE_KEY]),tabPaused(tabId)]),pageKey=page.sourceHash||await hashValue(page.key),key=sentenceModeKey(tabId),stored=(await chrome.storage.session.get(key))[key];
-  return {enabled:Boolean(!paused&&stored?.enabled&&stored.page===pageKey),density:sentenceGroupsDensity(densityData[SENTENCE_GROUPS_DENSITY_KEY]),lineStyle:sentenceGroupsLineStyle(densityData[SENTENCE_GROUPS_LINE_STYLE_KEY])};
+  const [page,densityData,paused]=await Promise.all([trusted?tabPage(tabId):readingSource(sender),chrome.storage.local.get([SENTENCE_GROUPS_DENSITY_KEY,SENTENCE_GROUPS_LINE_STYLE_KEY,SENTENCE_GROUPS_MARK_KEY]),tabPaused(tabId)]),pageKey=page.sourceHash||await hashValue(page.key),key=sentenceModeKey(tabId),stored=(await chrome.storage.session.get(key))[key];
+  return {enabled:Boolean(!paused&&stored?.enabled&&stored.page===pageKey),density:sentenceGroupsDensity(densityData[SENTENCE_GROUPS_DENSITY_KEY]),lineStyle:sentenceGroupsLineStyle(densityData[SENTENCE_GROUPS_LINE_STYLE_KEY]),mark:sentenceGroupsMark(densityData[SENTENCE_GROUPS_MARK_KEY])};
 }
 async function setSentenceGroupsMode(message,sender,trusted){
   if(typeof message.enabled!=='boolean')throw new Error('阅读解构开关无效。');
@@ -710,6 +713,13 @@ async function setSentenceGroupsDensity(message,_sender,trusted){
   await chrome.storage.local.set({[SENTENCE_GROUPS_DENSITY_KEY]:message.density});
   const tabs=await chrome.tabs.query({});await Promise.allSettled(tabs.map(tab=>chrome.tabs.sendMessage(tab.id,{type:'SS_SET_SENTENCE_DENSITY',density:message.density},{frameId:0})));
   return {density:message.density};
+}
+async function setSentenceGroupsMark(message,_sender,trusted){
+  if(!trusted)throw new Error('标注方案只能在扩展设置中修改。');
+  if(!SENTENCE_MARK_MODES.includes(message.mark))throw new Error('不支持的标注方案。');
+  await chrome.storage.local.set({[SENTENCE_GROUPS_MARK_KEY]:message.mark});
+  const tabs=await chrome.tabs.query({});await Promise.allSettled(tabs.map(tab=>chrome.tabs.sendMessage(tab.id,{type:'SS_SET_SENTENCE_MARK',mark:message.mark},{frameId:0})));
+  return {mark:message.mark};
 }
 async function setSentenceGroupsLineStyle(message,_sender,trusted){
   if(!trusted)throw new Error('下划线样式只能在扩展设置中修改。');
@@ -1725,6 +1735,7 @@ async function handle(message,sender) {
     case 'SENTENCE_GROUPS_SET':return setSentenceGroupsMode(message,sender,trusted);
     case 'SENTENCE_GROUPS_DENSITY_SET':return setSentenceGroupsDensity(message,sender,trusted);
     case 'SENTENCE_GROUPS_LINE_STYLE_SET':return setSentenceGroupsLineStyle(message,sender,trusted);
+    case 'SENTENCE_GROUPS_MARK_SET':return setSentenceGroupsMark(message,sender,trusted);
     case 'AUTO_BOOTSTRAP_CHECK':if(!Number.isInteger(sender.tab?.id)||sender.frameId!==0)throw new Error('自动开启只能由网页主框架检查。');await activateTab({...sender.tab,url:sender.url||sender.tab.url});return{};
     case 'AUTOMATION_GET':{const [{settings},tab]=await Promise.all([load(false),requestedTab(message,sender)]);return automationResult(settings,tab,Boolean(tab?.id&&await tabPaused(tab.id)));}
     case 'AUTOMATION_PATCH':{const settings=await patchAutomation(message.patch);await reconcileAutomation();const tab=await requestedTab(message,sender);return automationResult(settings,tab,Boolean(tab?.id&&await tabPaused(tab.id)));}

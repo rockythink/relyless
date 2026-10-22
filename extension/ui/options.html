@@ -284,6 +284,13 @@
 </label>
             </div>
 </fieldset>
+            <label class="field" for="sentence-mark">
+<span>标注方案</span>
+<select id="sentence-mark">
+<option value="underline">下划线</option>
+<option value="wash">浅色底</option>
+</select>
+</label>
             <fieldset class="sentence-line-style" aria-describedby="sentence-density-help sentence-density-result">
 <legend>下划线样式</legend>
 <div class="sentence-density-options sentence-line-options">
@@ -317,7 +324,7 @@
 </label>
             </div>
 </fieldset>
-            <p id="sentence-density-help" class="field-help">颜色表示句子成分，线型只改变外观。粒度与线型立即生效，不会额外调用模型。</p>
+            <p id="sentence-density-help" class="field-help">默认仍是下划线，不改变原文字颜色。深色页面上各成分不容易分开时，可以改成浅色底。线型只作用于下划线；行距不够时少画，避免画到下一行。切换后立刻生效，不重新调用模型。</p>
 <p id="sentence-density-result" class="inline-message" role="status" hidden="">
 </p>
           <p class="field-help">在弹窗中为本页开启，或到 <a href="#sites">网站规则</a> 设置自动开启。</p>
@@ -1387,10 +1394,10 @@
   <article class="paper-card guide-scene guide-structure" aria-labelledby="guide-structure-heading">
     <span class="guide-eyebrow">02 · 阅读解构</span>
     <h3 id="guide-structure-heading">每个词都认识，连成一句却读不顺</h3>
-    <p>这时需要的不是更多词义，而是看清句子的骨架。阅读解构用彩色下划线标出主语、谓语、宾语以及修饰部分，帮你先读主干，再把条件和补充接回来。</p>
+    <p>这时需要的不是更多词义，而是看清句子的骨架。阅读解构默认用彩色下划线标出主语、谓语、宾语以及修饰部分。深色页面上不容易分开时，可以改成浅色底。先读主干，再把条件和补充接回来。</p>
     <figure class="guide-demo">
       <p class="guide-example" lang="en">When requests repeat, <strong>the cache reduces latency</strong>.</p>
-      <figcaption>读法示意：先抓住主干，再补上条件；这里的加粗用于讲解，不是网页的实际下划线样式。</figcaption>
+      <figcaption>读法示意：先抓住主干，再补上条件。这里的加粗只用于讲解，网页上默认是彩色下划线。</figcaption>
       <dl class="guide-definitions">
         <div><dt>先读主干：谁，在做什么？</dt><dd><span lang="en">The cache</span>（主语）→ <span lang="en">reduces</span>（谓语）→ <span lang="en">latency</span>（宾语）。先知道“缓存降低延迟”。</dd></div>
         <div><dt>再补上条件：在什么情况下？</dt><dd><span lang="en">When requests repeat</span> 是状语部分，补充“当请求重复时”。把它接回主干，就能读通整句。</dd></div>
@@ -1398,8 +1405,8 @@
     </figure>
     <ol class="guide-list">
       <li><strong>开启：</strong>打开扩展弹窗，打开「阅读解构」。页面可见、未暂停且模型服务可用时，它会分析正文并画出结构线。</li>
-      <li><strong>读结构：</strong>先沿着主谓宾看意思，再看修饰部分。点击结构下划线，可打开「本句解构」查看带成分名称的层级，不必死记颜色。</li>
-      <li><strong>嫌密或想看更细：</strong>到 <a href="#appearance">显示与解构</a> 的「句子结构」调整。粗粒度突出大结构，中粒度显示句子成分，细粒度最多展示两层；切换粒度、实线或虚线只改变显示，不额外调用模型。</li>
+      <li><strong>读结构：</strong>先沿着主谓宾看意思，再看修饰部分。点击结构下划线，或在浅色底方案里点击已着色的文字，可打开「本句解构」查看带成分名称的层级，不必死记颜色。</li>
+      <li><strong>嫌密或深色页面分不清：</strong>到 <a href="#appearance">显示与解构</a> 的「句子结构」调整。粗粒度突出大结构，中粒度显示句子成分，细粒度最多展示两层。默认下划线可以换成浅色底；实线、虚线、点线和波浪线只改变下划线。行距不够时少画下划线，避免画到下一行。这些切换只改变显示，不额外调用模型。</li>
     </ol>
     <p><strong>结构线不是生词标记。</strong>颜色表示句子成分，不表示难度或熟悉度。解构和注释独立：即使词汇辅助选了「只在主动求助时」，已开启的解构仍会分析正文、产生模型用量。不需要时，在弹窗里关闭它。</p>
   </article>
