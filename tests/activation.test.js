@@ -177,10 +177,11 @@ test('popup renders the complete bilingual snapshot and confirms retained-sessio
     return elements.get(id);
   };
   const events=[];
+  let begins=0;
   const stopped={active:false,displayed:false,phase:'stopped',total:12,completed:5,failed:2,pending:4,skipped:1};
   const automation={allSites:false,sites:[],videoSites:false};
   globalThis.document={visibilityState:'visible',querySelector:element,querySelectorAll:()=>[]};
-  globalThis.chrome={runtime:{async sendMessage(message){events.push(message);if(message.type==='STATE_GET')return{ok:true,data:{settings:{assistanceMode:'on-demand'},providerConfigured:true}};if(message.type==='EMERGENCY_BEGIN')return{ok:true,data:{token:'fresh-token'}};return{ok:true,data:{automation,siteRule:null}};}},storage:{onChanged:{addListener(){}}},tabs:{query:async()=>[{id:9,url:'https://docs.example/read'}],get:async()=>({id:9,url:'https://docs.example/read'}),sendMessage:async(_id,message)=>{events.push(message);if(message.type==='SS_STATUS')return{ok:true,data:{enabled:false,emergency:stopped}};if(message.type==='SS_EMERGENCY_START')return{ok:true,data:{emergency:{...stopped,active:true,phase:'translating'}}};return{ok:true,data:{enabled:false}};}},permissions:{request:async()=>true}};
+  globalThis.chrome={runtime:{async sendMessage(message){events.push(message);if(message.type==='STATE_GET')return{ok:true,data:{settings:{assistanceMode:'on-demand'},providerConfigured:true}};if(message.type==='EMERGENCY_BEGIN'){begins+=1;return begins===1?{ok:true,data:{budgetExceeded:true,monthlyUsed:9000,estimate:3768,budget:8000}}:{ok:true,data:{token:'fresh-token'}};}return{ok:true,data:{automation,siteRule:null}};}},storage:{onChanged:{addListener(){}}},tabs:{query:async()=>[{id:9,url:'https://docs.example/read'}],get:async()=>({id:9,url:'https://docs.example/read'}),sendMessage:async(_id,message)=>{events.push(message);if(message.type==='SS_STATUS')return{ok:true,data:{enabled:false,emergency:stopped}};if(message.type==='SS_EMERGENCY_START')return{ok:true,data:{emergency:{...stopped,active:true,phase:'translating'}}};return{ok:true,data:{enabled:false}};}},permissions:{request:async()=>true}};
   try{
     await import('../extension/ui/popup.js?resume-snapshot-regression');
     await new Promise(resolve=>setTimeout(resolve,0));
@@ -188,11 +189,15 @@ test('popup renders the complete bilingual snapshot and confirms retained-sessio
     expect(element('#emergency-retry').hidden).toBe(true);
     expect(element('#emergency-actions').hidden).toBe(false);
     element('#emergency-resume').handlers.click();
-    element('#emergency-cancel').handlers.click();
-    expect(element('#emergency-resume').focused).toBe(true);
+    await new Promise(resolve=>setTimeout(resolve,0));
+    expect(element('#emergency-confirm').hidden).toBe(false);
+    expect(element('#emergency-estimate').textContent).toContain('预计 3768 tokens');
+    expect(element('#emergency-start').textContent).toBe('仍要继续');
     expect(events.some(message=>message.type==='SS_EMERGENCY_START')).toBe(false);
+    element('#emergency-cancel').handlers.click();
+    expect(element('#emergency-confirm').hidden).toBe(true);
+    expect(element('#emergency-resume').focused).toBe(true);
     element('#emergency-resume').handlers.click();
-    element('#emergency-start').handlers.click();
     await new Promise(resolve=>setTimeout(resolve,0));
     expect(element('#emergency-stop').focused).toBe(true);
     const start=events.find(message=>message.type==='SS_EMERGENCY_START');

@@ -125,7 +125,7 @@ function popupRender(){
   popupEls.emergencyRetry.hidden=!(popupEmergency.active&&popupEmergency.failed>0);
   popupEls.emergencyRetry.disabled=popupBusy||!popupEmergency.active||popupEmergency.failed===0;
   popupEls.emergencyClear.disabled=popupBusy||!emergencyVisible;
-  popupEls.emergencyStart.textContent=popupEmergencyResume?'确认并继续':'确认并翻译本页';popupEls.emergencyConfirmTitle.textContent=popupEmergencyResume?'继续翻译，保留已有译文':'确认翻译当前页面';
+  popupEls.emergencyStart.textContent=popupBudgetConfirmed?(popupEmergencyResume?'仍要继续':'仍要翻译本页'):popupEmergencyResume?'确认并继续':'确认并翻译本页';popupEls.emergencyConfirmTitle.textContent=popupEmergencyResume?'继续翻译，保留已有译文':'确认翻译当前页面';
   popupEls.emergencyStart.disabled=popupBusy||popupReaderActive||!supported||!popupState?.providerConfigured;
   popupEls.emergencyCancel.disabled=popupBusy;
   for(const element of document.querySelectorAll('.popup-feedback, #reader-note'))element.title=element.textContent;
@@ -209,8 +209,13 @@ async function popupEmergencyEstimate(){
   }catch{popupEls.emergencyEstimate.hidden=true;}
 }
 let popupBudgetConfirmed=false;
-async function popupEmergencyStart(){
-  if(popupBusy||!popupSupported()||popupEls.emergencyConfirm.hidden)return;
+async function popupEmergencyStart(resumeDirect=false){
+  if(popupBusy||!popupSupported())return;
+  if(resumeDirect){
+    popupEmergencyResume=Boolean(!popupEmergency.active&&popupEmergency.total>0&&['stopped','error'].includes(popupEmergency.phase));
+    if(!popupEmergencyResume||popupReaderActive||!popupState?.providerConfigured)return;
+    popupBudgetConfirmed=false;popupEls.emergencyBudget.hidden=true;
+  }else if(popupEls.emergencyConfirm.hidden)return;
   const resume=popupEmergencyResume;
   popupBusy=true;popupClearError(popupEls.emergencyResult);popupRender();let token;
   try{
@@ -218,7 +223,12 @@ async function popupEmergencyStart(){
     if(current.url!==popupTab.url)throw new Error('网页已切换，请重新打开扩展弹窗后确认。');
     await request('PAGE_UI_INJECT',{tabId:popupTab.id});
     const begin=await request('EMERGENCY_BEGIN',{tabId:popupTab.id,url:popupTab.url,confirmed:popupBudgetConfirmed});
-    if(begin?.budgetExceeded){popupBudgetConfirmed=true;popupEls.emergencyBudget.textContent=`超预算：本月约 ${begin.monthlyUsed} + 本次预计 ${begin.estimate} > 限额 ${begin.budget} tokens。仍要继续？`;popupEls.emergencyBudget.hidden=false;popupEls.emergencyStart.textContent='仍要翻译本页';return;}
+    if(begin?.budgetExceeded){
+      popupBudgetConfirmed=true;popupEls.emergencyConfirm.hidden=false;
+      if(begin.estimate){popupEls.emergencyEstimate.textContent=`预计 ${begin.estimate} tokens${begin.budget?` · 本月约 ${begin.monthlyUsed} / 限额 ${begin.budget}`:''}`;popupEls.emergencyEstimate.hidden=false;}
+      popupEls.emergencyBudget.textContent=`超预算：本月约 ${begin.monthlyUsed} + 本次预计 ${begin.estimate} > 限额 ${begin.budget} tokens。仍要继续？`;popupEls.emergencyBudget.hidden=false;
+      return;
+    }
     ({token}=begin);
     const result=await chrome.tabs.sendMessage(popupTab.id,{type:'SS_EMERGENCY_START',token,resume},{frameId:0});
     if(!result?.ok)throw new Error(result?.error||'无法启动本页翻译，请刷新网页后重试。');
@@ -263,7 +273,7 @@ async function popupWatchPage(){
   catch{/* 轮询为尽力而为，失败下一秒重试，不写入界面 */}
   finally{setTimeout(()=>void popupWatchPage(),1000);}
 }
-popupEls.toggle.addEventListener('change',()=>void popupTogglePage());popupEls.readerToggle.addEventListener('click',()=>void popupToggleReader());popupEls.siteAuto.addEventListener('change',()=>void popupToggleSite());popupEls.siteHintDismiss.addEventListener('click',()=>void popupDismissSiteHint());popupEls.sentenceGroups.addEventListener('change',()=>void popupToggleSentenceGroups());popupEls.options.addEventListener('click',()=>popupOpenOptions());popupEls.repairService.addEventListener('click',()=>popupOpenOptions('service'));popupEls.emergencyOpen.addEventListener('click',()=>popupEmergencyPrompt(true));popupEls.emergencyCancel.addEventListener('click',()=>popupEmergencyPrompt(false));popupEls.emergencyStart.addEventListener('click',()=>void popupEmergencyStart());popupEls.emergencyStop.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_STOP'));popupEls.emergencyResume.addEventListener('click',()=>popupEmergencyPrompt(true,{resume:true}));popupEls.emergencyRetry.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_RETRY'));popupEls.emergencyClear.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_END'));
+popupEls.toggle.addEventListener('change',()=>void popupTogglePage());popupEls.readerToggle.addEventListener('click',()=>void popupToggleReader());popupEls.siteAuto.addEventListener('change',()=>void popupToggleSite());popupEls.siteHintDismiss.addEventListener('click',()=>void popupDismissSiteHint());popupEls.sentenceGroups.addEventListener('change',()=>void popupToggleSentenceGroups());popupEls.options.addEventListener('click',()=>popupOpenOptions());popupEls.repairService.addEventListener('click',()=>popupOpenOptions('service'));popupEls.emergencyOpen.addEventListener('click',()=>popupEmergencyPrompt(true));popupEls.emergencyCancel.addEventListener('click',()=>popupEmergencyPrompt(false));popupEls.emergencyStart.addEventListener('click',()=>void popupEmergencyStart());popupEls.emergencyStop.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_STOP'));popupEls.emergencyResume.addEventListener('click',()=>void popupEmergencyStart(true));popupEls.emergencyRetry.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_RETRY'));popupEls.emergencyClear.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_END'));
 popupEls.sentenceSelection.addEventListener('change',()=>void popupToggleSentenceSelection());
 popupEls.emergencyConfirm.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();popupEmergencyPrompt(false);}});
 chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local'||!changes.settings)return;void Promise.all([request('STATE_GET'),request('AUTOMATION_GET',{tabId:popupTab?.id}).catch(()=>null)]).then(([state,automation])=>{popupState=state;if(automation)popupAutomation=automation;popupRender();}).catch(()=>{});});
