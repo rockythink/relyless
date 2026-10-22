@@ -1493,12 +1493,24 @@
     if(node.tagName==='BR')return '\n';
     return [...node.childNodes].map(emergencyText).join('');
   }
+  // 只有代码或单个标识符（配置键、取值、版本号）的段落没有可译的正文：模型只能原样返回，
+  // 结果被判为未译完并挂上无法成功的重试。统计字母时不计行内代码，句子里夹着的代码仍随句子翻译。
+  function emergencyProse(node) {
+    if(node.nodeType===Node.ELEMENT_NODE&&node.matches('code,kbd,samp,var,tt'))return '';
+    if(node.nodeType!==Node.ELEMENT_NODE)return emergencyText(node);
+    if(node.namespaceURI!=='http://www.w3.org/1999/xhtml'||node.matches(SKIP)||node.hasAttribute(OWN)&&!['term','annotation'].includes(node.getAttribute(OWN))||hiddenStyle(getComputedStyle(node)))return '';
+    return [...node.childNodes].map(emergencyProse).join('');
+  }
+  function emergencyLiteral(text) {
+    const value=text.trim().replace(/[.,;:!?]+$/,'');
+    return !/\s/.test(value)&&/[._/\\:=#@$\d]|[a-z][A-Z]/.test(value);
+  }
   function emergencyBlocks(root) {
     const units=[];
     function visit(parent){
       if(parent.namespaceURI!=='http://www.w3.org/1999/xhtml'||parent.matches(SKIP)||parent.hasAttribute(OWN)||!isVisible(parent)||parent.matches('img,canvas,iframe,object,embed,hr'))return;
       const layout=/^(inline-)?(grid|flex)$/.test(getComputedStyle(parent).display);let nodes=[];
-      const flush=()=>{const text=nodes.map(emergencyText).join(''),threshold=parent.matches('h1,h2,h3,h4,h5,h6,td,th')?2:12;if((text.match(/[A-Za-z]/g)||[]).length>=threshold)units.push({parent,nodes,text,skipped:layout});nodes=[];};
+      const flush=()=>{const text=nodes.map(emergencyText).join(''),threshold=parent.matches('h1,h2,h3,h4,h5,h6,td,th')?2:12;if((nodes.map(emergencyProse).join('').match(/[A-Za-z]/g)||[]).length>=threshold&&!emergencyLiteral(text))units.push({parent,nodes,text,skipped:layout});nodes=[];};
       for(const node of parent.childNodes){
         if(node.nodeType===Node.ELEMENT_NODE){
           if(node.hasAttribute(OWN)&&!['term','annotation'].includes(node.getAttribute(OWN)))continue;

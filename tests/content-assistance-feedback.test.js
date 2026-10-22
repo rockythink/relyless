@@ -57,7 +57,7 @@ async function withContent(run,{structure=false,lookupDisplay='annotation',obser
   const window=new Window({url:'https://example.test/article'}),original=new Map(),handlers=new Map(),pending=[],shadows=new WeakMap();
   const rect={left:40,top:80,right:340,bottom:100,width:300,height:20,x:40,y:80};
   const globals={window,document:window.document,location:window.location,Node:window.Node,NodeFilter:window.NodeFilter,Range:window.Range,HTMLElement:window.HTMLElement,MutationObserver:window.MutationObserver,
-    getComputedStyle:element=>({opacity:'1',display:element.tagName==='SPAN'?'inline':'block',visibility:'visible',contentVisibility:'visible',clip:'auto',clipPath:'none',overflowX:'visible',overflowY:'visible'}),
+    getComputedStyle:element=>({opacity:'1',display:['SPAN','CODE'].includes(element.tagName)?'inline':'block',visibility:'visible',contentVisibility:'visible',clip:'auto',clipPath:'none',overflowX:'visible',overflowY:'visible'}),
     matchMedia:()=>({addEventListener(){},removeEventListener(){}}),innerWidth:1000,innerHeight:800,scrollX:0,scrollY:0,
     requestAnimationFrame:callback=>setTimeout(callback,1),cancelAnimationFrame:clearTimeout,IntersectionObserver:class{observe(){}disconnect(){}},
     CSS:{supports:()=>false,highlights:new Map()},Highlight:class{},getSelection:()=>window.getSelection(),scrollTo:()=>{},
@@ -274,6 +274,16 @@ test('a late dismissed annotation cannot clear a newer help card task',async()=>
     old.reply({ok:false,error:'迟到的词注错误'});await new Promise(resolve=>setTimeout(resolve,200));
     expect(state.card).toBe(current);expect((await send({type:'SS_STATUS'})).data.tasks.find(task=>task.key==='lookup')?.busy).toBe(true);
   });
+});
+
+test('page translation skips code-only cells and bare identifiers but keeps prose around inline code',async()=>{
+  const rows=[['<code>compaction.midTurnEnabled</code>','<code>true</code>','Allows compaction in the middle of a turn.'],['<code>compaction.idleThresholdTokens</code>','<code>200000</code>','Uses <code>idle</code> mode when the session is quiet.'],['snake_case_value','Overview.','Required']];
+  await withContent(async({pending,send})=>{
+    await send({type:'SS_EMERGENCY_START',token:'page-token',resume:false});await waitFor(()=>pending.length>0);
+    const texts=[];
+    while(pending.length){const batch=pending.shift();texts.push(...batch.message.items.map(item=>item.text));batch.reply({ok:true,data:{items:batch.message.items.map(item=>({id:item.id,translation:'译文。'})),errors:[]}});await new Promise(resolve=>setTimeout(resolve,20));}
+    expect(texts).toEqual(['Allows compaction in the middle of a turn.','Uses idle mode when the session is quiet.','Overview.','Required']);
+  },{bodyHtml:'<main lang="en"><table><tbody>'+rows.map(row=>'<tr>'+row.map(cell=>'<td>'+cell+'</td>').join('')+'</tr>').join('')+'</tbody></table></main>'});
 });
 
 test('partial page translation failures retain successes and retry controls while reporting an error until recovery',async()=>{
