@@ -529,6 +529,16 @@ for(const domainMode of ['api','jev'])test('page translation takes over automati
   },{domainMode});
 });
 
+test('a freed background slot goes to a waiting kind of work before more of the running kind',async()=>{
+  await pageTranslationPriorityFixture(async({domain,structure,requests,gate,until})=>{
+    const first=structure(91,'The client retries after the connection recovers.');await until(()=>requests.length===1);
+    const queued=structure(92,'The server keeps every replica in a consistent state.'),detection=domain(91);await new Promise(resolve=>setTimeout(resolve,20));
+    expect(requests.map(row=>row.kind)).toEqual(['structure']);
+    gate.resolve();await until(()=>first.settled&&queued.settled&&detection.settled);
+    expect(requests.map(row=>row.kind)).toEqual(['structure','domain','structure']);
+  },{domainMode:'api'});
+});
+
 test('page translation preserves domain detection needed by another page',async()=>{
   await pageTranslationPriorityFixture(async({fixture,domain,begin,translate,requests,gate,until})=>{
     const first=domain(91);await until(()=>requests.length===1);const second=domain(92);
