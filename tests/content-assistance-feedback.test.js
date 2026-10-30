@@ -53,7 +53,7 @@ for(const stop of [false,true])test('withdrawing a page preview preserves confir
 });
 const waitFor=async predicate=>{const deadline=Date.now()+1200;while(!await predicate()){if(Date.now()>deadline)throw new Error('Assistance did not settle');await new Promise(resolve=>setTimeout(resolve,5));}};
 
-async function withContent(run,{structure=false,lookupDisplay='annotation',observe=false,settingsPatch={},bodyHtml,runtimeHandler}={}){
+async function withContent(run,{structure=false,lookupDisplay='annotation',observe=false,settingsPatch={},bodyHtml,runtimeHandler,prepare}={}){
   const window=new Window({url:'https://example.test/article'}),original=new Map(),handlers=new Map(),pending=[],shadows=new WeakMap();
   const rect={left:40,top:80,right:340,bottom:100,width:300,height:20,x:40,y:80};
   const globals={window,document:window.document,location:window.location,Node:window.Node,NodeFilter:window.NodeFilter,Range:window.Range,HTMLElement:window.HTMLElement,MutationObserver:window.MutationObserver,
@@ -80,6 +80,7 @@ async function withContent(run,{structure=false,lookupDisplay='annotation',obser
   const attach=window.HTMLElement.prototype.attachShadow;window.HTMLElement.prototype.attachShadow=function(options){const root=attach.call(this,options);shadows.set(this,root);return root;};
   const elementListeners=new WeakMap(),addElementListener=window.HTMLElement.prototype.addEventListener;window.HTMLElement.prototype.addEventListener=function(type,callback,options){let events=elementListeners.get(this);if(!events)elementListeners.set(this,events=new Map());events.set(type,callback);addElementListener.call(this,type,callback,options);};
   document.body.innerHTML=bodyHtml||'<main><p>The client retries with backoff.</p><nav><a href="/docs">Documentation</a></nav></main>';
+  prepare?.();
   const paragraph=document.querySelector('p');
   document.caretRangeFromPoint=()=>{const mapping=ShisuiContent.textMap(paragraph),entry=mapping.nodes.find(item=>item.end>12),range=document.createRange();range.setStart(entry.node,12-entry.start);range.collapse(true);return range;};
   const event=(target=paragraph,extra={})=>({isTrusted:true,type:'click',button:0,detail:1,pointerId:1,clientX:80,clientY:90,target,preventDefault(){},stopImmediatePropagation(){},stopPropagation(){},composedPath:()=>[target,document.body,document,window],...extra});
@@ -126,6 +127,25 @@ test('an oversized block still gets hints for its visible sentences',async()=>{
     expect(batches.flat().every(item=>item.sentence.trim()===sentence)).toBe(true);
   },{observe:true,settingsPatch:{assistanceMode:'ambient',rememberSupport:true},bodyHtml:'<main lang="en"><p>'+sentence+'</p><p>'+long+'</p></main>',runtimeHandler:(message,callback)=>{
     if(message.type==='ANALYZE'){analyzed.push(message.text);const start=message.text.indexOf('ordinary');callback({ok:true,data:{terms:[{id:'ordinary-general',priority:10,occurrences:[{start,end:start+'ordinary'.length,text:'ordinary'}]}]}});return true;}
+    if(message.type==='SUPPORT_BATCH'){batches.push(message.items);callback({ok:true,data:{items:message.items.map(item=>({id:item.id,target:null,meaning:null,sentenceTranslation:null,coverage:'excerpt'}))}});return true;}
+    if(message.type==='PREPARED_SUPPORT'){callback({ok:true,data:{items:message.items.map(item=>({id:item.id,targets:[]}))}});return true;}
+    return false;
+  }});
+});
+
+test('hints and sentence structure read a display contents block that has no box of its own',async()=>{
+  const sentence='Give it a concrete task in ordinary language so the assistant can inspect the request and verify the work.';
+  const loose='Loose contents stay visible to hints and sentence structure when the box is missing.';
+  const analyzed=[],batches=[];
+  await withContent(async({pending})=>{
+    await waitFor(()=>analyzed.some(text=>text.includes('Loose contents'))&&pending.some(item=>item.message.type==='SENTENCE_GROUPS_BATCH'&&item.message.items.some(row=>row.sentence.includes('Loose contents'))));
+    expect(batches.flat().some(item=>item.sentence.includes('Loose contents'))).toBe(true);
+  },{structure:true,observe:true,settingsPatch:{assistanceMode:'ambient',rememberSupport:true},bodyHtml:'<main lang="en"><div id="loose">'+loose+' '+sentence+'</div><p>'+sentence+' '+sentence+'</p></main>',prepare(){
+    const block=document.getElementById('loose'),style=globalThis.getComputedStyle;
+    block.getClientRects=()=>[];block.getBoundingClientRect=()=>({left:0,top:0,right:0,bottom:0,width:0,height:0,x:0,y:0});
+    globalThis.getComputedStyle=element=>element===block?{...style(element),display:'contents'}:style(element);
+  },runtimeHandler:(message,callback)=>{
+    if(message.type==='ANALYZE'){analyzed.push(message.text);callback({ok:true,data:{terms:[]}});return true;}
     if(message.type==='SUPPORT_BATCH'){batches.push(message.items);callback({ok:true,data:{items:message.items.map(item=>({id:item.id,target:null,meaning:null,sentenceTranslation:null,coverage:'excerpt'}))}});return true;}
     if(message.type==='PREPARED_SUPPORT'){callback({ok:true,data:{items:message.items.map(item=>({id:item.id,targets:[]}))}});return true;}
     return false;

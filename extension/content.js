@@ -356,7 +356,22 @@
       if(sentenceGroups.enabled){const snapshot=await request('STATE_GET');if(!isAlive()||page!==location.href)return;state.settings=snapshot.settings;state.providerConfigured=Boolean(snapshot.providerConfigured);sentenceGroups.status=state.providerConfigured?(automatic()?'queued':'idle'):'error';sentenceGroups.error=state.providerConfigured?'':'辅助服务尚未连接。';scheduleSentenceScan(0);updateStructureControl();}
     }catch(error){if(page!==location.href)return;sentenceGroups.enabled=false;sentenceGroups.status='error';sentenceGroups.error=error.message||'无法读取阅读解构设置。';}
   }
-  const inViewport = element => inReadingSurface(element) && isVisible(element) && [...element.getClientRects()].some(inRect);
+  // display: contents 没有自己的盒子（MDN 的 main、或整段直接放进这种容器）。视口和附近范围改看内容的盒子，和 isVisible 同一条规则。
+  function contentRects(element){
+    const own=[...element.getClientRects()];
+    if(own.length||getComputedStyle(element).display!=='contents')return own;
+    const range=document.createRange();range.selectNodeContents(element);
+    return [...range.getClientRects()];
+  }
+  function contentSpan(element){
+    const own=element.getBoundingClientRect();
+    if(own.width>0&&own.height>0||getComputedStyle(element).display!=='contents')return own;
+    const rects=contentRects(element);if(!rects.length)return own;
+    let top=rects[0].top,bottom=rects[0].bottom;
+    for(const rect of rects){top=Math.min(top,rect.top);bottom=Math.max(bottom,rect.bottom);}
+    return {top,bottom};
+  }
+  const inViewport = element => inReadingSurface(element) && isVisible(element) && contentRects(element).some(inRect);
   function safeLinkHref(link) {
     try { const url = new URL(link.getAttribute('href'),location.href); return ['http:','https:','mailto:'].includes(url.protocol); } catch { return false; }
   }
@@ -794,7 +809,7 @@
   }
   async function refreshViewport() {
     if (lookupBusy() || !automatic() || !state.automaticReady || !state.root?.isConnected || !inReadingSurface(state.root)) return;
-    const view=viewportRect(),scroll=readerScroll(),near=state.blocks.filter(block=>inReadingSurface(block)&&isVisible(block)&&block.getBoundingClientRect().bottom>view.top-(scroll?view.height*2:0)&&block.getBoundingClientRect().top<view.bottom+(scroll?view.height*2:view.height)),visible=near.filter(inViewport),key=visible.map(blockId).join(',')+':'+Math.floor((scroll?.scrollTop??scrollY)/Math.max(view.height,1));
+    const view=viewportRect(),scroll=readerScroll(),near=state.blocks.filter(block=>{if(!inReadingSurface(block)||!isVisible(block))return false;const box=contentSpan(block);return box.bottom>view.top-(scroll?view.height*2:0)&&box.top<view.bottom+(scroll?view.height*2:view.height);}),visible=near.filter(inViewport),key=visible.map(blockId).join(',')+':'+Math.floor((scroll?.scrollTop??scrollY)/Math.max(view.height,1));
     if(key===state.windowKey)return;state.windowKey=key;const viewport=++state.viewportGeneration,generation=state.generation;state.refreshing++;setTaskStatus('support',null);
     // Leaving the viewport does not revoke an already displayed annotation.
     const blocks=[...visible,...near.filter(block=>!visible.includes(block))].filter(block=>!state.processed.has(blockId(block)));if(!blocks.length)return;
