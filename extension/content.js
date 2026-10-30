@@ -748,14 +748,20 @@
       identities.add(identity(target));occupied.add(job.block);if(stage==='quiet')quiet++;else prominent++;
     }
   }
-  // 超长的块（例如整篇用 <br> 分段的旧式网页）不整块跳过：从第一句可见的句子起截取一段分析。
+  // 超长的块不整块跳过：从第一句可见句子起，连续截取不超过 limit 的原文。
+  // 开头那句本身超过上限时跳过它，继续看后面放得进窗口的句子。
   function visibleWindow(block,text,limit){
     const mapping=textMap(block),sentences=segments(text);
     const first=sentences.findIndex(item=>{const range=rangeFor(mapping,item.index,item.index+item.segment.length);return Boolean(range&&visibleRange(range,block));});
     if(first<0)return null;
-    const start=sentences[first].index;let end=start;
-    for(const item of sentences.slice(first)){const next=item.index+item.segment.length;if(next-start>limit&&end>start)break;end=next;}
-    return end-start<=limit?{text:text.slice(start,end),offset:start}:null;
+    let start=-1,end=0;
+    for(const item of sentences.slice(first)){
+      const next=item.index+item.segment.length;
+      if(start<0){if(item.segment.length>limit)continue;start=item.index;}
+      else if(next-start>limit)break;
+      end=next;
+    }
+    return start<0?null:{text:text.slice(start,end),offset:start};
   }
   async function buildJobs(blocks,generation,viewport) {
     let budget=8000,inputLength=0;const samples=[];

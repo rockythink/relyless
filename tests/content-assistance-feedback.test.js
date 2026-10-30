@@ -152,6 +152,25 @@ test('hints and sentence structure read a display contents block that has no box
   }});
 });
 
+test('a first sentence longer than the analysis window does not hide the sentences after it',async()=>{
+  const sentence='Give it a concrete task in ordinary language so the assistant can inspect the request and verify the work.';
+  const marker='Later prose stays available for hints.';
+  const lead=('Unbroken text ').repeat(400).trim();
+  const long=lead+' '+marker+' '+(marker+' ').repeat(80);
+  const analyzed=[],batches=[];
+  await withContent(async()=>{
+    await waitFor(()=>batches.flat().some(item=>item.sentence.trim()===marker));
+    expect(analyzed.some(text=>text.includes(marker)&&!text.includes('Unbroken'))).toBe(true);
+    expect(analyzed.every(text=>text.length<=sentence.length+1+4000)).toBe(true);
+    expect(batches.flat().some(item=>item.sentence.includes('Unbroken'))).toBe(false);
+  },{observe:true,settingsPatch:{assistanceMode:'ambient',rememberSupport:true},bodyHtml:'<main lang="en"><p>'+sentence+'</p><p>'+long+'</p></main>',runtimeHandler:(message,callback)=>{
+    if(message.type==='ANALYZE'){analyzed.push(message.text);const start=message.text.indexOf('ordinary');callback({ok:true,data:{terms:[{id:'ordinary-general',priority:10,occurrences:[{start:Math.max(0,start),end:Math.max(0,start)+'ordinary'.length,text:'ordinary'}]}]}});return true;}
+    if(message.type==='SUPPORT_BATCH'){batches.push(message.items);callback({ok:true,data:{items:message.items.map(item=>({id:item.id,target:null,meaning:null,sentenceTranslation:null,coverage:'excerpt'}))}});return true;}
+    if(message.type==='PREPARED_SUPPORT'){callback({ok:true,data:{items:message.items.map(item=>({id:item.id,targets:[]}))}});return true;}
+    return false;
+  }});
+});
+
 test('a remembered word with help history still renders its support batch',async()=>{
   const sentence='Give it a concrete task in ordinary language so the assistant can inspect the request, preserve context, explain the result, and verify the completed work.';
   const start=sentence.indexOf('ordinary');
