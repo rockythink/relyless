@@ -6,6 +6,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
+    "contributors": "node scripts/contributors.mjs",
     "deploy": "astro build && wrangler deploy"
   },
   "dependencies": {

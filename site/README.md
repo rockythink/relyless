@@ -7,6 +7,7 @@
 - 隐私政策页直接渲染仓库根目录的 `PRIVACY.md` 与 `PRIVACY.en.md`，不在这里保存副本。改隐私政策只改根目录文件，重新部署即可。
 - 页脚版本号读取根目录 `package.json`。
 - 截图来自 Chrome 应用商店素材，转为 WebP 放在 `public/screens/`。界面明显变化时一并更新。
+- 首页的贡献者名单来自 `src/contributors.json`，头像存在 `public/contributors/`。有新贡献者时运行 `npm run contributors`（从 GitHub API 拉取，可选 `GITHUB_TOKEN`），提交生成的文件后重新部署。名单只列名字和账号，不显示提交数或排名。
 - 文案与商店说明遵守同一条规则：不罗列模型服务商或品牌名称。
 
 ## 开发与部署
