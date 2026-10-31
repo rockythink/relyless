@@ -1,0 +1,249 @@
+---
+import Base from '../layouts/Base.astro';
+import Gloss from '../components/Gloss.astro';
+import { storeUrl, repoUrl, releasesUrl } from '../site.js';
+
+// 帮助由少到多：先读原文，卡住时再一级一级加。
+const ladder = [
+  { name: '只读原文', note: '默认就是英文。没有遮罩，没有替换，页面原样。', demo: 'plain' },
+  { name: '少量词注', note: '开启本页阅读后，只在当前阅读位置给少数难词标一个短释义，不铺满整页。', demo: 'gloss' },
+  { name: '按住 D 查词', note: '按住查词键单击任意单词，看它在这句话里的意思，可以继续追问。', demo: 'lookup' },
+  { name: '句子结构', note: '长句读不顺时，用下划线或浅色底标出主语、谓语、宾语和修饰成分，先抓主干。', demo: 'structure' },
+  { name: '划词翻译', note: '选中一段英文，只翻译这一段，译文跟在原文旁边。', demo: 'passage' },
+  { name: '全文双语', note: '确实读不动时，确认后按阅读位置翻译附近正文。英文保留，中文跟在每段后面。', demo: 'bilingual' },
+];
+---
+<Base title="RelyLess · 保留真实英文，卡住时才给一点线索" description="RelyLess 是面向中文读者的英语阅读浏览器扩展：保留原文，只在你卡住的地方标出少量词注和句子主干，需要时再翻译。开源、本地优先、使用你自己的模型服务。">
+  <section class="hero">
+    <div class="wrap">
+      <p class="kicker">浏览器扩展 · 英语阅读</p>
+      <h1 class="hero-title en">
+        <span class="u u-verb">Read</span> <span class="u u-object">real English</span>.<br />
+        Get <Gloss zh="刚好够用的">just enough</Gloss> help.
+      </h1>
+      <p class="hero-zh">保留真实英文，卡住时才给一点线索。</p>
+      <p class="hero-body">RelyLess 不把网页换成中文。它只在你读到吃力的地方标出少量难词、拆开长句的主干；真读不动了，再由你决定翻译哪一段。</p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href={storeUrl}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3.6" fill="currentColor"/></svg>
+          从 Chrome 应用商店安装
+        </a>
+        <a class="btn btn-ghost" href={repoUrl}>在 GitHub 查看源码</a>
+      </div>
+      <p class="hero-meta">免费开源 · 使用你自己的模型服务 · 本地优先</p>
+    </div>
+    <figure class="hero-shot wrap">
+      <img src="/screens/01-hints-popup.webp" width="1280" height="800" alt="RelyLess 在一篇英文文章上工作：少数难词上方有中文短释义，第一段句子用彩色下划线标出成分，右侧是扩展弹窗。" fetchpriority="high" />
+    </figure>
+  </section>
+
+  <section class="section" id="how">
+    <div class="wrap ladder-grid">
+      <div class="ladder-intro">
+        <p class="kicker">怎么帮你</p>
+        <h2 class="h2">帮助由少到多，<br />停在刚好够的地方</h2>
+        <p class="lede">每一级都由你触发，也都能退回去。不需要的时候，它就安静地待在旁边。</p>
+      </div>
+      <ol class="ladder">
+        {ladder.map((step, index) => (
+          <li class="step">
+            <span class="step-no" aria-hidden="true">{String(index).padStart(2, '0')}</span>
+            <div>
+              <h3>{step.name}</h3>
+              <p>{step.note}</p>
+              <p class="step-demo en" aria-hidden="true">
+                {step.demo === 'plain' && <>When those assumptions remain implicit, a harmless migration can quietly break a dashboard.</>}
+                {step.demo === 'gloss' && <>When those assumptions remain <Gloss zh="隐含的，未明说的">implicit</Gloss>, a harmless migration can quietly break a dashboard.</>}
+                {step.demo === 'lookup' && <>Idempotent operations turn this from an incident into <span class="lookup">routine</span> behavior.<span class="lookup-card"><b>routine</b> 这里指「例行的、平常的」：重复处理不再算事故。</span></>}
+                {step.demo === 'structure' && <><span class="u u-subject">Reliable pipelines</span> <span class="u u-verb">are</span> <span class="u u-modifier">rarely</span> <span class="u u-object">the result of one perfect architecture</span>.</>}
+                {step.demo === 'passage' && <><mark class="sel">Additive fields are usually safe.</mark> <span class="zh-inline">新增字段通常是安全的。</span></>}
+                {step.demo === 'bilingual' && <>Compatibility rules make change predictable.<span class="zh-block">兼容性规则让变更可以预期。</span></>}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <p class="kicker">另外两种读法</p>
+      <h2 class="h2">干净的正文，和你的 PDF</h2>
+      <div class="pair">
+        <figure>
+          <picture>
+            <source srcset="/screens/04-reader-dark.webp" media="(prefers-color-scheme: dark)" />
+            <img src="/screens/03-reader.webp" width="1280" height="800" loading="lazy" alt="专注阅读视图：网页正文以衬线字体单栏排版，顶部可调整字号、栏宽、行距和主题。" />
+          </picture>
+          <figcaption><strong>专注阅读</strong>一键进入本地正文快照，可调字号、栏宽、行距和明暗主题；退出就回到原网页，不保存文章。</figcaption>
+        </figure>
+        <figure>
+          <img src="/screens/02-translate.webp" width="1280" height="800" loading="lazy" alt="全文双语：每段英文原文下方跟着对应的中文译文。" />
+          <figcaption><strong>全文双语 · PDF</strong>译文跟在每段英文后面，原文始终在。内置 PDF 阅读器里同样可以查词和翻译。</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="data">
+    <div class="wrap split">
+      <div>
+        <p class="kicker">数据与费用</p>
+        <h2 class="h2">发什么、发给谁、花多少，<br />都说清楚</h2>
+        <p class="lede">RelyLess 没有中转服务器，也不附带模型额度。你在设置里接入自己的模型服务，或通过开源的本机连接器使用已登录的订阅账户。</p>
+        <p class="more"><a href="/privacy">阅读完整隐私政策 →</a></p>
+      </div>
+      <ul class="facts">
+        <li><strong>只在需要时发送</strong>开启本页阅读或主动求助时，才把所需的文字片段发给你选择的服务商。</li>
+        <li><strong>可以完全安静</strong>选择「只在主动求助时」，后台分析、预取、自动标注和记录都会停止。</li>
+        <li><strong>翻译前先估算</strong>全文翻译开始前估算用量；可以设月度预算，超出时需要再次确认。</li>
+        <li><strong>记录留在本机</strong>阅读记录保存在你的浏览器里，可以查看、撤销和清除；无痕窗口不保存。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap split">
+      <div>
+        <p class="kicker">刻意不做</p>
+        <h2 class="h2">它不打算替你读</h2>
+        <p class="lede">这些在别的工具里很常见，但会让你离原文更远，所以 RelyLess 默认不做。</p>
+      </div>
+      <ul class="nots">
+        <li>默认把整页换成中文，或藏起原文</li>
+        <li>自动翻译导航、按钮和看不准的页面区域</li>
+        <li>打卡、连续天数、排行榜和掌握度评分</li>
+        <li>根据你的浏览记录推测能力或身份</li>
+        <li>未经同意长期保存整页正文、网址或浏览历史</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section" id="start">
+    <div class="wrap">
+      <p class="kicker">开始使用</p>
+      <h2 class="h2">三步开始</h2>
+      <ol class="steps3">
+        <li><strong>安装扩展</strong>从 <a href={storeUrl}>Chrome 应用商店</a>安装。想用最新版本，也可以从 <a href={releasesUrl}>GitHub Releases</a> 下载后手动加载。</li>
+        <li><strong>接入模型服务</strong>在设置 → 模型服务里填入你的服务和密钥，或安装本机连接器使用订阅账户。</li>
+        <li><strong>打开一篇英文文章</strong>点工具栏里的 RelyLess，打开「阅读辅助」。想每次自动开启，勾选「此网站以后自动开启」。</li>
+      </ol>
+
+      <div class="faq">
+        <details>
+          <summary>要付费吗？</summary>
+          <p>扩展本身免费开源。调用模型产生的费用由你选择的服务商收取，RelyLess 不经手，也不加价。</p>
+        </details>
+        <details>
+          <summary>支持哪些浏览器？</summary>
+          <p>Chrome 可以直接从应用商店安装。Edge 可以在扩展页允许安装其他应用商店的扩展后，从 Chrome 应用商店安装，或加载 GitHub 版本。</p>
+        </details>
+        <details>
+          <summary>商店版和 GitHub 版有什么不同？</summary>
+          <p>代码相同。商店版需要经过审核，更新可能比 GitHub Releases 晚几天。</p>
+        </details>
+        <details>
+          <summary>遇到问题去哪里反馈？</summary>
+          <p>在 <a href={`${repoUrl}/issues`}>GitHub Issues</a> 提交，附上浏览器版本和复现步骤即可。请不要贴出密钥或私人网页内容。</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <section class="section closing">
+    <div class="wrap">
+      <p class="closing-line en">Keep reading the <Gloss zh="原文">original</Gloss>.</p>
+      <a class="btn btn-primary" href={storeUrl}>从 Chrome 应用商店安装</a>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .hero { padding-top: clamp(56px, 9vw, 112px); overflow: hidden; }
+  .hero-title {
+    font-size: clamp(44px, 8.2vw, 104px); line-height: 1.12; font-weight: 500; letter-spacing: -.025em;
+    margin: 0 0 clamp(20px, 3vw, 32px); max-width: 12em; text-wrap: balance;
+  }
+  .hero-title { --gloss-size: max(14px, .19em); --gloss-room: .32em; }
+  .hero-zh { font: 600 clamp(20px, 2.4vw, 26px)/1.5 var(--sans); margin: 0 0 12px; letter-spacing: .01em; }
+  .hero-body { color: var(--ink-soft); max-width: 34em; margin: 0 0 32px; font-size: clamp(16px, 1.5vw, 18px); text-wrap: pretty; }
+  .hero-cta { display: flex; flex-wrap: wrap; gap: 12px; }
+  .hero-meta { color: var(--muted); font-size: 14px; margin: 18px 0 0; }
+  .hero-shot { margin-top: clamp(48px, 7vw, 88px); margin-bottom: 0; }
+  .hero-shot img { border-radius: 14px 14px 0 0; box-shadow: var(--shadow); border: 1px solid var(--line); border-bottom: 0; }
+
+  /* 标题里的辅助是「后到的」：先给原文，停一拍再出现下划线和词注。 */
+  .hero-title .u { animation: underline-in .7s ease-out .9s both; }
+  .hero-title .u-object { animation-delay: 1.05s; }
+  .hero-title :global(.gloss-word) { animation: gloss-bg .5s ease-out 1.5s both; }
+  .hero-title :global(.gloss-zh) { animation: gloss-in .5s cubic-bezier(.2, .7, .2, 1) 1.55s both; }
+  @keyframes underline-in { from { text-decoration-color: transparent; } }
+  @keyframes gloss-bg { from { background: transparent; } }
+  @keyframes gloss-in { from { opacity: 0; transform: translate(-50%, 6px); } }
+
+  .ladder-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(32px, 6vw, 80px); align-items: start; }
+  .ladder-intro { position: sticky; top: 32px; }
+  .ladder { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--line); }
+  .step { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 4px; padding: 0 0 36px; position: relative; }
+  .step::before { content: ''; position: absolute; left: -5px; top: 10px; width: 9px; height: 9px; border-radius: 50%; background: var(--canvas); border: 2px solid var(--muted); }
+  .step:first-child::before { background: var(--muted); }
+  .step-no { font: 500 14px/2 var(--mono); color: var(--muted); padding-left: 20px; }
+  .step h3 { font: 600 19px/1.5 var(--sans); margin: 0 0 4px; }
+  .step p { margin: 0; color: var(--ink-soft); }
+  .step-demo {
+    margin-top: 14px !important; padding: 18px 20px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px;
+    font-size: 19px; line-height: 2.1; color: var(--ink) !important;
+  }
+  .lookup { position: relative; background: var(--accent-soft); outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 3px; }
+  .lookup-card b { font-weight: 600; margin-right: 6px; }
+  .lookup-card {
+    display: block; width: fit-content; max-width: 100%; margin-top: 10px; padding: 10px 12px;
+    font: 14px/1.6 var(--sans); color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
+  }
+  .sel { background: var(--accent-soft); color: inherit; border-radius: 3px; }
+  .zh-inline { font: 15px/1.6 var(--sans); color: var(--ink-soft); border-left: 2px solid var(--accent); padding-left: 8px; margin-left: 4px; }
+  .zh-block { display: block; font: 16px/1.8 var(--sans); color: var(--ink-soft); }
+
+  .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(20px, 3vw, 36px); margin-top: 40px; }
+  .pair figure { margin: 0; }
+  .pair img { border-radius: 12px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+  .pair figcaption { margin-top: 18px; color: var(--ink-soft); font-size: 16px; }
+  .pair figcaption strong, .facts strong, .steps3 strong { display: block; color: var(--ink); font-size: 17px; margin-bottom: 2px; }
+
+  .split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(32px, 6vw, 80px); align-items: start; }
+  .more { margin: 24px 0 0; font-weight: 600; }
+  .facts, .nots { list-style: none; margin: 0; padding: 0; }
+  .facts li { padding: 20px 0; border-bottom: 1px solid var(--line); color: var(--ink-soft); }
+  .facts li:first-child { padding-top: 0; }
+  .nots li { padding: 14px 0 14px 34px; border-bottom: 1px solid var(--line); position: relative; color: var(--ink-soft); }
+  .nots li::before { content: ''; position: absolute; left: 4px; top: 50%; width: 16px; height: 2px; background: var(--muted); }
+
+  .steps3 { list-style: none; counter-reset: s; margin: 40px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+  .steps3 li { counter-increment: s; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 24px; color: var(--ink-soft); font-size: 16px; }
+  .steps3 li::before { content: counter(s); display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--ink); color: var(--canvas); font: 600 14px/1 var(--sans); margin-bottom: 16px; }
+
+  .faq { margin-top: 56px; max-width: 760px; }
+  .faq details { border-bottom: 1px solid var(--line); }
+  .faq summary { cursor: pointer; list-style: none; padding: 18px 32px 18px 0; font-weight: 600; position: relative; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: '+'; position: absolute; right: 4px; top: 14px; font: 400 24px/1 var(--sans); color: var(--muted); transition: transform .2s ease; }
+  .faq details[open] summary::after { transform: rotate(45deg); }
+  .faq p { margin: 0 0 20px; color: var(--ink-soft); }
+
+  .closing { text-align: center; }
+  .closing-line { font-size: clamp(36px, 6vw, 72px); line-height: 1.3; font-weight: 500; letter-spacing: -.02em; margin: 0 0 36px; }
+  .closing-line { --gloss-size: max(14px, .22em); --gloss-room: .4em; }
+
+  @media (max-width: 860px) {
+    .ladder-grid, .split { grid-template-columns: minmax(0, 1fr); }
+    .ladder-intro { position: static; }
+    .pair, .steps3 { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 520px) {
+    .step { grid-template-columns: minmax(0, 1fr); padding-left: 22px; }
+    .step-no { display: none; }
+    .step-demo { font-size: 17px; padding: 14px 16px; }
+    .hero-cta .btn { width: 100%; }
+  }
+</style>

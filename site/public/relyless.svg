@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <title>RelyLess</title>
+  <rect width="128" height="128" rx="28" fill="#202124"/>
+  <path fill="#F1F3F4" fill-rule="evenodd" d="M35 27h30c19 0 30 10 30 26 0 12-6 20-17 24l21 24H79L55 73h-4v21H35V27Zm16 15v17h13c10 0 15-3 15-9s-5-8-15-8H51Z" clip-rule="evenodd"/>
+  <rect x="35" y="101" width="20" height="7" rx="3.5" fill="#8AB4F8"/>
+</svg>

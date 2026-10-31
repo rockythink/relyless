@@ -10,7 +10,7 @@ RelyLess 是一个面向英语阅读的 Chrome / Edge 扩展。它保留网页�
 
 它的默认目标不是把整页替换成中文：自动辅助只面向能可靠识别的主要阅读区域，普通页面导航、控件和无关内容不会被自动翻译。导航链接可通过查词键单击或右键菜单单独请求译文。本页双语翻译需要单独确认，只随阅读位置处理附近正文，保留英文并原位插入译文；结果仍取决于所选模型，可能超时、失败或不完整。
 
-> 当前版本：`v0.8.7`。可从 [Chrome Web Store](https://chromewebstore.google.com/detail/relyless/ikokdficimlocmghaahnbekedhlollem) 安装，商店版本需经审核，可能晚于 GitHub Releases；也可从 GitHub Releases 下载。尚未发布到 Microsoft Edge Add-ons。
+> 官网：<https://relyless.elazer.wang>。当前版本：`v0.8.7`。可从 [Chrome Web Store](https://chromewebstore.google.com/detail/relyless/ikokdficimlocmghaahnbekedhlollem) 安装，商店版本需经审核，可能晚于 GitHub Releases；也可从 GitHub Releases 下载。尚未发布到 Microsoft Edge Add-ons。
 
 ## 产品理念
 

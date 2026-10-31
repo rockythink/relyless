@@ -1,0 +1,6 @@
+---
+// 与扩展的顶部词注同一观感：短释义悬在词上方，不撑开左右间距，只为所在行留出高度。
+interface Props { zh: string; }
+const { zh } = Astro.props;
+---
+<span class="gloss"><span class="gloss-word"><slot /></span><span class="gloss-zh" lang="zh-CN">{zh}</span></span>

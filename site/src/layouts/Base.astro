@@ -1,0 +1,59 @@
+---
+import '@fontsource-variable/newsreader';
+import '../styles/global.css';
+import { version, storeUrl, repoUrl, releasesUrl, issuesUrl, authorUrl } from '../site.js';
+
+interface Props { title: string; description: string; lang?: 'zh-CN' | 'en'; }
+const { title, description, lang = 'zh-CN' } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+const og = new URL('/og.jpg', Astro.site);
+const zh = lang === 'zh-CN';
+---
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href="/relyless.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#f7f6f2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1b1c1e" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={og} />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <a class="skip" href="#main">{zh ? '跳到正文' : 'Skip to content'}</a>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="/"><img src="/relyless.svg" alt="" width="28" height="28" />RelyLess</a>
+        <nav aria-label={zh ? '主导航' : 'Main'}>
+          <a class="nav-hide" href="/#how">{zh ? '功能' : 'Features'}</a>
+          <a class="nav-hide" href="/#data">{zh ? '数据与费用' : 'Data'}</a>
+          <a href={repoUrl}>GitHub</a>
+          <a class="nav-store" href={storeUrl}>{zh ? '安装' : 'Install'}</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main"><slot /></main>
+    <footer class="foot">
+      <div class="wrap">
+        <nav aria-label={zh ? '页脚' : 'Footer'}>
+          <a href="/privacy">隐私政策</a>
+          <a href="/en/privacy">Privacy Policy</a>
+          <a href={releasesUrl}>{zh ? '更新日志' : 'Releases'} · v{version}</a>
+          <a href={issuesUrl}>{zh ? '问题反馈' : 'Issues'}</a>
+          <a href={storeUrl}>Chrome Web Store</a>
+        </nav>
+        <span>{zh ? '开源 · ' : 'Open source · '}<a href={authorUrl}>{zh ? '石头（Elazer）出品' : 'Made by Elazer'}</a></span>
+      </div>
+    </footer>
+  </body>
+</html>
