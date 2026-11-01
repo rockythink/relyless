@@ -198,23 +198,36 @@
     const notice = transcriptShadow.querySelector('.notice');
     const overlayHost = document.createElement('div');
     overlayHost.setAttribute(HOST_ATTRIBUTE, 'video-bilingual');
-    overlayHost.hidden = true;
     overlayHost.style.setProperty('all', 'initial', 'important');
     overlayHost.style.setProperty('position', 'fixed', 'important');
     overlayHost.style.setProperty('z-index', '2147483646', 'important');
     overlayHost.style.setProperty('pointer-events', 'none', 'important');
-    overlayHost.style.setProperty('display', 'flex', 'important');
-    overlayHost.style.setProperty('justify-content', 'center', 'important');
+    overlayHost.style.setProperty('display', 'none', 'important');
     const overlayShadow = overlayHost.attachShadow({mode: 'closed'});
     overlayShadow.innerHTML = `
       <style data-theme-tokens>${tokens}</style><style>
-        :host{display:flex;flex-direction:column;align-items:center;pointer-events:none}
-        .line,.status{max-width:100%;box-sizing:border-box;margin:0;padding:6px 10px;border-radius:var(--radius-control);background:var(--surface);color:var(--ink);font:var(--weight-medium) var(--cue-size,20px)/1.4 var(--sans);text-align:center}
-        .status{font-size:14px}
+        :host{display:block;width:100%;height:100%;pointer-events:none;font-family:var(--sans,sans-serif);--sub-size:20px;--sub-bottom:72px}
+        .stack{position:absolute;left:50%;bottom:var(--sub-bottom);transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:.12em;width:min(90%,1000px);font-size:var(--sub-size);text-align:center;pointer-events:none}
+        .stack[hidden]{display:none}
+        .line{display:block;margin:0;padding:0;max-width:100%;border:0;background:none;text-align:center;line-height:1.36;text-wrap:balance;overflow-wrap:anywhere}
+        .line>span{padding:.06em .36em;border-radius:.18em;background:rgba(0,0,0,.72);-webkit-box-decoration-break:clone;box-decoration-break:clone;text-shadow:0 0 .12em rgba(0,0,0,.6)}
+        .translation{order:1;color:#fff;font:600 1em/1.36 var(--sans,sans-serif);letter-spacing:.02em;word-break:keep-all;line-break:strict}
+        .notice{order:1;color:#ffd9a0;font:500 .62em/1.4 var(--sans,sans-serif)}
+        .original{order:2;color:rgba(255,255,255,.9);font:500 .76em/1.4 var(--sans,sans-serif)}
+        .line[hidden]{display:none}
       </style>
-      <p class="line" lang="zh-CN" hidden></p><p class="status" hidden></p>`;
-    const overlayText = overlayShadow.querySelector('.line');
-    const overlayStatus = overlayShadow.querySelector('.status');
+      <div class="stack" hidden>
+        <p class="line translation" lang="zh-CN" hidden><span></span></p>
+        <p class="line notice" role="status" hidden><span></span></p>
+        <p class="line original" lang="en"><span></span></p>
+      </div>`;
+    const overlayStack = overlayShadow.querySelector('.stack');
+    const overlayTranslation = overlayShadow.querySelector('.translation');
+    const overlayTranslationText = overlayTranslation.querySelector('span');
+    const overlayNotice = overlayShadow.querySelector('.notice');
+    const overlayNoticeText = overlayNotice.querySelector('span');
+    const overlayOriginal = overlayShadow.querySelector('.original');
+    const overlayOriginalText = overlayOriginal.querySelector('span');
     const themeStyles = [controlShadow, transcriptShadow, overlayShadow].map(shadow => shadow.querySelector('[data-theme-tokens]'));
 
     let currentCallbacks = callbacks;
@@ -277,7 +290,6 @@
         renderedTheme = settings.theme;
       }
       transcriptHost.style.setProperty('--cue-size', `${settings.fontSize}px`);
-      overlayHost.style.setProperty('--cue-size', `${settings.fontSize}px`);
       bilingualButton.setAttribute('aria-pressed', String(settings.bilingual));
       bilingualButton.setAttribute('aria-label', settings.bilingual ? '关闭双语字幕' : '显示双语字幕');
       bilingualButton.textContent = '双语';
@@ -321,18 +333,50 @@
       if (youtubeControls()) return video.closest('ytd-player') || video.closest('#player') || video.closest('.html5-video-player') || video;
       return video.closest('[data-player],.video-player,.player') || video;
     }
+    function controlsClearance(rect) {
+      const player = video?.closest('.html5-video-player');
+      if (player) {
+        const hidden = player.classList.contains('ytp-autohide') || player.classList.contains('ytp-hide-controls');
+        const barHeight = player.querySelector('.ytp-chrome-bottom')?.getBoundingClientRect().height || 48;
+        return hidden ? barHeight + 4 : barHeight + rect.height * 0.035;
+      }
+      return video?.controls ? Math.max(rect.height * 0.12, 52) : rect.height * 0.06;
+    }
+    function setNativeCaptionHidden(hidden) {
+      const id = 'shisui-hide-native-captions';
+      const existing = document.getElementById(id);
+      if (!hidden) { existing?.remove(); return; }
+      if (existing) return;
+      const style = document.createElement('style');
+      style.id = id;
+      style.textContent = '.ytp-caption-window-container,.ytp-caption-window-rollup{opacity:0 !important}';
+      document.documentElement.append(style);
+    }
     function placeOverlay() {
-      if (!settings.bilingual || !video?.isConnected || overlayHost.hidden) return;
+      if (!settings.bilingual || !video?.isConnected) {
+        overlayHost.style.setProperty('display', 'none', 'important');
+        return;
+      }
       const fullscreen = document.fullscreenElement;
-      const root = fullscreen && (fullscreen === video || fullscreen.contains(video)) ? fullscreen : document.documentElement;
-      if (overlayHost.parentElement !== root) root.append(overlayHost);
+      const parent = fullscreen && (fullscreen === video || fullscreen.contains(video)) ? fullscreen : document.documentElement;
+      if (overlayHost.parentElement !== parent) parent.append(overlayHost);
       const rect = video.getBoundingClientRect();
-      overlayHost.style.left = Math.max(8, rect.left + 16) + 'px';
-      overlayHost.style.top = Math.max(8, rect.bottom - 72) + 'px';
-      overlayHost.style.width = Math.max(0, rect.width - 32) + 'px';
+      if (rect.width < 2 || rect.height < 2) {
+        overlayHost.style.setProperty('display', 'none', 'important');
+        return;
+      }
+      const base = Math.max(14, Math.min(44, rect.height * 0.046));
+      const size = Math.round(base * settings.fontSize / DEFAULT_SETTINGS.fontSize);
+      overlayHost.style.setProperty('display', 'block', 'important');
+      overlayHost.style.setProperty('left', `${rect.left}px`, 'important');
+      overlayHost.style.setProperty('top', `${rect.top}px`, 'important');
+      overlayHost.style.setProperty('width', `${rect.width}px`, 'important');
+      overlayHost.style.setProperty('height', `${rect.height}px`, 'important');
+      overlayHost.style.setProperty('--sub-size', `${size}px`);
+      overlayHost.style.setProperty('--sub-bottom', `${Math.round(controlsClearance(rect))}px`);
     }
     function placeUi() {
-      if (!video?.isConnected) { controlHost.remove(); transcriptHost.remove(); overlayHost.hidden = true; return; }
+      if (!video?.isConnected) { controlHost.remove(); transcriptHost.remove(); overlayHost.style.setProperty('display', 'none', 'important'); setNativeCaptionHidden(false); return; }
       const fullscreen = document.fullscreenElement;
       if (fullscreen === video) controlHost.remove();
       else {
@@ -793,18 +837,20 @@
       }
     }
     function renderOverlay() {
+      placeOverlay();
       const group = settings.bilingual ? activeGroup() : null;
       const known = group ? translations.get(groupKey(group)) : null;
       const chinese = known?.status === 'ok' ? known.text : '';
-      const status = chinese ? '' : known?.status === 'pending' ? '正在翻译…' : known?.status === 'error' ? (captionStatus || '这句翻译失败') : captionStatus;
-      overlayText.textContent = chinese;
-      overlayText.hidden = !chinese;
-      overlayStatus.textContent = status;
-      overlayStatus.hidden = !status;
-      const visible = settings.bilingual && Boolean(chinese || status);
-      overlayHost.hidden = !visible;
-      overlayHost.style.setProperty('display', visible ? 'flex' : 'none', 'important');
-      placeOverlay();
+      const status = chinese ? '' : known?.status === 'pending' ? '正在翻译…' : known?.status === 'error' ? (captionStatus || '这句翻译失败') : (group ? '' : captionStatus);
+      overlayTranslationText.textContent = chinese;
+      overlayTranslation.hidden = !chinese;
+      overlayNoticeText.textContent = status;
+      overlayNotice.hidden = !status;
+      const english = group?.text || '';
+      overlayOriginalText.textContent = english;
+      overlayOriginal.hidden = !english;
+      overlayStack.hidden = !chinese && !status && !english;
+      setNativeCaptionHidden(Boolean(settings.bilingual && source?.cues?.length));
     }
 
     function restoreNativeState() { restoreHtmlTrack(); restoreYoutube(); }
@@ -891,7 +937,10 @@
       attachVideo(visibleVideo()); placeUi(); if (video) void refreshSource();
     }
     function onFullscreenChange() { placeUi(); }
+    function onLayoutChange() { placeOverlay(); }
     document.addEventListener('fullscreenchange', onFullscreenChange);
+    addEventListener('scroll', onLayoutChange, true);
+    addEventListener('resize', onLayoutChange);
     attachVideo(visibleVideo()); applySettingsToUi(); refreshTimer = setInterval(periodicRefresh, SOURCE_REFRESH_MS);
 
     return {
@@ -905,6 +954,9 @@
         if (frameId !== null) cancelAnimationFrame(frameId);
         observer.disconnect(); bridgeCleanup?.(); captionAbort?.abort(); closeActiveAssist(); restoreNativeState(); detachVideo();
         document.removeEventListener('fullscreenchange', onFullscreenChange);
+        removeEventListener('scroll', onLayoutChange, true);
+        removeEventListener('resize', onLayoutChange);
+        setNativeCaptionHidden(false);
         controlHost.parentElement?.matches?.(`[${HOST_ATTRIBUTE}="video-subtitles-row"]`) ? controlHost.parentElement.remove() : controlHost.remove();
         transcriptHost.remove();
         overlayHost.remove();
