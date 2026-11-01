@@ -208,11 +208,13 @@
     const overlayShadow = overlayHost.attachShadow({mode: 'closed'});
     overlayShadow.innerHTML = `
       <style data-theme-tokens>${tokens}</style><style>
-        :host{display:flex;justify-content:center;pointer-events:none}
-        .line{max-width:100%;box-sizing:border-box;margin:0;padding:6px 10px;border-radius:var(--radius-control);background:var(--surface);color:var(--ink);font:var(--weight-medium) var(--cue-size,20px)/1.4 var(--sans);text-align:center}
+        :host{display:flex;flex-direction:column;align-items:center;pointer-events:none}
+        .line,.status{max-width:100%;box-sizing:border-box;margin:0;padding:6px 10px;border-radius:var(--radius-control);background:var(--surface);color:var(--ink);font:var(--weight-medium) var(--cue-size,20px)/1.4 var(--sans);text-align:center}
+        .status{font-size:14px}
       </style>
-      <p class="line" lang="zh-CN"></p>`;
+      <p class="line" lang="zh-CN" hidden></p><p class="status" hidden></p>`;
     const overlayText = overlayShadow.querySelector('.line');
+    const overlayStatus = overlayShadow.querySelector('.status');
     const themeStyles = [controlShadow, transcriptShadow, overlayShadow].map(shadow => shadow.querySelector('[data-theme-tokens]'));
 
     let currentCallbacks = callbacks;
@@ -245,6 +247,7 @@
     let warmedVideoId = '';
     let failedVideoId = '';
     let refreshSkips = 0;
+    let captionStatus = '';
 
     function isYoutube() { return /(^|\.)youtube\.com$/.test(location.hostname); }
     function formatTime(seconds) {
@@ -563,10 +566,13 @@
         const messages = {none:['未找到可用英文字幕','warning'],loading:['正在读取英文字幕…',''],unavailable:['英文字幕时间轴不可获得','error'],'bridge-unavailable':['YouTube 字幕读取组件未就绪','error']};
         const [message, kind] = messages[next.state] || messages.unavailable;
         showNotice(message, kind);
+        captionStatus = message;
         progress.textContent = message;
+        renderOverlay();
         return;
       }
       const changed = installSource(next);
+      captionStatus = '';
       showNotice('');
       if (changed) renderTranscript(true);
       updateActiveCue();
@@ -734,7 +740,7 @@
           translations.set(key, record);
           stored = true;
         }
-        if (stored && remote.every(item => translations.get(groupKey(item.group))?.status === 'ok')) translateNoticeFor = '';
+        if (stored && remote.every(item => translations.get(groupKey(item.group))?.status === 'ok')) { translateNoticeFor = ''; captionStatus = ''; }
       } catch (error) {
         if (destroyed || generation !== sourceGeneration) return;
         for (const item of remote) {
@@ -743,7 +749,8 @@
         }
         const reason = String(error?.message || '').trim();
         const id = `${source?.key || ''}\u0000${reason}`;
-        if (reason && translateNoticeFor !== id) { translateNoticeFor = id; showNotice(`字幕翻译失败：${reason}`, 'error'); }
+        captionStatus = reason ? `字幕翻译失败：${reason}` : '字幕翻译失败';
+        if (reason && translateNoticeFor !== id) { translateNoticeFor = id; showNotice(captionStatus, 'error'); }
       }
       renderOverlay();
     }
@@ -788,9 +795,15 @@
     function renderOverlay() {
       const group = settings.bilingual ? activeGroup() : null;
       const known = group ? translations.get(groupKey(group)) : null;
-      overlayText.textContent = known?.status === 'ok' ? known.text : '';
-      overlayHost.hidden = !settings.bilingual || !overlayText.textContent;
-      overlayHost.style.setProperty('display', overlayHost.hidden ? 'none' : 'flex', 'important');
+      const chinese = known?.status === 'ok' ? known.text : '';
+      const status = chinese ? '' : known?.status === 'pending' ? '正在翻译…' : known?.status === 'error' ? (captionStatus || '这句翻译失败') : captionStatus;
+      overlayText.textContent = chinese;
+      overlayText.hidden = !chinese;
+      overlayStatus.textContent = status;
+      overlayStatus.hidden = !status;
+      const visible = settings.bilingual && Boolean(chinese || status);
+      overlayHost.hidden = !visible;
+      overlayHost.style.setProperty('display', visible ? 'flex' : 'none', 'important');
       placeOverlay();
     }
 

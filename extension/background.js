@@ -739,8 +739,7 @@ async function sentenceGroupsBatch(message,sender){
   const guard=async()=>{const [latest,current,currentMode]=await Promise.all([load(),readingSource(sender),chrome.storage.session.get(modeKey).then(value=>value[modeKey])]);if(latest.settings.assistanceMode==='on-demand'&&message.explicit!==true||generation!==providerGeneration||state.supportDataGeneration!==latest.supportDataGeneration||current.sourceHash!==source.sourceHash||!current.active||await tabPaused(source.tabId)||!currentMode?.enabled||currentMode.page!==source.sourceHash||currentMode.generation!==modeGeneration)throw staleWork();if(message.explicit!==true)await requireAutomaticReading(current);};
   // 解构默认不判卷（频次高）；开启后按策略先选路，缓存键随之切换到实际服务。
   {const route=await chooseRoute('sentenceGroups',summarizeRequest('sentenceGroups',{text:items.map(item=>item.sentence).join('\n').slice(0,900)}),{settings:state.settings,guard,automatic:message.explicit!==true,trace:diagnostics.trace(message),incognito:source.incognito});
-   if(route.kind==='api'&&route.service)state={...state,settings:{...state.settings,providerKind:'api',activeApiServiceId:route.service.id}};
-   else if(route.kind==='subscription')state={...state,settings:{...state.settings,providerKind:'chatgpt'}};}
+   state={...state,settings:applySubscriptionRoute(state.settings,route)};}
   const service=state.settings.providerKind==='api'?activeApiProvider(state.settings):state.settings.subscriptionModel;
   if(!configured(state.settings))throw new Error('请先连接服务；原文保持不变。');if(state.settings.providerKind==='api')await requireApiPermission(service);
   await sentenceGroupCacheReady;
@@ -868,8 +867,7 @@ async function translateItems(items,settings,trace,{scope,onProgress,origin,sour
   if(!configured(settings))throw new Error('请先连接服务。');
   // 整页与选段翻译都是高价值路径：先判卷再选路，升级路切换到指定服务后再走原链路。
   const route=await chooseRoute(scope==='page'?'emergency':'passage',summarizeRequest(scope,{text:items.map(item=>item.text).join('\n').slice(0,900)}),{settings,guard,incognito});
-  if(route.kind==='api'&&route.service)settings={...settings,providerKind:'api',activeApiServiceId:route.service.id};
-  else if(route.kind==='subscription')settings={...settings,providerKind:'chatgpt'};
+  settings=applySubscriptionRoute(settings,route);
   const service=settings.providerKind==='api'?activeApiProvider(settings):settings.subscriptionModel;
   if(settings.providerKind==='api')await requireApiPermission(service);
   const instructions=scope==='page'?PAGE_TRANSLATION_INSTRUCTIONS:EMERGENCY_INSTRUCTIONS;
@@ -1098,6 +1096,12 @@ async function clearModelUsage() {
   return work;
 }
 function routingSettingsOf(settings) { return normalizeRouting(settings?.routing || {}, DEFAULT_SETTINGS.routing); }
+// 主路由是订阅时保持 Google、Grok 或 ChatGPT。只有从 API 升到订阅，才改走 ChatGPT。
+function applySubscriptionRoute(settings, route) {
+  if (route?.kind === 'api' && route.service) return {...settings, providerKind: 'api', activeApiServiceId: route.service.id};
+  if (route?.kind === 'subscription' && !isSubscriptionKind(settings.providerKind)) return {...settings, providerKind: 'chatgpt'};
+  return settings;
+}
 async function routingVersion(settings, judge) {
   const routing = routingSettingsOf(settings);
   const judgeIdentity = judge ? [judge.providerId, judge.baseUrl, judge.model, await hashValue(judge.apiKey || '')] : null;
