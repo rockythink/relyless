@@ -1698,9 +1698,29 @@
       if(unit.contextSignature!==undefined&&unit.contextSignature!==signature)invalidateEmergencyUnit(unit,session,false);unit.context=context;unit.contextSignature=signature;
     }session.contextDependencies=dependencies;
   }
+  // display: contents 没有自己的盒子。附近范围改看内容的盒子，和 isVisible 同一条规则。
+  function contentBounds(element){
+    const own=element.getBoundingClientRect();
+    if((own.width>0&&own.height>0)||getComputedStyle(element).display!=='contents')return own;
+    const range=document.createRange();range.selectNodeContents(element);
+    const rects=[...range.getClientRects()];if(!rects.length)return own;
+    let top=rects[0].top,bottom=rects[0].bottom,left=rects[0].left,right=rects[0].right;
+    for(const rect of rects){top=Math.min(top,rect.top);bottom=Math.max(bottom,rect.bottom);left=Math.min(left,rect.left);right=Math.max(right,rect.right);}
+    return {top,bottom,left,right,width:Math.max(0,right-left),height:Math.max(0,bottom-top)};
+  }
+  function syncContentsNear(session){
+    for(const parent of session.byParent.keys()){
+      if(getComputedStyle(parent).display!=='contents')continue;
+      const rect=contentBounds(parent);
+      if(rect.height>0&&rect.bottom>=-600&&rect.top<=innerHeight+600)session.near.add(parent);
+      else session.near.delete(parent);
+    }
+  }
   function emergencyReady(session){
+    // 视口观察器对 display: contents 永远报不相交，滚动时改按内容盒子收回或排除。
+    syncContentsNear(session);
     for(const unit of session.ready)if(unit.state==='queued')unit.state='deferred';
-    const candidates=[];for(const parent of session.near){const rect=parent.getBoundingClientRect();if(rect.bottom < -600||rect.top>innerHeight+600)continue;const visible=rect.bottom>0&&rect.top<innerHeight,distance=visible?0:Math.max(-rect.bottom,rect.top-innerHeight,0);for(const unit of session.byParent.get(parent)||[])if(unit.state==='deferred'||unit.state==='queued')candidates.push({unit,visible,distance});}
+    const candidates=[];for(const parent of session.near){const rect=contentBounds(parent);if(rect.bottom < -600||rect.top>innerHeight+600)continue;const visible=rect.bottom>0&&rect.top<innerHeight,distance=visible?0:Math.max(-rect.bottom,rect.top-innerHeight,0);for(const unit of session.byParent.get(parent)||[])if(unit.state==='deferred'||unit.state==='queued')candidates.push({unit,visible,distance});}
     candidates.sort((a,b)=>Number(b.visible)-Number(a.visible)||a.distance-b.distance||a.unit.order-b.unit.order);session.ready=candidates.slice(0,16).map(({unit})=>unit);for(const unit of session.ready)unit.state='queued';return session.ready;
   }
   function scheduleEmergency(session){
@@ -1793,7 +1813,7 @@
     next.sort((a,b)=>a===b?0:a.nodes[0].compareDocumentPosition(b.nodes[0])&Node.DOCUMENT_POSITION_FOLLOWING?-1:1);session.units=next;next.forEach((unit,index)=>unit.order=index);
     const byParent=new Map();for(const unit of next){if(!byParent.has(unit.parent))byParent.set(unit.parent,new Set());byParent.get(unit.parent).add(unit);}
     for(const parent of session.byParent.keys())if(!byParent.has(parent)){session.intersections?.unobserve(parent);session.near.delete(parent);}
-    for(const parent of byParent.keys())if(!session.byParent.has(parent)){session.intersections?.observe(parent);const rect=parent.getBoundingClientRect();if(rect.bottom>=-600&&rect.top<=innerHeight+600)session.near.add(parent);}
+    for(const parent of byParent.keys())if(!session.byParent.has(parent)){session.intersections?.observe(parent);const rect=contentBounds(parent);if((getComputedStyle(parent).display!=='contents'||rect.height>0)&&rect.bottom>=-600&&rect.top<=innerHeight+600)session.near.add(parent);}
     session.byParent=byParent;updateEmergencyContexts(session);emergencyReady(session);updateEmergencyStatus(session);if(session.active)void runEmergency(session);return added;
   }
   function extensionOwnedNode(node){const element=node.nodeType===1?node:node.parentElement;return Boolean(element?.closest?.('['+OWN+']'));}

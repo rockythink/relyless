@@ -367,6 +367,41 @@ test('a late dismissed annotation cannot clear a newer help card task',async()=>
   });
 });
 
+test('page translation keeps a display contents paragraph after the viewport observer misses it',async()=>{
+  const sentence='The loose contents paragraph stays available for page translation. ';
+  const text=sentence.repeat(80).trim();
+  await withContent(async({pending,send})=>{
+    const loose=document.querySelector('#loose'),style=globalThis.getComputedStyle,zero={left:0,top:0,right:0,bottom:0,width:0,height:0,x:0,y:0};
+    loose.getClientRects=()=>[];loose.getBoundingClientRect=()=>zero;
+    globalThis.getComputedStyle=element=>element===loose?{...style(element),display:'contents'}:style(element);
+    globalThis.IntersectionObserver=class{constructor(callback){this.callback=callback;}observe(target){this.callback([{target,isIntersecting:false}],this);}unobserve(){}disconnect(){}};
+    try{
+      expect((await send({type:'SS_EMERGENCY_START',token:'page-token',resume:false})).ok).toBe(true);
+      await waitFor(()=>pending.length>0);
+      const first=pending.shift();expect(first.message.items[0].text.startsWith('The loose contents')).toBe(true);expect(first.message.items[0].text.length).toBeLessThanOrEqual(4000);
+      first.reply({ok:true,data:{items:first.message.items.map(item=>({id:item.id,translation:'已确认的第一块译文。'})),errors:[]}});
+      await waitFor(()=>pending.length>0);
+      expect(pending[0].message.items[0].text.startsWith('The loose contents')).toBe(true);
+      expect(first.message.items[0].text+pending[0].message.items[0].text).toBe(text);
+    }finally{globalThis.getComputedStyle=style;}
+  },{bodyHtml:'<main lang="en"><div id="loose">'+text+'</div></main>'});
+});
+
+test('page translation does not send an offscreen display contents paragraph',async()=>{
+  await withContent(async({pending,send})=>{
+    const far=document.querySelector('#far'),style=globalThis.getComputedStyle,zero={left:0,top:0,right:0,bottom:0,width:0,height:0,x:0,y:0};
+    far.getClientRects=()=>[];far.getBoundingClientRect=()=>zero;
+    globalThis.getComputedStyle=element=>element===far?{...style(element),display:'contents'}:style(element);
+    const rangeRects=window.Range.prototype.getClientRects;
+    window.Range.prototype.getClientRects=function(){const node=this.startContainer;if(node&&(node===far||far.contains(node)))return[{left:40,top:3000,right:640,bottom:3040,width:600,height:40,x:40,y:3000}];return rangeRects.call(this);};
+    try{
+      expect((await send({type:'SS_EMERGENCY_START',token:'page-token',resume:false})).ok).toBe(true);
+      await waitFor(()=>pending.length>0);
+      expect(pending[0].message.items.map(item=>item.text)).toEqual(['The visible paragraph stays in the first translation batch.']);
+    }finally{globalThis.getComputedStyle=style;window.Range.prototype.getClientRects=rangeRects;}
+  },{bodyHtml:'<main lang="en"><p>The visible paragraph stays in the first translation batch.</p><div id="far">The far contents paragraph should wait until it scrolls near the reader.</div></main>'});
+});
+
 test('page translation reads an article whose main element uses display contents',async()=>{
   await withContent(async({pending,send})=>{
     const main=document.querySelector('main'),style=globalThis.getComputedStyle;
