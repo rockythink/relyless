@@ -1,7 +1,7 @@
 import {expect,test} from 'bun:test';
 import {Window} from 'happy-dom';
 import {readFileSync} from 'node:fs';
-import {ALL_HOSTS,DEFAULT_KEYWORD_HINTS,KEYWORD_HINT_DISMISS_LIMIT,KEYWORD_PATTERN,dismissKeywordOrigin,hostKeyword,normalizeKeywordHints,registrationMatches,requiredPermissionOrigins,resolveAutomation,validateAutomation,validateVideo} from '../extension/activation.js';
+import {ALL_HOSTS,DEFAULT_KEYWORD_HINTS,KEYWORD_HINT_DISMISS_LIMIT,KEYWORD_PATTERN,dismissKeywordOrigin,hostKeyword,normalizeKeywordHints,registrationMatches,requiredPermissionOrigins,resolveAutomation,validateAutomation,validateVideo,youtubeTimedtextUrl} from '../extension/activation.js';
 import {normalizeSettings} from '../extension/shared.js';
 
 const activationDefaults={allSites:false,sentenceGroupsAllSites:false,sites:[],videoSites:false};
@@ -54,6 +54,9 @@ test('removed automation modes stay out while bilingual captions can be saved',(
   expect(()=>validateVideo({display:'original'},initial)).toThrow('未知');
   expect(()=>validateVideo({theme:'system'},initial)).toThrow('主题');
   expect(()=>validateVideo({bilingual:'yes'},initial)).toThrow('双语');
+  expect(youtubeTimedtextUrl('https://www.youtube.com/api/timedtext?v=abc&lang=en')).toBe('https://www.youtube.com/api/timedtext?v=abc&lang=en&fmt=json3');
+  expect(()=>youtubeTimedtextUrl('https://evil.example/api/timedtext?v=abc')).toThrow('字幕地址无效');
+  expect(()=>youtubeTimedtextUrl('https://user:pass@www.youtube.com/api/timedtext?v=abc')).toThrow('字幕地址无效');
 });
 test('unsupported popup shows one empty state without page-scoped requests',async()=>{
   const previousChrome=globalThis.chrome,previousDocument=globalThis.document;

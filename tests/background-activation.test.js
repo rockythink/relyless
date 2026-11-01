@@ -875,3 +875,21 @@ test('Chrome loading plus URL SPA events preserve document sequence watermarks b
   await flushBadgeQueue();expect(await reportTask(true,7)).toEqual({accepted:false});
   expect(await reportTask(true,8)).toEqual({accepted:true});expect(lastText()).toBe('!');
 });
+
+test('video sites register the caption bridge and timedtext is only read from YouTube', async () => {
+  granted.add('https://www.youtube.com/*');
+  granted.add('https://m.youtube.com/*');
+  const previous = tab.url;
+  tab.url = 'https://www.youtube.com/watch?v=fixture';
+  await send({type:'AUTOMATION_PATCH', tabId:tab.id, patch:{videoSites:true}});
+  expect(registrations).toContainEqual({id:'ss-youtube-captions', matches:['https://www.youtube.com/*','https://m.youtube.com/*'], js:['youtube-captions-bridge.js'], world:'MAIN', runAt:'document_start', allFrames:false, persistAcrossSessions:true});
+  const seen = [];
+  globalThis.fetch = async url => { seen.push(String(url)); return {ok:true, url:String(url), text:async () => '{"events":[]}'}; };
+  const page = {id:'activation-fixture', url:tab.url, tab:{...tab}, frameId:0};
+  expect(await send({type:'YOUTUBE_CAPTION_FETCH', url:'https://www.youtube.com/api/timedtext?v=fixture&lang=en'}, page)).toEqual({text:'{"events":[]}'});
+  expect(seen[0]).toContain('fmt=json3');
+  expect(seen[0].startsWith('https://www.youtube.com/api/timedtext')).toBe(true);
+  await expect(send({type:'YOUTUBE_CAPTION_FETCH', url:'https://evil.example/api/timedtext?v=fixture'}, page)).rejects.toThrow('字幕地址无效');
+  globalThis.fetch = async () => { throw new Error('unexpected model call'); };
+  tab.url = previous;
+});

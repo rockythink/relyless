@@ -1,6 +1,17 @@
 export const AUTO_SCRIPT_ID = 'ss-auto-start';
+export const CAPTION_SCRIPT_ID = 'ss-youtube-captions';
 export const ALL_HOSTS = ['http://*/*','https://*/*'];
 export const VIDEO_HOSTS = ['https://www.youtube.com/*','https://m.youtube.com/*'];
+
+/** YouTube timedtext 地址：只接受 www.youtube.com 的字幕接口，并固定要 json3。 */
+export function youtubeTimedtextUrl(raw) {
+  let url;
+  try { url = new URL(raw); } catch { throw new Error('字幕地址无效。'); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.hostname !== 'www.youtube.com' || url.pathname !== '/api/timedtext') throw new Error('字幕地址无效。');
+  url.searchParams.set('fmt', 'json3');
+  url.hash = '';
+  return url.href;
+}
 // 播放器双语字幕默认关闭。用户打开「双语」后才发送当前字幕。
 export const VIDEO_SUPPORT_ENABLED = true;
 

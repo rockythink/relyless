@@ -9,7 +9,7 @@ import {normalizeRulePacks} from './rule-pack.js';
 import {classifyLocal,embedLocal,countTokensLocal,nanoStatus,nanoAssist} from './local-classifier.js';
 import {assistanceProgress,translationProgress,normalizeTranslationProgress,conversationProgress} from './assistance-stream.mjs';
 import {SOURCE_DATA_INSTRUCTIONS,SUPPORT_POLICY_VERSION,SUPPORT_INSTRUCTIONS,SUPPORT_SCHEMA,ASSISTANCE_INSTRUCTIONS,assistanceSchema,normalizeSupportItems,prepareSupportItems,inspectSupportResponse,requestSupportWithCorrection,SUPPORT_CORRECTION_INSTRUCTIONS,normalizeSupportResult,normalizeAssistanceCommand,normalizeAssistanceRequest,normalizeAssistanceResult,normalizePreparationContext,EMERGENCY_SCHEMA,EMERGENCY_INSTRUCTIONS,normalizeEmergencyItems,normalizeEmergencyResult,PAGE_TRANSLATION_INSTRUCTIONS,normalizePageTranslationItems,inspectPageTranslationResult,normalizePageTranslationResult,CONVERSATION_INSTRUCTIONS,conversationSchema,normalizeConversationRequest,normalizeConversationResult} from './gloss.mjs';
-import {AUTO_SCRIPT_ID,ALL_HOSTS,VIDEO_SUPPORT_ENABLED,pageOrigin,sitePattern,validateAutomation,validateVideo,resolveAutomation,registrationMatches,requiredPermissionOrigins,dismissKeywordOrigin} from './activation.js';
+import {AUTO_SCRIPT_ID,CAPTION_SCRIPT_ID,ALL_HOSTS,VIDEO_HOSTS,VIDEO_SUPPORT_ENABLED,pageOrigin,sitePattern,validateAutomation,validateVideo,resolveAutomation,registrationMatches,requiredPermissionOrigins,dismissKeywordOrigin,youtubeTimedtextUrl} from './activation.js';
 import {createDiagnostics} from './diagnostic-service.js';
 import {createConversationStore} from './conversation-store.js';
 import {collectConversationMemory} from './conversation-memory.js';
@@ -906,8 +906,22 @@ async function videoCueTranslate(message,sender){
   const items=normalizePageTranslationItems(message.items),state=await load();
   if(state.settings.video.bilingual!==true)throw new Error('双语字幕已关闭。');
   const generation=providerGeneration;
-  const guard=async()=>{const [latest,page]=await Promise.all([load(),readingSource(sender)]);if(generation!==providerGeneration||state.supportDataGeneration!==latest.supportDataGeneration||latest.settings.video.bilingual!==true||page.sourceHash!==source.sourceHash||!page.active||await tabPaused(source.tabId))throw staleWork();};
+  // 请求开始时双语必须开着。途中关掉只停止新任务，不把已经发出的这一批判失败。
+  const guard=async()=>{const [latest,page]=await Promise.all([load(),readingSource(sender)]);if(generation!==providerGeneration||state.supportDataGeneration!==latest.supportDataGeneration||page.sourceHash!==source.sourceHash||!page.active||await tabPaused(source.tabId))throw staleWork();};
   return translateItems(items,state.settings,diagnostics.trace(message),{scope:'page',incognito:source.incognito,origin:new URL(source.url).origin,sourceHash:source.sourceHash,guard});
+}
+async function youtubeCaptionFetch(message,sender){
+  if(!VIDEO_SUPPORT_ENABLED)throw new Error('视频字幕功能暂未开放。');
+  if(!Number.isInteger(sender.tab?.id)||sender.frameId!==0)throw new Error('字幕只能由当前网页主框架读取。');
+  const {url:page}=await tabPage(sender.tab.id,sender.url);
+  if(page.protocol!=='https:'||!['www.youtube.com','m.youtube.com'].includes(page.hostname))throw new Error('字幕只从 YouTube 读取。');
+  const target=youtubeTimedtextUrl(message?.url);
+  const response=await fetch(target,{credentials:'include',redirect:'follow'});
+  youtubeTimedtextUrl(response.url);
+  if(!response.ok)throw new Error('字幕时间轴暂时读不到。');
+  const text=await response.text();
+  if(!text||text.length>1500000||text.trimStart().startsWith('<'))throw new Error('字幕时间轴暂时读不到。');
+  return {text};
 }
 async function emergencyTranslate(message,sender) {
   const source=await readingSource(sender),armed=await emergencySession(source.tabId);
@@ -1523,10 +1537,15 @@ async function reconcileAutoScript(settings) {
   const candidates = registrationMatches(settings.automation);
   const permitted = await Promise.all(candidates.map(pattern => chrome.permissions.contains({origins:[pattern]})));
   const matches = candidates.filter((_pattern,index) => permitted[index]);
+  const videoMatches = VIDEO_SUPPORT_ENABLED && settings.automation.videoSites ? VIDEO_HOSTS.filter(pattern => matches.includes(pattern)) : [];
   const registrations = await chrome.scripting.getRegisteredContentScripts();
-  const obsolete = registrations.filter(item => item.id === AUTO_SCRIPT_ID || item.id.startsWith('ss-auto-start-')).map(item => item.id);
+  const obsolete = registrations.filter(item => item.id === AUTO_SCRIPT_ID || item.id === CAPTION_SCRIPT_ID || item.id.startsWith('ss-auto-start-')).map(item => item.id);
   if (obsolete.length) await chrome.scripting.unregisterContentScripts({ids:obsolete});
-  if (matches.length) await chrome.scripting.registerContentScripts([{id:AUTO_SCRIPT_ID,matches,js:['auto-start.js'],runAt:'document_start',allFrames:false,persistAcrossSessions:true}]);
+  const scripts = [];
+  if (matches.length) scripts.push({id:AUTO_SCRIPT_ID,matches,js:['auto-start.js'],runAt:'document_start',allFrames:false,persistAcrossSessions:true});
+  // 页面一打开就挂上字幕桥，才能截到播放器自己的 timedtext 正文。权限关掉后这里会卸掉。
+  if (videoMatches.length) scripts.push({id:CAPTION_SCRIPT_ID,matches:videoMatches,js:['youtube-captions-bridge.js'],world:'MAIN',runAt:'document_start',allFrames:false,persistAcrossSessions:true});
+  if (scripts.length) await chrome.scripting.registerContentScripts(scripts);
 }
 
 const PAGE_UI_FILES=['design.js',...(VIDEO_SUPPORT_ENABLED?['vendor/youtube-caption-json3.js','video-subtitles.js']:[]),'content/kernel.js','content/reader.js','content/paragraph-copy.js','content/conversation-card.js','content/review.js','reading-style.js','content.js'];
@@ -1715,7 +1734,7 @@ async function handle(message,sender) {
   if(message.type==='PAGE_TASK_STATUS')return pageTaskStatus(message,sender);
   await dataReady;if(!['MEMORY_CLEAR','HISTORY_CLEAR'].includes(message.type))assertDataAvailable();if(futureSchema&&HISTORY_MUTATIONS.has(message.type))throw new Error('不支持的数据版本，请更新扩展');
   const trusted=Boolean(sender.url?.startsWith(chrome.runtime.getURL('')));
-  const contentAllowed=['HISTORY_BEGIN','HISTORY_TICK','HISTORY_COMMIT','HISTORY_ANNOTATION','DIAGNOSTICS_RENDER','STATE_GET','RESOLVE_DOMAIN','ANALYZE','SUPPORT_BATCH','SENTENCE_GROUPS_GET','SENTENCE_GROUPS_SET','SENTENCE_GROUPS_BATCH','ASSIST','ASSIST_PREVIEW','ASSIST_COMMIT','ENCOUNTER','INTERACT','YOUTUBE_CAPTIONS_BRIDGE','OPEN_OPTIONS','AUTO_BOOTSTRAP_CHECK','PAGE_ACTIVITY_SET','VIDEO_SETTINGS_PATCH','VIDEO_CUE_TRANSLATE','PREPARED_SUPPORT','PREPARED_ASSIST','PASSAGE_TRANSLATE','READER_TRANSLATION_ESTIMATE','READER_TRANSLATION_BEGIN', 'EMERGENCY_TRANSLATE', 'EMERGENCY_CANCEL_REQUEST', 'EMERGENCY_END','LANGUAGE_PROFILE','CONVERSATION_ASK','CONVERSATION_STOP','CONVERSATION_HISTORY','CONVERSATION_DELETE','REVIEW_DUE','REVIEW_FEEDBACK','ROUTING_STATS']
+  const contentAllowed=['HISTORY_BEGIN','HISTORY_TICK','HISTORY_COMMIT','HISTORY_ANNOTATION','DIAGNOSTICS_RENDER','STATE_GET','RESOLVE_DOMAIN','ANALYZE','SUPPORT_BATCH','SENTENCE_GROUPS_GET','SENTENCE_GROUPS_SET','SENTENCE_GROUPS_BATCH','ASSIST','ASSIST_PREVIEW','ASSIST_COMMIT','ENCOUNTER','INTERACT','YOUTUBE_CAPTIONS_BRIDGE','YOUTUBE_CAPTION_FETCH','OPEN_OPTIONS','AUTO_BOOTSTRAP_CHECK','PAGE_ACTIVITY_SET','VIDEO_SETTINGS_PATCH','VIDEO_CUE_TRANSLATE','PREPARED_SUPPORT','PREPARED_ASSIST','PASSAGE_TRANSLATE','READER_TRANSLATION_ESTIMATE','READER_TRANSLATION_BEGIN', 'EMERGENCY_TRANSLATE', 'EMERGENCY_CANCEL_REQUEST', 'EMERGENCY_END','LANGUAGE_PROFILE','CONVERSATION_ASK','CONVERSATION_STOP','CONVERSATION_HISTORY','CONVERSATION_DELETE','REVIEW_DUE','REVIEW_FEEDBACK','ROUTING_STATS']
   if(!trusted&&!contentAllowed.includes(message.type)&&message.type!=='WORD_PREFERENCE_SET')throw new Error('此操作不能从网页执行。');
   switch(message.type){
     case 'HISTORY_GET':return readingHistory.snapshot({days:message.days,search:message.search,domain:message.domain,type:message.eventType||'',cursor:message.cursor,limit:Number.isSafeInteger(message.limit)&&message.limit>0?message.limit:300});
@@ -1761,6 +1780,7 @@ async function handle(message,sender) {
     case 'PAGE_ACTIVITY_SET':if(!Number.isInteger(sender.tab?.id)||sender.frameId!==0||typeof message.enabled!=='boolean')throw new Error('无效的页面活动状态。');await setTabPaused(sender.tab.id,!message.enabled);return{paused:!message.enabled};
     case 'VIDEO_SETTINGS_PATCH':{if(!trusted&&(!Number.isInteger(sender.tab?.id)||sender.frameId!==0))throw new Error('视频设置只能由网页主框架更新。');const video=await mutate(state=>{const next=validateVideo(message.patch,state.settings.video);state.settings={...state.settings,video:next};return next;},false,false);await broadcastVideoSettings(video);return{video};}
     case 'YOUTUBE_CAPTIONS_BRIDGE':{if(!VIDEO_SUPPORT_ENABLED)throw new Error('视频字幕功能暂未开放。');if(!Number.isInteger(sender.tab?.id)||sender.frameId!==0)throw new Error('字幕桥只能由当前网页主框架启用。');const {url}=await tabPage(sender.tab.id,sender.url);if(url.protocol!=='https:'||!['www.youtube.com','m.youtube.com'].includes(url.hostname))throw new Error('字幕桥仅适用于 YouTube。');await chrome.scripting.executeScript({target:{tabId:sender.tab.id,frameIds:[0]},world:'MAIN',files:['youtube-captions-bridge.js']});return{};}
+    case 'YOUTUBE_CAPTION_FETCH':return youtubeCaptionFetch(message,sender);
     case 'STATE_GET':return {...publicState(await load(false),trusted),emergencyActive:Number.isInteger(sender.tab?.id)&&Boolean(await emergencySession(sender.tab.id))};
     case 'SUBSCRIPTION_STATUS':return refreshSubscription(isSubscriptionKind(message.kind)?message.kind:nativeKind((await load(false)).settings));
     case 'SUBSCRIPTION_LOGIN':return loginSubscription(isSubscriptionKind(message.kind)?message.kind:nativeKind((await load(false)).settings));
