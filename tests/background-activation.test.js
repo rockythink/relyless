@@ -159,8 +159,8 @@ test('main-frame video patches deep merge, persist, and use the dedicated broadc
     send({type:'VIDEO_SETTINGS_PATCH',patch:{fontSize:24}},pageSender),
     send({type:'VIDEO_SETTINGS_PATCH',patch:{theme:'dark'}},pageSender),
   ]);
-  expect(first).toEqual({video:{fontSize:24,theme:'auto'}});
-  expect(second).toEqual({video:{fontSize:24,theme:'dark'}});
+  expect(first).toEqual({video:{fontSize:24,theme:'auto',bilingual:false}});
+  expect(second).toEqual({video:{fontSize:24,theme:'dark',bilingual:false}});
   expect(stored.settings.video).toEqual(second.video);
   expect(tabMessages.at(-1).message).toEqual({type:'SS_VIDEO_SETTINGS',video:second.video});
   await expect(send({type:'VIDEO_SETTINGS_PATCH',patch:{fontSize:22}},pageSender)).rejects.toThrow('字号');

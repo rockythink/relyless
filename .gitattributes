@@ -3,7 +3,3 @@
 *.wasm binary
 *.onnx binary
 extension/local-inference/models/** -text
-# VIDEO_SUPPORT_ENABLED is false; keep sources in the repo but out of release archives.
-extension/video-subtitles.js export-ignore
-extension/youtube-captions-bridge.js export-ignore
-extension/vendor/youtube-caption-json3.js export-ignore

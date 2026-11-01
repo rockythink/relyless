@@ -13,13 +13,14 @@ test('exact origin rules override all-sites and manual pause disables automatic 
   expect(resolveAutomation(automation,'http://allowed.example:8080/article',true)).toMatchObject({siteRule:true,effective:false,paused:true,videoAvailable:false});
 });
 
-test('saved video preferences cannot reactivate hidden support or request video-only hosts',()=>{
+test('video sites register only on YouTube and reading a YouTube article does not turn captions on',()=>{
   const readingOnly=validateAutomation({sites:[{origin:'https://www.youtube.com',enabled:true}]},activationDefaults);
   expect(resolveAutomation(readingOnly,'https://www.youtube.com/watch?v=fixture')).toMatchObject({effective:true,videoAvailable:false});
   const video=validateAutomation({videoSites:true},activationDefaults);
-  expect(resolveAutomation(video,'https://www.youtube.com/watch?v=fixture')).toMatchObject({effective:false,videoAvailable:false});
-  expect(registrationMatches(video)).toEqual([]);
-  expect(requiredPermissionOrigins(video)).toEqual([]);
+  expect(resolveAutomation(video,'https://www.youtube.com/watch?v=fixture')).toMatchObject({effective:false,videoAvailable:true});
+  expect(resolveAutomation(video,'https://example.com/watch')).toMatchObject({videoAvailable:false});
+  expect(registrationMatches(video)).toEqual(['https://m.youtube.com/*','https://www.youtube.com/*']);
+  expect(requiredPermissionOrigins(video)).toEqual(['https://m.youtube.com/*','https://www.youtube.com/*']);
 });
 
 test('permission requirements mirror persisted policy without broadening exact site access',()=>{
@@ -27,7 +28,7 @@ test('permission requirements mirror persisted policy without broadening exact s
   expect(requiredPermissionOrigins(exact)).toEqual(['https://docs.example/*']);
   const broad=validateAutomation({allSites:true,videoSites:true},activationDefaults);
 
-  expect(requiredPermissionOrigins(broad)).toEqual([...ALL_HOSTS].sort());
+  expect(requiredPermissionOrigins(broad)).toEqual([...ALL_HOSTS,'https://m.youtube.com/*','https://www.youtube.com/*'].sort());
   expect(()=>validateAutomation({sites:[{origin:'https://docs.example/path',enabled:true}]},activationDefaults)).toThrow('origin');
   expect(()=>validateAutomation({sites:[{origin:'https://docs.example',enabled:true},{origin:'https://docs.example',enabled:false}]},activationDefaults)).toThrow('唯一');
 });
@@ -44,13 +45,15 @@ test('sentence groups all-sites uses host permission while exact disabled rules 
   expect(normalizeSettings({automation:{allSites:true,sites:[],videoSites:false}}).automation.sentenceGroupsAllSites).toBe(false);
 });
 
-test('removed automation modes and video translation display cannot re-enter the public contract',()=>{
+test('removed automation modes stay out while bilingual captions can be saved',()=>{
   expect(()=>validateAutomation({mode:'bilingual'},activationDefaults)).toThrow('未知');
-  const initial={fontSize:20,theme:'auto'};
-  expect(validateVideo({fontSize:28,theme:'dark'},initial)).toEqual({fontSize:28,theme:'dark'});
+  const initial={fontSize:20,theme:'auto',bilingual:false};
+  expect(validateVideo({fontSize:28,theme:'dark'},initial)).toEqual({fontSize:28,theme:'dark',bilingual:false});
+  expect(validateVideo({bilingual:true},initial)).toEqual({fontSize:20,theme:'auto',bilingual:true});
   expect(()=>validateVideo({fontSize:19},initial)).toThrow('字号');
   expect(()=>validateVideo({display:'original'},initial)).toThrow('未知');
   expect(()=>validateVideo({theme:'system'},initial)).toThrow('主题');
+  expect(()=>validateVideo({bilingual:'yes'},initial)).toThrow('双语');
 });
 test('unsupported popup shows one empty state without page-scoped requests',async()=>{
   const previousChrome=globalThis.chrome,previousDocument=globalThis.document;

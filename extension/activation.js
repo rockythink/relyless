@@ -1,8 +1,8 @@
 export const AUTO_SCRIPT_ID = 'ss-auto-start';
 export const ALL_HOSTS = ['http://*/*','https://*/*'];
 export const VIDEO_HOSTS = ['https://www.youtube.com/*','https://m.youtube.com/*'];
-// Temporarily hide video support without erasing saved preferences.
-export const VIDEO_SUPPORT_ENABLED = false;
+// 播放器双语字幕默认关闭。用户打开「双语」后才发送当前字幕。
+export const VIDEO_SUPPORT_ENABLED = true;
 
 export function pageOrigin(value) {
   try {
@@ -81,7 +81,7 @@ export function validateAutomation(value, base) {
 
 export function validateVideo(value, base) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('无效的视频设置。');
-  const allowed = new Set(['fontSize','theme']);
+  const allowed = new Set(['fontSize','theme','bilingual']);
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw new Error('未知的视频设置。');
   const result = {...base};
   if (value.fontSize !== undefined) {
@@ -91,6 +91,10 @@ export function validateVideo(value, base) {
   if (value.theme !== undefined) {
     if (!['auto','light','dark'].includes(value.theme)) throw new Error('无效的字幕主题。');
     result.theme = value.theme;
+  }
+  if (value.bilingual !== undefined) {
+    if (typeof value.bilingual !== 'boolean') throw new Error('无效的双语字幕设置。');
+    result.bilingual = value.bilingual;
   }
   return result;
 }

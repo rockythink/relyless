@@ -11,7 +11,11 @@
   const RENDER_PAGE_SIZE = 100;
   const MAX_TARGET_LENGTH = 600;
   const MAX_CONTEXT_LENGTH = 2000;
-  const DEFAULT_SETTINGS = Object.freeze({fontSize: 20, theme: 'auto'});
+  const DEFAULT_SETTINGS = Object.freeze({fontSize: 20, theme: 'auto', bilingual: false});
+  const TRANSLATE_LOOK_AHEAD_SECONDS = 30;
+  const TRANSLATE_BATCH_SIZE = 4;
+  const TRANSLATE_RETRY_MS = 8000;
+  const TRANSLATE_MAX_ATTEMPTS = 3;
   const FONT_SIZES = new Set([16, 20, 24, 28]);
   const THEMES = new Set(['auto', 'light', 'dark']);
 
@@ -21,6 +25,7 @@
     return {
       fontSize: FONT_SIZES.has(value?.fontSize) ? value.fontSize : DEFAULT_SETTINGS.fontSize,
       theme: THEMES.has(value?.theme) ? value.theme : DEFAULT_SETTINGS.theme,
+      bilingual: value?.bilingual === true,
     };
   }
 
@@ -48,8 +53,10 @@
         :host([data-youtube="true"]) button[aria-pressed="true"]{box-shadow:inset 0 -3px #fff}
       </style>
       <button class="assist" type="button" aria-label="帮助理解当前字幕">这句</button>
+      <button class="bilingual" type="button" aria-pressed="false" aria-label="显示双语字幕">双语</button>
       <button class="transcript" type="button" aria-label="展开英文原文稿" aria-pressed="false">原文</button>`;
     const assistButton = controlShadow.querySelector('.assist');
+    const bilingualButton = controlShadow.querySelector('.bilingual');
     const transcriptButton = controlShadow.querySelector('.transcript');
 
     const transcriptHost = document.createElement('section');
@@ -90,7 +97,24 @@
     const list = transcriptShadow.querySelector('.list');
     const progress = transcriptShadow.querySelector('.progress');
     const notice = transcriptShadow.querySelector('.notice');
-    const themeStyles = [controlShadow, transcriptShadow].map(shadow => shadow.querySelector('[data-theme-tokens]'));
+    const overlayHost = document.createElement('div');
+    overlayHost.setAttribute(HOST_ATTRIBUTE, 'video-bilingual');
+    overlayHost.hidden = true;
+    overlayHost.style.setProperty('all', 'initial', 'important');
+    overlayHost.style.setProperty('position', 'fixed', 'important');
+    overlayHost.style.setProperty('z-index', '2147483646', 'important');
+    overlayHost.style.setProperty('pointer-events', 'none', 'important');
+    overlayHost.style.setProperty('display', 'flex', 'important');
+    overlayHost.style.setProperty('justify-content', 'center', 'important');
+    const overlayShadow = overlayHost.attachShadow({mode: 'closed'});
+    overlayShadow.innerHTML = `
+      <style data-theme-tokens>${tokens}</style><style>
+        :host{display:flex;justify-content:center;pointer-events:none}
+        .line{max-width:100%;box-sizing:border-box;margin:0;padding:6px 10px;border-radius:var(--radius-control);background:var(--surface);color:var(--ink);font:var(--weight-medium) var(--cue-size,20px)/1.4 var(--sans);text-align:center}
+      </style>
+      <p class="line" lang="zh-CN"></p>`;
+    const overlayText = overlayShadow.querySelector('.line');
+    const themeStyles = [controlShadow, transcriptShadow, overlayShadow].map(shadow => shadow.querySelector('[data-theme-tokens]'));
 
     let currentCallbacks = callbacks;
     let settings = normalizedSettings(callbacks.settings);
@@ -113,6 +137,9 @@
     let restoredTrack = null;
     let youtubePrepared = false;
     let activeAssist = null;
+    let translations = new Map();
+    let prefetching = false;
+    let translateNoticeFor = '';
 
     function isYoutube() { return /(^|\.)youtube\.com$/.test(location.hostname); }
     function formatTime(seconds) {
@@ -142,6 +169,10 @@
         renderedTheme = settings.theme;
       }
       transcriptHost.style.setProperty('--cue-size', `${settings.fontSize}px`);
+      overlayHost.style.setProperty('--cue-size', `${settings.fontSize}px`);
+      bilingualButton.setAttribute('aria-pressed', String(settings.bilingual));
+      bilingualButton.setAttribute('aria-label', settings.bilingual ? '关闭双语字幕' : '显示双语字幕');
+      bilingualButton.textContent = '双语';
       for (const select of transcriptShadow.querySelectorAll('[data-setting]')) select.value = String(settings[select.dataset.setting]);
     }
     function showNotice(message, kind = '') {
@@ -182,8 +213,18 @@
       if (youtubeControls()) return video.closest('ytd-player') || video.closest('#player') || video.closest('.html5-video-player') || video;
       return video.closest('[data-player],.video-player,.player') || video;
     }
+    function placeOverlay() {
+      if (!settings.bilingual || !video?.isConnected || overlayHost.hidden) return;
+      const fullscreen = document.fullscreenElement;
+      const root = fullscreen && (fullscreen === video || fullscreen.contains(video)) ? fullscreen : document.documentElement;
+      if (overlayHost.parentElement !== root) root.append(overlayHost);
+      const rect = video.getBoundingClientRect();
+      overlayHost.style.left = Math.max(8, rect.left + 16) + 'px';
+      overlayHost.style.top = Math.max(8, rect.bottom - 72) + 'px';
+      overlayHost.style.width = Math.max(0, rect.width - 32) + 'px';
+    }
     function placeUi() {
-      if (!video?.isConnected) { controlHost.remove(); transcriptHost.remove(); return; }
+      if (!video?.isConnected) { controlHost.remove(); transcriptHost.remove(); overlayHost.hidden = true; return; }
       const fullscreen = document.fullscreenElement;
       if (fullscreen === video) controlHost.remove();
       else {
@@ -215,6 +256,7 @@
       if (after?.parentElement && transcriptHost.previousElementSibling !== after) after.insertAdjacentElement('afterend', transcriptHost);
       const fullscreenParent = fullscreen && fullscreen.contains(video) ? fullscreen : null;
       if (fullscreenParent && transcriptOpen && transcriptHost.parentElement !== fullscreenParent) fullscreenParent.append(transcriptHost);
+      placeOverlay();
     }
 
     function restoreHtmlTrack() {
@@ -337,12 +379,17 @@
       closeActiveAssist();
       source = {...next, signature};
       renderedCount = Math.min(RENDER_PAGE_SIZE, source.cues.length);
+      translations = new Map();
+      translateNoticeFor = '';
+      prefetching = false;
       return true;
     }
     function clearSource() {
       sourceGeneration += 1;
       closeActiveAssist();
       source = null;
+      translations = new Map();
+      prefetching = false;
       renderedCount = 0;
       captionAbort?.abort(); captionAbort = null;
       renderTranscript(true);
@@ -458,6 +505,95 @@
       if (!source) return;
       const active = currentCueIndex();
       for (const row of list.querySelectorAll('.cue')) row.dataset.active = String(Number(row.dataset.index) === active);
+      renderOverlay();
+      scheduleTranslation();
+    }
+    function cueKey(cue) { return `${cue.startTime}\n${cue.endTime}\n${cue.text}`; }
+    function clipCaption(text, max, fromEnd = false) {
+      const value = String(text || '').replace(/\s+/g, ' ').trim();
+      return value.length <= max ? value : fromEnd ? value.slice(value.length - max) : value.slice(0, max);
+    }
+    function videoTitle() {
+      const heading = isYoutube() ? document.querySelector('h1.ytd-watch-metadata, #title h1')?.textContent : '';
+      return String(heading || document.title || '').replace(/\s*-\s*YouTube\s*$/i, '').replace(/\s+/g, ' ').trim().slice(0, 160);
+    }
+    function translationContext(index) {
+      const cues = source?.cues || [];
+      const before = index > 0 ? cues.slice(Math.max(0, index - 2), index).map(cue => cue.text).join(' ') : '';
+      const after = index >= 0 && index + 1 < cues.length ? cues[index + 1].text : '';
+      return {title: videoTitle(), heading: '', before: clipCaption(before, 400, true), after: clipCaption(after, 400)};
+    }
+    function wantsTranslation() { return settings.bilingual && !destroyed && Boolean(source?.cues?.length); }
+    function needsTranslation(cue) {
+      const known = translations.get(cueKey(cue));
+      if (!known) return true;
+      if (known.status === 'ok' || known.status === 'pending') return false;
+      return known.attempts < TRANSLATE_MAX_ATTEMPTS && Date.now() - known.at >= TRANSLATE_RETRY_MS;
+    }
+    async function translateCues(cues, generation) {
+      if (typeof currentCallbacks.onTranslate !== 'function') return;
+      for (const cue of cues) {
+        const previous = translations.get(cueKey(cue));
+        translations.set(cueKey(cue), {status: 'pending', text: '', attempts: (previous?.attempts || 0) + 1, at: Date.now()});
+      }
+      renderOverlay();
+      try {
+        const items = cues.map((cue, index) => ({id: `c${index + 1}`, text: cue.text.slice(0, 4000), context: translationContext(source.cues.indexOf(cue))}));
+        const result = await currentCallbacks.onTranslate(items);
+        if (destroyed || generation !== sourceGeneration || !settings.bilingual) return;
+        const byId = new Map((result?.items || []).map(item => [item.id, item.translation]));
+        const failed = new Set((result?.errors || []).map(item => item.id));
+        cues.forEach((cue, index) => {
+          const id = `c${index + 1}`;
+          const translation = byId.get(id);
+          const key = cueKey(cue);
+          const attempts = translations.get(key)?.attempts || 1;
+          translations.set(key, !failed.has(id) && typeof translation === 'string' && /\p{Script=Han}/u.test(translation) ? {status: 'ok', text: translation.trim(), attempts, at: Date.now()} : {status: 'error', text: '', attempts, at: Date.now()});
+        });
+        translateNoticeFor = '';
+      } catch (error) {
+        if (generation !== sourceGeneration) return;
+        for (const cue of cues) {
+          const key = cueKey(cue);
+          const attempts = translations.get(key)?.attempts || 1;
+          translations.set(key, {status: 'error', text: '', attempts, at: Date.now()});
+        }
+        const reason = String(error?.message || '').trim();
+        const id = `${source?.key || ''}\u0000${reason}`;
+        if (reason && translateNoticeFor !== id) { translateNoticeFor = id; showNotice(`字幕翻译失败：${reason}`, 'error'); }
+      }
+      renderOverlay();
+    }
+    function pendingAhead() {
+      const cues = source?.cues || [];
+      const index = Math.max(0, currentCueIndex());
+      const now = video?.currentTime || 0;
+      const horizon = now + TRANSLATE_LOOK_AHEAD_SECONDS;
+      const todo = [];
+      for (let cursor = index; cursor < cues.length && todo.length < TRANSLATE_BATCH_SIZE; cursor += 1) {
+        if (cursor > index && cues[cursor].startTime > horizon) break;
+        if (needsTranslation(cues[cursor])) todo.push(cues[cursor]);
+      }
+      return todo;
+    }
+    function scheduleTranslation() {
+      if (!wantsTranslation() || prefetching || typeof currentCallbacks.onTranslate !== 'function') return;
+      const generation = sourceGeneration;
+      const todo = pendingAhead();
+      if (!todo.length) return;
+      prefetching = true;
+      void translateCues(todo, generation).finally(() => {
+        prefetching = false;
+        if (generation === sourceGeneration && wantsTranslation()) scheduleTranslation();
+      });
+    }
+    function renderOverlay() {
+      const cue = settings.bilingual && source?.cues ? source.cues[currentCueIndex()] : null;
+      const known = cue ? translations.get(cueKey(cue)) : null;
+      overlayText.textContent = known?.status === 'ok' ? known.text : '';
+      overlayHost.hidden = !settings.bilingual || !overlayText.textContent;
+      overlayHost.style.setProperty('display', overlayHost.hidden ? 'none' : 'flex', 'important');
+      placeOverlay();
     }
 
     function restoreNativeState() { restoreHtmlTrack(); restoreYoutube(); }
@@ -488,7 +624,28 @@
       placeUi(); if (transcriptOpen) { renderTranscript(true); void refreshSource(); }
     }
 
+    async function setBilingual(next) {
+      const previous = settings;
+      const bilingual = next === true;
+      settings = normalizedSettings({...settings, bilingual});
+      applySettingsToUi();
+      renderOverlay();
+      if (typeof currentCallbacks.onSettingsChange !== 'function') { if (bilingual) scheduleTranslation(); return; }
+      try {
+        const result = await currentCallbacks.onSettingsChange({bilingual});
+        settings = normalizedSettings(result?.video);
+        applySettingsToUi();
+        if (settings.bilingual) scheduleTranslation();
+        else renderOverlay();
+      } catch {
+        settings = previous;
+        applySettingsToUi();
+        renderOverlay();
+        showNotice('双语字幕没有保存，已恢复原设置', 'error');
+      }
+    }
     assistButton.addEventListener('click', () => requestAssist(currentCueIndex(), assistButton));
+    bilingualButton.addEventListener('click', () => { void setBilingual(!settings.bilingual); });
     transcriptButton.addEventListener('click', () => setTranscriptOpen(!transcriptOpen));
     transcriptShadow.querySelector('.close').addEventListener('click', () => setTranscriptOpen(false));
     list.addEventListener('click', event => {
@@ -530,7 +687,7 @@
       setCallbacks(nextCallbacks) {
         if (typeof nextCallbacks?.onAssist !== 'function') throw new TypeError('onAssist callback is required');
         currentCallbacks = nextCallbacks;
-        if (nextCallbacks.settings) { settings = normalizedSettings(nextCallbacks.settings); applySettingsToUi(); }
+        if (nextCallbacks.settings) { settings = normalizedSettings(nextCallbacks.settings); applySettingsToUi(); renderOverlay(); if (settings.bilingual) scheduleTranslation(); }
       },
       unmount() {
         destroyed = true; sessionGeneration += 1; clearInterval(refreshTimer);
@@ -539,6 +696,7 @@
         document.removeEventListener('fullscreenchange', onFullscreenChange);
         controlHost.parentElement?.matches?.(`[${HOST_ATTRIBUTE}="video-subtitles-row"]`) ? controlHost.parentElement.remove() : controlHost.remove();
         transcriptHost.remove();
+        overlayHost.remove();
       },
     };
   }

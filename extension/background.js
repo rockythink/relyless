@@ -208,7 +208,7 @@ function publicState(state,trusted) {
     assistanceMode:source.assistanceMode,rememberSupport:source.rememberSupport,
     helpLanguage:source.helpLanguage,lookupKey:source.lookupKey,lookupDisplay:source.lookupDisplay,hintDisplay:source.hintDisplay,keyboardNav:source.keyboardNav,
     readingStyle:globalThis.ShisuiReadingStyle.normalize(source.readingStyle),domain:source.domain,
-    video:{fontSize:source.video.fontSize,theme:source.video.theme},
+    video:{fontSize:source.video.fontSize,theme:source.video.theme,bilingual:source.video.bilingual===true},
     readingHistory:readingHistory.publicConfig(),
   };
   return {settings,providerConfigured,providerError,...(trusted ? {subscription:isSubscriptionKind(source.providerKind)?subscriptionStatus(nativeKind(source)):subscriptionStatus('chatgpt'),dataProblem} : {})};
@@ -898,6 +898,16 @@ async function translateItems(items,settings,trace,{scope,onProgress,origin,sour
   await Promise.all(keys.map(async key=>{if(outcomes.has(key))return;const operation=translationInFlight.get(key);if(!operation)throw new Error('翻译结果已过期，请重试。');backgroundGuards.get(operation).add(guard);const result=await operation;await guard();if(!result.has(key))throw new Error('翻译服务未返回完整结果。');outcomes.set(key,result.get(key));}));
   if(scope==='passage')return {...normalizeEmergencyResult({items:items.map((item,index)=>({id:item.id,translation:outcomes.get(keys[index])?.translation}))},items),...(cacheHits?{cacheHits}:{})};
   return {...normalizePageTranslationResult({items:items.flatMap((item,index)=>outcomes.get(keys[index])?.translation!==undefined?[{id:item.id,translation:outcomes.get(keys[index]).translation}]:[]),errors:items.flatMap((item,index)=>outcomes.get(keys[index])?.error?[{id:item.id,code:outcomes.get(keys[index]).error}]:[])},items),...(cacheHits?{cacheHits}:{})};
+}
+async function videoCueTranslate(message,sender){
+  if(!VIDEO_SUPPORT_ENABLED)throw new Error('视频字幕功能暂未开放。');
+  const source=await readingSource(sender);
+  if(!source.active||await tabPaused(source.tabId))throw new Error('请在当前页面打开双语字幕。');
+  const items=normalizePageTranslationItems(message.items),state=await load();
+  if(state.settings.video.bilingual!==true)throw new Error('双语字幕已关闭。');
+  const generation=providerGeneration;
+  const guard=async()=>{const [latest,page]=await Promise.all([load(),readingSource(sender)]);if(generation!==providerGeneration||state.supportDataGeneration!==latest.supportDataGeneration||latest.settings.video.bilingual!==true||page.sourceHash!==source.sourceHash||!page.active||await tabPaused(source.tabId))throw staleWork();};
+  return translateItems(items,state.settings,diagnostics.trace(message),{scope:'page',incognito:source.incognito,origin:new URL(source.url).origin,sourceHash:source.sourceHash,guard});
 }
 async function emergencyTranslate(message,sender) {
   const source=await readingSource(sender),armed=await emergencySession(source.tabId);
@@ -1705,7 +1715,7 @@ async function handle(message,sender) {
   if(message.type==='PAGE_TASK_STATUS')return pageTaskStatus(message,sender);
   await dataReady;if(!['MEMORY_CLEAR','HISTORY_CLEAR'].includes(message.type))assertDataAvailable();if(futureSchema&&HISTORY_MUTATIONS.has(message.type))throw new Error('不支持的数据版本，请更新扩展');
   const trusted=Boolean(sender.url?.startsWith(chrome.runtime.getURL('')));
-  const contentAllowed=['HISTORY_BEGIN','HISTORY_TICK','HISTORY_COMMIT','HISTORY_ANNOTATION','DIAGNOSTICS_RENDER','STATE_GET','RESOLVE_DOMAIN','ANALYZE','SUPPORT_BATCH','SENTENCE_GROUPS_GET','SENTENCE_GROUPS_SET','SENTENCE_GROUPS_BATCH','ASSIST','ASSIST_PREVIEW','ASSIST_COMMIT','ENCOUNTER','INTERACT','YOUTUBE_CAPTIONS_BRIDGE','OPEN_OPTIONS','AUTO_BOOTSTRAP_CHECK','PAGE_ACTIVITY_SET','VIDEO_SETTINGS_PATCH','PREPARED_SUPPORT','PREPARED_ASSIST','PASSAGE_TRANSLATE','READER_TRANSLATION_ESTIMATE','READER_TRANSLATION_BEGIN', 'EMERGENCY_TRANSLATE', 'EMERGENCY_CANCEL_REQUEST', 'EMERGENCY_END','LANGUAGE_PROFILE','CONVERSATION_ASK','CONVERSATION_STOP','CONVERSATION_HISTORY','CONVERSATION_DELETE','REVIEW_DUE','REVIEW_FEEDBACK','ROUTING_STATS']
+  const contentAllowed=['HISTORY_BEGIN','HISTORY_TICK','HISTORY_COMMIT','HISTORY_ANNOTATION','DIAGNOSTICS_RENDER','STATE_GET','RESOLVE_DOMAIN','ANALYZE','SUPPORT_BATCH','SENTENCE_GROUPS_GET','SENTENCE_GROUPS_SET','SENTENCE_GROUPS_BATCH','ASSIST','ASSIST_PREVIEW','ASSIST_COMMIT','ENCOUNTER','INTERACT','YOUTUBE_CAPTIONS_BRIDGE','OPEN_OPTIONS','AUTO_BOOTSTRAP_CHECK','PAGE_ACTIVITY_SET','VIDEO_SETTINGS_PATCH','VIDEO_CUE_TRANSLATE','PREPARED_SUPPORT','PREPARED_ASSIST','PASSAGE_TRANSLATE','READER_TRANSLATION_ESTIMATE','READER_TRANSLATION_BEGIN', 'EMERGENCY_TRANSLATE', 'EMERGENCY_CANCEL_REQUEST', 'EMERGENCY_END','LANGUAGE_PROFILE','CONVERSATION_ASK','CONVERSATION_STOP','CONVERSATION_HISTORY','CONVERSATION_DELETE','REVIEW_DUE','REVIEW_FEEDBACK','ROUTING_STATS']
   if(!trusted&&!contentAllowed.includes(message.type)&&message.type!=='WORD_PREFERENCE_SET')throw new Error('此操作不能从网页执行。');
   switch(message.type){
     case 'HISTORY_GET':return readingHistory.snapshot({days:message.days,search:message.search,domain:message.domain,type:message.eventType||'',cursor:message.cursor,limit:Number.isSafeInteger(message.limit)&&message.limit>0?message.limit:300});
@@ -1792,6 +1802,7 @@ async function handle(message,sender) {
     case 'READER_TRANSLATION_BEGIN':{const source=await readingSource(sender);if(!source.active||typeof message.confirmed!=='boolean')throw new Error('当前网页不可翻译。');injectedEmergencyPages.set(source.tabId,source.url);return emergencyBegin({tabId:source.tabId,url:source.url,confirmed:message.confirmed});}
     case 'EMERGENCY_BEGIN':if(!trusted)throw new Error('仅扩展界面可确认紧急翻译。');return emergencyBegin(message,sender);
     case 'EMERGENCY_ESTIMATE':{if(!trusted)throw new Error('仅扩展界面可确认紧急翻译。');if(!Number.isInteger(message.tabId))throw new Error('无效的预估请求。');return emergencyUsageEstimate(message.tabId,(await load(false)).settings,message.chars);}
+    case 'VIDEO_CUE_TRANSLATE':return videoCueTranslate(message,sender);
     case 'PASSAGE_TRANSLATE':return passageTranslate(message,sender);
     case 'EMERGENCY_TRANSLATE':return emergencyTranslate(message,sender);
     case 'EMERGENCY_CANCEL_REQUEST':return emergencyCancelRequest(message,sender);
