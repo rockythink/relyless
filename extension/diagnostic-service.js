@@ -1,5 +1,5 @@
 import {createDiagnosticStore,sanitizeDiagnostic,diagnosticError,validTraceId} from './diagnostics.mjs';
-const OPERATIONS=new Set(['SENTENCE_GROUPS_BATCH','HISTORY_SUMMARY','PERSONALIZATION_ANALYZE','ASSIST_COMMIT','ASSIST','SUPPORT_BATCH','PASSAGE_TRANSLATE','EMERGENCY_TRANSLATE','RESOLVE_DOMAIN','PROVIDER_TEST','PREPARED_ASSIST']);
+const OPERATIONS=new Set(['SENTENCE_GROUPS_BATCH','HISTORY_SUMMARY','PERSONALIZATION_ANALYZE','ASSIST_COMMIT','ASSIST','SUPPORT_BATCH','PASSAGE_TRANSLATE','EMERGENCY_TRANSLATE','VIDEO_CUE_TRANSLATE','RESOLVE_DOMAIN','PROVIDER_TEST','PREPARED_ASSIST']);
 const RENDERED=new Set(['ASSIST','SUPPORT_BATCH','PASSAGE_TRANSLATE','EMERGENCY_TRANSLATE','PREPARED_ASSIST']);
 const RECEIPTS='diagnosticReceipts';
 const fingerprint=async value=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))].map(byte=>byte.toString(16).padStart(2,'0')).join('');

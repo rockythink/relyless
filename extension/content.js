@@ -1522,7 +1522,7 @@
       if(state.paused)return;
       if(target.text.length>600 || segments(target.text).length>3){renderHelpCard(target,LIMIT_ERROR);return;}
       return assistTarget(target);
-    },onSettingsChange:async patch=>{const result=await request('VIDEO_SETTINGS_PATCH',{patch});state.settings.video=result.video;return result;}});
+    },onTranslate:items=>request('VIDEO_CUE_TRANSLATE',{items}),onPrepareBridge:()=>request('YOUTUBE_CAPTIONS_BRIDGE',{}),onFetchCaption:async url=>{const result=await request('YOUTUBE_CAPTION_FETCH',{url});return typeof result?.text==='string'?result.text:'';},onSettingsChange:async patch=>{const result=await request('VIDEO_SETTINGS_PATCH',{patch});state.settings.video=result.video;return result;}});
   }
   function emergencyText(node) {
     if(node.nodeType===Node.TEXT_NODE)return node.nodeValue;

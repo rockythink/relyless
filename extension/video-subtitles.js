@@ -11,9 +11,112 @@
   const RENDER_PAGE_SIZE = 100;
   const MAX_TARGET_LENGTH = 600;
   const MAX_CONTEXT_LENGTH = 2000;
-  const DEFAULT_SETTINGS = Object.freeze({fontSize: 20, theme: 'auto'});
+  const DEFAULT_SETTINGS = Object.freeze({fontSize: 20, theme: 'auto', bilingual: false});
+  const TRANSLATE_LOOK_AHEAD_SECONDS = 30;
+  const TRANSLATE_BATCH_SIZE = 4;
+  const TRANSLATE_RETRY_MS = 8000;
+  const TRANSLATE_MAX_ATTEMPTS = 3;
   const FONT_SIZES = new Set([16, 20, 24, 28]);
   const THEMES = new Set(['auto', 'light', 'dark']);
+  const MAX_GROUP_LENGTH = 130;
+  const MAX_GROUP_WORDS = 20;
+  const CLAUSE_BREAK_LENGTH = 60;
+  const CONNECTIVE_BREAK_WORDS = 12;
+  const MIN_GROUP_WORDS = 3;
+  const CONNECTIVES = new Set(['and', 'but', 'so', 'because', 'which', 'who', 'when', 'where', 'while', 'if', 'or', 'although', 'though', 'then', 'that\'s', 'unless', 'until', 'since']);
+  const SLOW_TRANSLATE_MS = 6000;
+
+  function wordCount(text) { return String(text).split(/\s+/).filter(word => /[A-Za-z0-9]/.test(word)).length; }
+  function groupKey(group) { return `${Number(group.startTime).toFixed(2)}\u0000${group.text}`; }
+  function groupCues(cues) {
+    const groups = [];
+    let bucket = null;
+    const flush = () => { if (bucket) groups.push(bucket); bucket = null; };
+    cues.forEach((cue, index) => {
+      if (!bucket) {
+        bucket = {startTime: cue.startTime, endTime: cue.endTime, text: cue.text, cueIndex: index, cueEnd: index};
+        return;
+      }
+      const gap = cue.startTime - bucket.endTime;
+      const combined = `${bucket.text} ${cue.text}`.trim();
+      const bucketWords = wordCount(bucket.text);
+      const tooShort = bucketWords < MIN_GROUP_WORDS && gap <= 0.85 && !/^\[[^\]]+\]$/.test(bucket.text) && !/^\[[^\]]+\]$/.test(cue.text);
+      const sentenceDone = /[.!?…]["'”’)]*$/u.test(bucket.text);
+      const clauseDone = bucket.text.length >= CLAUSE_BREAK_LENGTH && /[,;:—–]["'”’)]*$/u.test(bucket.text);
+      const connectiveBreak = bucketWords >= CONNECTIVE_BREAK_WORDS && CONNECTIVES.has(cue.text.split(/\s+/)[0]?.toLowerCase().replace(/[^a-z']/g, ''));
+      const tooLong = combined.length > MAX_GROUP_LENGTH || wordCount(combined) > MAX_GROUP_WORDS;
+      if (!tooShort && (gap > 0.85 || sentenceDone || clauseDone || connectiveBreak || tooLong)) {
+        flush();
+        bucket = {startTime: cue.startTime, endTime: cue.endTime, text: cue.text, cueIndex: index, cueEnd: index};
+        return;
+      }
+      bucket.endTime = Math.max(bucket.endTime, cue.endTime);
+      bucket.text = combined;
+      bucket.cueEnd = index;
+    });
+    flush();
+    return groups;
+  }
+  function mostlyHan(text) {
+    const chars = [...String(text || '').replace(/\s/g, '')];
+    if (chars.length < 2) return false;
+    return chars.filter(ch => /\p{Script=Han}/u.test(ch)).length / chars.length >= 0.6;
+  }
+  function localCaption(text) {
+    if (mostlyHan(text)) return text;
+    const sound = String(text || '').match(/^\[(music|applause|laughter|silence)\]$/i);
+    if (!sound) return '';
+    return {music: '[音乐]', applause: '[掌声]', laughter: '[笑声]', silence: '[静音]'}[sound[1].toLowerCase()] || '';
+  }
+  function acceptableTranslation(sourceText, translation) {
+    if (typeof translation !== 'string' || !translation.trim()) return false;
+    if (/\p{Script=Han}/u.test(translation)) return true;
+    const words = String(sourceText).split(/\s+/).filter(word => /[A-Za-z]/.test(word));
+    return words.length > 0 && words.length < 6;
+  }
+  function needsTranslationEntry(cached, now) {
+    if (!cached) return true;
+    if (cached.status === 'ok' || cached.status === 'pending') return false;
+    return cached.status === 'error' && cached.attempts < TRANSLATE_MAX_ATTEMPTS && now - cached.at >= TRANSLATE_RETRY_MS;
+  }
+  function currentGroupIndex(groups, time) {
+    if (!groups?.length) return -1;
+    let found = -1;
+    for (let index = 0; index < groups.length; index += 1) {
+      if (groups[index].startTime <= time + 0.2) found = index;
+      else break;
+    }
+    return found;
+  }
+  function groupIndexAt(groups, time) {
+    let found = -1;
+    for (let index = 0; index < groups.length; index += 1) {
+      if (groups[index].startTime <= time) found = index;
+      else break;
+    }
+    return found;
+  }
+  function pendingGroups({groups, time, translations, horizon, arrival, limit, now}) {
+    const index = Math.max(0, currentGroupIndex(groups, time));
+    const todo = [];
+    if (!groups?.length) return todo;
+    for (let cursor = index; cursor < groups.length && todo.length < limit; cursor += 1) {
+      if (cursor > index && groups[cursor].startTime > horizon) break;
+      if (groups[cursor].endTime < arrival) continue;
+      if (needsTranslationEntry(translations.get(groupKey(groups[cursor])), now)) todo.push(groups[cursor]);
+    }
+    return todo;
+  }
+  function releasePrefetch(generation, sourceGeneration, inFlight) {
+    if (generation !== sourceGeneration) return inFlight;
+    return Math.max(0, inFlight - 1);
+  }
+  function translationRecord({destroyed, generation, sourceGeneration, sourceText, translation, failed, attempts, now}) {
+    if (destroyed || generation !== sourceGeneration) return null;
+    if (!failed && acceptableTranslation(sourceText, translation)) return {status: 'ok', text: String(translation).trim(), attempts, at: now};
+    return {status: 'error', text: '', attempts, at: now};
+  }
+  globalThis.ShisuiVideoCaptionPlan = Object.freeze({groupCues, localCaption, acceptableTranslation, pendingGroups, releasePrefetch, translationRecord, groupKey, currentGroupIndex, groupIndexAt});
 
   let instance = null;
 
@@ -21,6 +124,7 @@
     return {
       fontSize: FONT_SIZES.has(value?.fontSize) ? value.fontSize : DEFAULT_SETTINGS.fontSize,
       theme: THEMES.has(value?.theme) ? value.theme : DEFAULT_SETTINGS.theme,
+      bilingual: value?.bilingual === true,
     };
   }
 
@@ -48,8 +152,10 @@
         :host([data-youtube="true"]) button[aria-pressed="true"]{box-shadow:inset 0 -3px #fff}
       </style>
       <button class="assist" type="button" aria-label="帮助理解当前字幕">这句</button>
+      <button class="bilingual" type="button" aria-pressed="false" aria-label="显示双语字幕">双语</button>
       <button class="transcript" type="button" aria-label="展开英文原文稿" aria-pressed="false">原文</button>`;
     const assistButton = controlShadow.querySelector('.assist');
+    const bilingualButton = controlShadow.querySelector('.bilingual');
     const transcriptButton = controlShadow.querySelector('.transcript');
 
     const transcriptHost = document.createElement('section');
@@ -90,7 +196,39 @@
     const list = transcriptShadow.querySelector('.list');
     const progress = transcriptShadow.querySelector('.progress');
     const notice = transcriptShadow.querySelector('.notice');
-    const themeStyles = [controlShadow, transcriptShadow].map(shadow => shadow.querySelector('[data-theme-tokens]'));
+    const overlayHost = document.createElement('div');
+    overlayHost.setAttribute(HOST_ATTRIBUTE, 'video-bilingual');
+    overlayHost.style.setProperty('all', 'initial', 'important');
+    overlayHost.style.setProperty('position', 'fixed', 'important');
+    overlayHost.style.setProperty('z-index', '2147483646', 'important');
+    overlayHost.style.setProperty('pointer-events', 'none', 'important');
+    overlayHost.style.setProperty('display', 'none', 'important');
+    const overlayShadow = overlayHost.attachShadow({mode: 'closed'});
+    overlayShadow.innerHTML = `
+      <style data-theme-tokens>${tokens}</style><style>
+        :host{display:block;width:100%;height:100%;pointer-events:none;font-family:var(--sans,sans-serif);--sub-size:20px;--sub-bottom:72px}
+        .stack{position:absolute;left:50%;bottom:var(--sub-bottom);transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:.12em;width:min(90%,1000px);font-size:var(--sub-size);text-align:center;pointer-events:none}
+        .stack[hidden]{display:none}
+        .line{display:block;margin:0;padding:0;max-width:100%;border:0;background:none;text-align:center;line-height:1.36;text-wrap:balance;overflow-wrap:anywhere}
+        .line>span{padding:.06em .36em;border-radius:.18em;background:rgba(0,0,0,.72);-webkit-box-decoration-break:clone;box-decoration-break:clone;text-shadow:0 0 .12em rgba(0,0,0,.6)}
+        .translation{order:1;color:#fff;font:600 1em/1.36 var(--sans,sans-serif);letter-spacing:.02em;word-break:keep-all;line-break:strict}
+        .notice{order:1;color:#ffd9a0;font:500 .62em/1.4 var(--sans,sans-serif)}
+        .original{order:2;color:rgba(255,255,255,.9);font:500 .76em/1.4 var(--sans,sans-serif)}
+        .line[hidden]{display:none}
+      </style>
+      <div class="stack" hidden>
+        <p class="line translation" lang="zh-CN" hidden><span></span></p>
+        <p class="line notice" role="status" hidden><span></span></p>
+        <p class="line original" lang="en"><span></span></p>
+      </div>`;
+    const overlayStack = overlayShadow.querySelector('.stack');
+    const overlayTranslation = overlayShadow.querySelector('.translation');
+    const overlayTranslationText = overlayTranslation.querySelector('span');
+    const overlayNotice = overlayShadow.querySelector('.notice');
+    const overlayNoticeText = overlayNotice.querySelector('span');
+    const overlayOriginal = overlayShadow.querySelector('.original');
+    const overlayOriginalText = overlayOriginal.querySelector('span');
+    const themeStyles = [controlShadow, transcriptShadow, overlayShadow].map(shadow => shadow.querySelector('[data-theme-tokens]'));
 
     let currentCallbacks = callbacks;
     let settings = normalizedSettings(callbacks.settings);
@@ -103,7 +241,6 @@
     let transcriptOpen = false;
     let refreshBusy = false;
     let captionAbort = null;
-    let unavailableCaptionUrl = '';
     let lastUrl = location.href;
     let refreshTimer = null;
     let frameId = null;
@@ -111,8 +248,19 @@
     let bridgeCleanup = null;
     let renderedCount = 0;
     let restoredTrack = null;
-    let youtubePrepared = false;
     let activeAssist = null;
+    let translations = new Map();
+    let prefetchInFlight = 0;
+    let priorityRequest = null;
+    let observedTranslateMs = 0;
+    let translateNoticeFor = '';
+    let bridgeInstalled = false;
+    let bridgeFailed = false;
+    let discoverAttemptedFor = '';
+    let warmedVideoId = '';
+    let failedVideoId = '';
+    let refreshSkips = 0;
+    let captionStatus = '';
 
     function isYoutube() { return /(^|\.)youtube\.com$/.test(location.hostname); }
     function formatTime(seconds) {
@@ -142,6 +290,9 @@
         renderedTheme = settings.theme;
       }
       transcriptHost.style.setProperty('--cue-size', `${settings.fontSize}px`);
+      bilingualButton.setAttribute('aria-pressed', String(settings.bilingual));
+      bilingualButton.setAttribute('aria-label', settings.bilingual ? '关闭双语字幕' : '显示双语字幕');
+      bilingualButton.textContent = '双语';
       for (const select of transcriptShadow.querySelectorAll('[data-setting]')) select.value = String(settings[select.dataset.setting]);
     }
     function showNotice(message, kind = '') {
@@ -182,8 +333,50 @@
       if (youtubeControls()) return video.closest('ytd-player') || video.closest('#player') || video.closest('.html5-video-player') || video;
       return video.closest('[data-player],.video-player,.player') || video;
     }
+    function controlsClearance(rect) {
+      const player = video?.closest('.html5-video-player');
+      if (player) {
+        const hidden = player.classList.contains('ytp-autohide') || player.classList.contains('ytp-hide-controls');
+        const barHeight = player.querySelector('.ytp-chrome-bottom')?.getBoundingClientRect().height || 48;
+        return hidden ? barHeight + 4 : barHeight + rect.height * 0.035;
+      }
+      return video?.controls ? Math.max(rect.height * 0.12, 52) : rect.height * 0.06;
+    }
+    function setNativeCaptionHidden(hidden) {
+      const id = 'shisui-hide-native-captions';
+      const existing = document.getElementById(id);
+      if (!hidden) { existing?.remove(); return; }
+      if (existing) return;
+      const style = document.createElement('style');
+      style.id = id;
+      style.textContent = '.ytp-caption-window-container,.ytp-caption-window-rollup{opacity:0 !important}';
+      document.documentElement.append(style);
+    }
+    function placeOverlay() {
+      if (!settings.bilingual || !video?.isConnected) {
+        overlayHost.style.setProperty('display', 'none', 'important');
+        return;
+      }
+      const fullscreen = document.fullscreenElement;
+      const parent = fullscreen && (fullscreen === video || fullscreen.contains(video)) ? fullscreen : document.documentElement;
+      if (overlayHost.parentElement !== parent) parent.append(overlayHost);
+      const rect = video.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) {
+        overlayHost.style.setProperty('display', 'none', 'important');
+        return;
+      }
+      const base = Math.max(14, Math.min(44, rect.height * 0.046));
+      const size = Math.round(base * settings.fontSize / DEFAULT_SETTINGS.fontSize);
+      overlayHost.style.setProperty('display', 'block', 'important');
+      overlayHost.style.setProperty('left', `${rect.left}px`, 'important');
+      overlayHost.style.setProperty('top', `${rect.top}px`, 'important');
+      overlayHost.style.setProperty('width', `${rect.width}px`, 'important');
+      overlayHost.style.setProperty('height', `${rect.height}px`, 'important');
+      overlayHost.style.setProperty('--sub-size', `${size}px`);
+      overlayHost.style.setProperty('--sub-bottom', `${Math.round(controlsClearance(rect))}px`);
+    }
     function placeUi() {
-      if (!video?.isConnected) { controlHost.remove(); transcriptHost.remove(); return; }
+      if (!video?.isConnected) { controlHost.remove(); transcriptHost.remove(); overlayHost.style.setProperty('display', 'none', 'important'); setNativeCaptionHidden(false); return; }
       const fullscreen = document.fullscreenElement;
       if (fullscreen === video) controlHost.remove();
       else {
@@ -215,6 +408,7 @@
       if (after?.parentElement && transcriptHost.previousElementSibling !== after) after.insertAdjacentElement('afterend', transcriptHost);
       const fullscreenParent = fullscreen && fullscreen.contains(video) ? fullscreen : null;
       if (fullscreenParent && transcriptOpen && transcriptHost.parentElement !== fullscreenParent) fullscreenParent.append(transcriptHost);
+      placeOverlay();
     }
 
     function restoreHtmlTrack() {
@@ -249,7 +443,8 @@
     function bridgeRequest(command, language) {
       return new Promise(resolve => {
         const requestId = `shisui-${Date.now().toString(36)}-${(++requestSequence).toString(36)}`;
-        const timeout = setTimeout(() => { removeEventListener(YOUTUBE_RESPONSE_EVENT, onResponse); bridgeCleanup = null; resolve(null); }, 2200);
+        const timeoutMs = command === 'discover' || command === 'prepare' || command === 'caption' ? 9000 : 2200;
+        const timeout = setTimeout(() => { removeEventListener(YOUTUBE_RESPONSE_EVENT, onResponse); bridgeCleanup = null; resolve(null); }, timeoutMs);
         function onResponse(event) {
           if (event.detail?.requestId !== requestId) return;
           clearTimeout(timeout); removeEventListener(YOUTUBE_RESPONSE_EVENT, onResponse); bridgeCleanup = null; resolve(event.detail);
@@ -259,15 +454,21 @@
         dispatchEvent(new CustomEvent(YOUTUBE_REQUEST_EVENT, {detail: {requestId, command, ...(language ? {language} : {})}}));
       });
     }
-    async function prepareYoutube() {
-      if (youtubePrepared) return true;
-      const detail = await bridgeRequest('prepare', 'en');
-      youtubePrepared = detail?.prepared === true;
-      return youtubePrepared;
+    async function ensureBridge() {
+      if (!isYoutube()) return false;
+      if (bridgeInstalled) return true;
+      if (bridgeFailed || typeof currentCallbacks.onPrepareBridge !== 'function') return false;
+      try {
+        await currentCallbacks.onPrepareBridge();
+        bridgeInstalled = true;
+        return true;
+      } catch {
+        bridgeFailed = true;
+        return false;
+      }
     }
     function restoreYoutube() {
-      if (!youtubePrepared) return;
-      youtubePrepared = false;
+      if (!bridgeInstalled) return;
       void bridgeRequest('restore');
     }
     function safeYoutubeCaptionUrl(rawUrl) {
@@ -275,36 +476,71 @@
         const url = new URL(rawUrl);
         if (url.protocol !== 'https:' || url.hostname !== 'www.youtube.com' || url.pathname !== '/api/timedtext') return null;
         url.searchParams.set('fmt', 'json3');
+        url.hash = '';
         return url.href;
       } catch { return null; }
+    }
+    function cuesFromText(text) {
+      if (typeof text !== 'string' || !text || text.trimStart().startsWith('<')) return null;
+      try {
+        const parsed = globalThis.ShisuiYoutubeCaptionParser?.parseJson3(text);
+        if (!Array.isArray(parsed)) return null;
+        const cues = parsed.map(normalizedCue).filter(Boolean).sort((a, b) => a.startTime - b.startTime);
+        return cues.length ? cues : null;
+      } catch { return null; }
+    }
+    async function loadCueText(captionUrl) {
+      const safe = safeYoutubeCaptionUrl(captionUrl);
+      if (!safe || typeof currentCallbacks.onFetchCaption !== 'function') return null;
+      try { return cuesFromText(await currentCallbacks.onFetchCaption(safe)); } catch { return null; }
     }
     async function youtubeSource() {
       const expectedVideoId = videoIdFromLocation();
       if (!expectedVideoId) return {state: 'none'};
-      if (!await prepareYoutube()) return {state: 'none'};
-      const detail = await bridgeRequest('snapshot');
+      if (failedVideoId === expectedVideoId) {
+        refreshSkips += 1;
+        if (refreshSkips < 8) return {state: 'unavailable'};
+        refreshSkips = 0;
+        failedVideoId = '';
+        warmedVideoId = '';
+        discoverAttemptedFor = '';
+      }
+      if (!await ensureBridge()) return {state: 'bridge-unavailable'};
+      let detail = await bridgeRequest('snapshot');
       if (!detail) return {state: 'bridge-unavailable'};
-      if (detail.videoId !== expectedVideoId) return {state: 'loading'};
+      if (detail.videoId && detail.videoId !== expectedVideoId) return {state: 'loading'};
+      if (!detail.track && discoverAttemptedFor !== expectedVideoId) {
+        discoverAttemptedFor = expectedVideoId;
+        const discovered = await bridgeRequest('discover');
+        if (discovered?.track && (!discovered.videoId || discovered.videoId === expectedVideoId)) detail = discovered;
+      }
       if (!detail.track || !isEnglishLanguage(detail.track.languageCode)) return {state: 'none'};
-      const captionUrl = safeYoutubeCaptionUrl(detail.track.baseUrl);
-      if (!captionUrl || captionUrl === unavailableCaptionUrl) return {state: 'unavailable'};
-      const key = `youtube:${expectedVideoId}:${String(detail.track.key || detail.track.languageCode || captionUrl)}`;
-      if (source?.key === key) return source;
-      captionAbort?.abort();
-      const controller = new AbortController();
-      captionAbort = controller;
-      try {
-        const response = await fetch(captionUrl, {credentials: 'omit', referrerPolicy: 'no-referrer', signal: controller.signal});
-        if (!response.ok) throw new Error('caption request failed');
-        const parsed = globalThis.ShisuiYoutubeCaptionParser?.parseJson3(await response.text());
-        if (!Array.isArray(parsed)) throw new Error('caption format unavailable');
-        const cues = parsed.map(normalizedCue).filter(Boolean).sort((a, b) => a.startTime - b.startTime);
-        return cues.length ? {state: 'ready', key, cues} : {state: 'unavailable'};
-      } catch (error) {
-        if (error?.name === 'AbortError') return {state: 'loading'};
-        unavailableCaptionUrl = captionUrl;
+      const key = `youtube:${expectedVideoId}:${String(detail.track.languageCode || '')}:${String(detail.track.key || '')}`;
+      if (source?.key === key && source.cues?.length) {
+        const last = source.cues[source.cues.length - 1];
+        const duration = Number(video?.duration);
+        const live = !Number.isFinite(duration) || duration === Infinity;
+        const mayGrow = live || (Number.isFinite(duration) && last.endTime < duration - 20);
+        if (!mayGrow || !video || video.currentTime < last.endTime - 6) return source;
+        const grown = cuesFromText((await bridgeRequest('caption'))?.text);
+        if (grown?.length) return {state: 'ready', key, cues: grown};
+        return source;
+      }
+      let cues = null;
+      if (warmedVideoId !== expectedVideoId) {
+        warmedVideoId = expectedVideoId;
+        const loaded = await bridgeRequest('caption');
+        if (loaded?.track && isEnglishLanguage(loaded.track.languageCode) && (!loaded.videoId || loaded.videoId === expectedVideoId)) detail = loaded;
+        cues = cuesFromText(loaded?.text);
+      }
+      if (!cues?.length) cues = await loadCueText(detail.track?.baseUrl);
+      if (!cues?.length) {
+        failedVideoId = expectedVideoId;
         return {state: 'unavailable'};
-      } finally { if (captionAbort === controller) captionAbort = null; }
+      }
+      failedVideoId = '';
+      refreshSkips = 0;
+      return {state: 'ready', key, cues};
     }
 
     function sourceSignature(next) {
@@ -330,19 +566,39 @@
         try { void assist.video.play(); } catch { /* Autoplay policy may reject safe restoration. */ }
       }
     }
+    function resetTranslationWork() {
+      prefetchInFlight = 0;
+      priorityRequest = null;
+    }
     function installSource(next) {
       const signature = sourceSignature(next);
       if (source?.signature === signature) return false;
-      sourceGeneration += 1;
-      closeActiveAssist();
-      source = {...next, signature};
+      const sameTrack = source?.key === next.key;
+      const previous = sameTrack ? new Map(translations) : null;
+      if (!sameTrack) {
+        sourceGeneration += 1;
+        resetTranslationWork();
+        closeActiveAssist();
+        translations = new Map();
+        translateNoticeFor = '';
+      }
+      source = {...next, signature, groups: groupCues(next.cues)};
       renderedCount = Math.min(RENDER_PAGE_SIZE, source.cues.length);
+      if (previous) {
+        translations = new Map();
+        for (const group of source.groups) {
+          const key = groupKey(group);
+          if (previous.has(key)) translations.set(key, previous.get(key));
+        }
+      }
       return true;
     }
     function clearSource() {
       sourceGeneration += 1;
+      resetTranslationWork();
       closeActiveAssist();
       source = null;
+      translations = new Map();
       renderedCount = 0;
       captionAbort?.abort(); captionAbort = null;
       renderTranscript(true);
@@ -354,10 +610,13 @@
         const messages = {none:['未找到可用英文字幕','warning'],loading:['正在读取英文字幕…',''],unavailable:['英文字幕时间轴不可获得','error'],'bridge-unavailable':['YouTube 字幕读取组件未就绪','error']};
         const [message, kind] = messages[next.state] || messages.unavailable;
         showNotice(message, kind);
+        captionStatus = message;
         progress.textContent = message;
+        renderOverlay();
         return;
       }
       const changed = installSource(next);
+      captionStatus = '';
       showNotice('');
       if (changed) renderTranscript(true);
       updateActiveCue();
@@ -458,6 +717,140 @@
       if (!source) return;
       const active = currentCueIndex();
       for (const row of list.querySelectorAll('.cue')) row.dataset.active = String(Number(row.dataset.index) === active);
+      renderOverlay();
+      scheduleTranslation();
+    }
+    function clipCaption(text, max, fromEnd = false) {
+      const value = String(text || '').replace(/\s+/g, ' ').trim();
+      return value.length <= max ? value : fromEnd ? value.slice(value.length - max) : value.slice(0, max);
+    }
+    function videoTitle() {
+      const heading = isYoutube() ? document.querySelector('h1.ytd-watch-metadata, #title h1')?.textContent : '';
+      return String(heading || document.title || '').replace(/\s*-\s*YouTube\s*$/i, '').replace(/\s+/g, ' ').trim().slice(0, 160);
+    }
+    function translationContext(group) {
+      const groups = source?.groups || [];
+      const index = groups.indexOf(group);
+      const before = index > 0 ? groups.slice(Math.max(0, index - 2), index).map(item => item.text).join(' ') : '';
+      const after = index >= 0 && index + 1 < groups.length ? groups[index + 1].text : '';
+      return {title: videoTitle(), heading: '', before: clipCaption(before, 400, true), after: clipCaption(after, 400)};
+    }
+    function wantsTranslation() { return settings.bilingual && !destroyed && Boolean(source?.groups?.length); }
+    function activeGroup() {
+      const groups = source?.groups || [];
+      const time = video?.currentTime || 0;
+      const index = currentGroupIndex(groups, time);
+      if (index < 0) return null;
+      const group = groups[index];
+      return time <= group.endTime + 0.35 ? group : null;
+    }
+    async function translateGroups(groups, generation) {
+      for (const group of groups) {
+        const key = groupKey(group);
+        const previous = translations.get(key);
+        translations.set(key, {status: 'pending', text: '', attempts: (previous?.attempts || 0) + 1, at: Date.now()});
+      }
+      renderOverlay();
+      const remote = [];
+      groups.forEach((group, index) => {
+        const local = localCaption(group.text);
+        const key = groupKey(group);
+        if (local) translations.set(key, {status: 'ok', text: local, attempts: translations.get(key)?.attempts || 1, at: Date.now()});
+        else remote.push({group, id: `c${index + 1}`, text: group.text.slice(0, 4000)});
+      });
+      if (!remote.length || typeof currentCallbacks.onTranslate !== 'function') {
+        if (remote.length && generation === sourceGeneration) {
+          for (const item of remote) {
+            const key = groupKey(item.group);
+            translations.set(key, {status: 'error', text: '', attempts: translations.get(key)?.attempts || 1, at: Date.now()});
+          }
+        }
+        renderOverlay();
+        return;
+      }
+      try {
+        const started = performance.now();
+        const result = await currentCallbacks.onTranslate(remote.map(item => ({id: item.id, text: item.text, context: translationContext(item.group)})));
+        const elapsed = performance.now() - started;
+        observedTranslateMs = observedTranslateMs ? observedTranslateMs * 0.6 + elapsed * 0.4 : elapsed;
+        // 关掉双语只停止新任务。同一轨的在途结果仍写入，重开时不能停在 pending。
+        const byId = new Map((result?.items || []).map(item => [item.id, item.translation]));
+        const failed = new Set((result?.errors || []).map(item => item.id));
+        let stored = false;
+        for (const item of remote) {
+          const key = groupKey(item.group);
+          const record = translationRecord({destroyed, generation, sourceGeneration, sourceText: item.text, translation: byId.get(item.id), failed: failed.has(item.id), attempts: translations.get(key)?.attempts || 1, now: Date.now()});
+          if (!record) continue;
+          translations.set(key, record);
+          stored = true;
+        }
+        if (stored && remote.every(item => translations.get(groupKey(item.group))?.status === 'ok')) { translateNoticeFor = ''; captionStatus = ''; }
+      } catch (error) {
+        if (destroyed || generation !== sourceGeneration) return;
+        for (const item of remote) {
+          const key = groupKey(item.group);
+          translations.set(key, {status: 'error', text: '', attempts: translations.get(key)?.attempts || 1, at: Date.now()});
+        }
+        const reason = String(error?.message || '').trim();
+        const id = `${source?.key || ''}\u0000${reason}`;
+        captionStatus = reason ? `字幕翻译失败：${reason}` : '字幕翻译失败';
+        if (reason && translateNoticeFor !== id) { translateNoticeFor = id; showNotice(captionStatus, 'error'); }
+      }
+      renderOverlay();
+    }
+    function arrivalTime() {
+      const now = video?.currentTime || 0;
+      if (!video || video.paused || !observedTranslateMs) return now;
+      return now + observedTranslateMs / 1000 * (video.playbackRate || 1);
+    }
+    function ensureCurrentTranslated() {
+      if (!wantsTranslation() || priorityRequest || typeof currentCallbacks.onTranslate !== 'function') return;
+      const groups = source?.groups || [];
+      const current = currentGroupIndex(groups, video?.currentTime || 0);
+      const landing = groupIndexAt(groups, arrivalTime());
+      const now = Date.now();
+      const group = [groups[landing], groups[current]].find(item => item && needsTranslationEntry(translations.get(groupKey(item)), now));
+      if (!group) return;
+      const generation = sourceGeneration;
+      const request = {};
+      priorityRequest = request;
+      void (async () => {
+        try { await translateGroups([group], generation); } catch { /* 失败状态由批次处理。 */ }
+        finally { if (priorityRequest === request) priorityRequest = null; }
+      })();
+    }
+    function scheduleTranslation() {
+      if (!wantsTranslation() || typeof currentCallbacks.onTranslate !== 'function') return;
+      ensureCurrentTranslated();
+      const maxInFlight = observedTranslateMs >= SLOW_TRANSLATE_MS ? 2 : 1;
+      while (prefetchInFlight < maxInFlight) {
+        const generation = sourceGeneration;
+        const time = video?.currentTime || 0;
+        const horizon = time + Math.max(TRANSLATE_LOOK_AHEAD_SECONDS, observedTranslateMs / 1000 * 4);
+        const todo = pendingGroups({groups: source?.groups || [], time, translations, horizon, arrival: arrivalTime(), limit: TRANSLATE_BATCH_SIZE, now: Date.now()});
+        if (!todo.length) return;
+        prefetchInFlight += 1;
+        void translateGroups(todo, generation).catch(() => {}).finally(() => {
+          prefetchInFlight = releasePrefetch(generation, sourceGeneration, prefetchInFlight);
+          if (generation === sourceGeneration && wantsTranslation()) scheduleTranslation();
+        });
+      }
+    }
+    function renderOverlay() {
+      placeOverlay();
+      const group = settings.bilingual ? activeGroup() : null;
+      const known = group ? translations.get(groupKey(group)) : null;
+      const chinese = known?.status === 'ok' ? known.text : '';
+      const status = chinese ? '' : known?.status === 'pending' ? '正在翻译…' : known?.status === 'error' ? (captionStatus || '这句翻译失败') : (group ? '' : captionStatus);
+      overlayTranslationText.textContent = chinese;
+      overlayTranslation.hidden = !chinese;
+      overlayNoticeText.textContent = status;
+      overlayNotice.hidden = !status;
+      const english = group?.text || '';
+      overlayOriginalText.textContent = english;
+      overlayOriginal.hidden = !english;
+      overlayStack.hidden = !chinese && !status && !english;
+      setNativeCaptionHidden(Boolean(settings.bilingual && source?.cues?.length));
     }
 
     function restoreNativeState() { restoreHtmlTrack(); restoreYoutube(); }
@@ -488,7 +881,28 @@
       placeUi(); if (transcriptOpen) { renderTranscript(true); void refreshSource(); }
     }
 
+    async function setBilingual(next) {
+      const previous = settings;
+      const bilingual = next === true;
+      settings = normalizedSettings({...settings, bilingual});
+      applySettingsToUi();
+      renderOverlay();
+      if (typeof currentCallbacks.onSettingsChange !== 'function') { if (bilingual) scheduleTranslation(); return; }
+      try {
+        const result = await currentCallbacks.onSettingsChange({bilingual});
+        settings = normalizedSettings(result?.video);
+        applySettingsToUi();
+        if (settings.bilingual) scheduleTranslation();
+        else renderOverlay();
+      } catch {
+        settings = previous;
+        applySettingsToUi();
+        renderOverlay();
+        showNotice('双语字幕没有保存，已恢复原设置', 'error');
+      }
+    }
     assistButton.addEventListener('click', () => requestAssist(currentCueIndex(), assistButton));
+    bilingualButton.addEventListener('click', () => { void setBilingual(!settings.bilingual); });
     transcriptButton.addEventListener('click', () => setTranscriptOpen(!transcriptOpen));
     transcriptShadow.querySelector('.close').addEventListener('click', () => setTranscriptOpen(false));
     list.addEventListener('click', event => {
@@ -523,22 +937,29 @@
       attachVideo(visibleVideo()); placeUi(); if (video) void refreshSource();
     }
     function onFullscreenChange() { placeUi(); }
+    function onLayoutChange() { placeOverlay(); }
     document.addEventListener('fullscreenchange', onFullscreenChange);
+    addEventListener('scroll', onLayoutChange, true);
+    addEventListener('resize', onLayoutChange);
     attachVideo(visibleVideo()); applySettingsToUi(); refreshTimer = setInterval(periodicRefresh, SOURCE_REFRESH_MS);
 
     return {
       setCallbacks(nextCallbacks) {
         if (typeof nextCallbacks?.onAssist !== 'function') throw new TypeError('onAssist callback is required');
         currentCallbacks = nextCallbacks;
-        if (nextCallbacks.settings) { settings = normalizedSettings(nextCallbacks.settings); applySettingsToUi(); }
+        if (nextCallbacks.settings) { settings = normalizedSettings(nextCallbacks.settings); applySettingsToUi(); renderOverlay(); if (settings.bilingual) scheduleTranslation(); }
       },
       unmount() {
         destroyed = true; sessionGeneration += 1; clearInterval(refreshTimer);
         if (frameId !== null) cancelAnimationFrame(frameId);
         observer.disconnect(); bridgeCleanup?.(); captionAbort?.abort(); closeActiveAssist(); restoreNativeState(); detachVideo();
         document.removeEventListener('fullscreenchange', onFullscreenChange);
+        removeEventListener('scroll', onLayoutChange, true);
+        removeEventListener('resize', onLayoutChange);
+        setNativeCaptionHidden(false);
         controlHost.parentElement?.matches?.(`[${HOST_ATTRIBUTE}="video-subtitles-row"]`) ? controlHost.parentElement.remove() : controlHost.remove();
         transcriptHost.remove();
+        overlayHost.remove();
       },
     };
   }

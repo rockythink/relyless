@@ -26,7 +26,7 @@
   }
   const trackUtils = Object.freeze({youtubeVideoId, timedtextUrl, isEnglishLanguageCode, chooseEnglishTrack});
   if (typeof globalThis !== 'undefined') globalThis.ShisuiYoutubeTrackUtils = trackUtils;
-  const {youtubeVideoId: videoIdOf, timedtextUrl: captionUrl, isEnglishLanguageCode: englishCode, chooseEnglishTrack: pickEnglishTrack} = trackUtils;
+  const {youtubeVideoId: videoIdOf, timedtextUrl: captionUrl, chooseEnglishTrack: pickEnglishTrack} = trackUtils;
   const hasPage = typeof location !== 'undefined' && typeof document !== 'undefined';
 
   const GLOBAL_NAME = 'ShisuiYoutubeCaptionsBridge';
@@ -40,6 +40,7 @@
   let disposed = false;
   let performanceObserver = null;
   let capturedTrack = null;
+  let cachedCaption = null;
   let originalFetch = null;
   let wrappedFetch = null;
   let originalXhrOpen = null;
@@ -66,8 +67,32 @@
     const currentVideoId = videoIdFromLocation();
     const capturedVideoId = url.searchParams.get('v') || currentVideoId;
     if (!currentVideoId || capturedVideoId !== currentVideoId) return;
-    url.searchParams.delete('tlang');
-    capturedTrack = {videoId: currentVideoId, url: url.href, languageCode: url.searchParams.get('lang') || '', kind: url.searchParams.get('kind') || ''};
+    capturedTrack = {videoId: currentVideoId, url: url.href, languageCode: url.searchParams.get('lang') || '', kind: url.searchParams.get('kind') || '', targetLanguage: url.searchParams.get('tlang') || ''};
+  }
+  function rememberCaption(rawUrl, text) {
+    const raw = typeof rawUrl === 'string' ? rawUrl : rawUrl?.url || '';
+    if (!raw.includes('timedtext')) return;
+    noteTimedtext(raw);
+    const safeUrl = safeCaptionUrl(raw);
+    if (!safeUrl || !capturedTrack || typeof text !== 'string') return;
+    if (capturedTrack.url !== new URL(safeUrl).href || capturedTrack.targetLanguage) return;
+    const body = text.length > 1500000 ? '' : text;
+    if (!body || body.trimStart().startsWith('<') || !/"events"|wireMagic/.test(body)) return;
+    cachedCaption = {videoId: capturedTrack.videoId, languageCode: capturedTrack.languageCode, kind: capturedTrack.kind, text: body};
+  }
+  function captionFor(track) {
+    if (!cachedCaption || cachedCaption.videoId !== videoIdFromLocation() || !cachedCaption.text) return '';
+    const wanted = stringValue(track?.languageCode, 32).toLowerCase();
+    const got = stringValue(cachedCaption.languageCode, 32).toLowerCase();
+    if (wanted && got !== wanted) return '';
+    if (stringValue(track?.kind) !== (cachedCaption.kind || '')) return '';
+    return cachedCaption.text;
+  }
+  function bodyFromXhr(xhr) {
+    try { if (typeof xhr.responseText === 'string' && xhr.responseText) return xhr.responseText; } catch { /* 非文本 responseType 没有 responseText。 */ }
+    if (typeof xhr.response === 'string') return xhr.response;
+    if (xhr.response && typeof xhr.response === 'object') { try { return JSON.stringify(xhr.response); } catch { return ''; } }
+    return '';
   }
   function scanResources(entries) {
     for (const entry of entries) if (typeof entry?.name === 'string' && entry.name.includes('/api/timedtext')) noteTimedtext(entry.name);
@@ -101,12 +126,11 @@
     if (button) return button.getAttribute('aria-pressed') === 'true';
     return Boolean(selectedTrack);
   }
-  function isEnglish(track) { return englishCode(track?.languageCode); }
   function playerTrackValue(track) {
     return {languageCode: stringValue(track?.languageCode, 32), kind: stringValue(track?.kind, 32), vss_id: stringValue(track?.vssId || track?.vss_id, 128)};
   }
   function capturedUrlFor(videoId, track) {
-    if (!capturedTrack || capturedTrack.videoId !== videoId) return '';
+    if (!capturedTrack || capturedTrack.videoId !== videoId || capturedTrack.targetLanguage) return '';
     if (track?.languageCode && capturedTrack.languageCode && track.languageCode !== capturedTrack.languageCode) return '';
     const expectedKind = track?.kind === 'asr' ? 'asr' : '';
     return capturedTrack.kind === expectedKind ? capturedTrack.url : '';
@@ -121,7 +145,7 @@
     const videoId = stringValue(videoData?.video_id || response?.videoDetails?.videoId, 32);
     const tracks = responseTracks(player);
     const selected = readSelectedTrack(player, tracks);
-    const chosen = selected && isEnglish(selected) ? selected : null;
+    const chosen = pickEnglishTrack(tracks, selected);
     const baseUrl = safeCaptionUrl(capturedUrlFor(videoId, chosen) || chosen?.baseUrl);
     return {
       videoId,
@@ -157,7 +181,7 @@
     if (state.toggledVisibility && captionsVisible(state.player, readSelectedTrack(state.player, responseTracks(state.player)))) clickCaptionButton(state.player);
   }
   async function prepareCaptions(language) {
-    if (language !== 'en') return false;
+    if (typeof language !== 'string' || (!/^en(?:-|$)/i.test(language) && language !== '*')) return false;
     const player = currentPlayer();
     const videoId = videoIdFromLocation();
     if (!player || !videoId) return false;
@@ -185,15 +209,95 @@
     preparedState = {player, videoId, previousTrack, englishTrack, switchedTrack, toggledVisibility};
     return true;
   }
+  async function readCaption() {
+    let shot = snapshot();
+    let text = captionFor(shot.track);
+    if (text) return {...shot, text};
+    const prepared = await prepareCaptions(shot.track?.languageCode || '*');
+    const waitForBody = async milliseconds => {
+      const started = Date.now();
+      while (Date.now() - started < milliseconds) {
+        shot = snapshot();
+        text = captionFor(shot.track);
+        if (text || disposed) return text;
+        await sleep(150);
+      }
+      return '';
+    };
+    text = await waitForBody(2000);
+    if (!text) {
+      const player = currentPlayer();
+      const visible = player && captionsVisible(player, readSelectedTrack(player, responseTracks(player)));
+      if (player && visible) {
+        clickCaptionButton(player);
+        await sleep(200);
+        clickCaptionButton(player);
+        text = await waitForBody(2500);
+      } else if (player && clickCaptionButton(player)) {
+        text = await waitForBody(2500);
+        if (captionsVisible(player, readSelectedTrack(player, responseTracks(player)))) clickCaptionButton(player);
+      }
+    }
+    if (prepared) restoreCaptions();
+    shot = snapshot();
+    return {...shot, prepared, text: text || captionFor(shot.track) || ''};
+  }
+  function innertubeConfig() {
+    const cfg = globalThis.ytcfg;
+    const read = key => {
+      try { if (typeof cfg?.get === 'function') return cfg.get(key); } catch { /* 页面配置读不到时改走播放器响应。 */ }
+      return cfg?.data_?.[key];
+    };
+    return {key: read('INNERTUBE_API_KEY'), context: read('INNERTUBE_CONTEXT')};
+  }
+  async function discoverTracks() {
+    if (disposed) return null;
+    const videoId = videoIdFromLocation();
+    const {key, context} = innertubeConfig();
+    if (typeof key !== 'string' || !key || !context || !videoId) return null;
+    let response;
+    try {
+      response = await fetch(`https://www.youtube.com/youtubei/v1/player?prettyPrint=false&key=${encodeURIComponent(key)}`, {
+        method: 'POST', credentials: 'include', headers: {'content-type': 'application/json'},
+        body: JSON.stringify({context, videoId, contentCheckOk: true, racyCheckOk: true}),
+      });
+    } catch { return null; }
+    if (!response?.ok) return null;
+    let data = null;
+    try { data = await response.json(); } catch { return null; }
+    const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    if (!Array.isArray(tracks) || !tracks.length || videoId !== videoIdFromLocation()) return null;
+    const chosen = pickEnglishTrack(tracks, null);
+    const baseUrl = safeCaptionUrl(chosen?.baseUrl);
+    if (!chosen || !baseUrl) return null;
+    return {
+      videoId,
+      captionVisible: false,
+      track: {
+        key: stringValue(chosen.vssId || chosen.languageCode || chosen.kind, 128),
+        languageCode: stringValue(chosen.languageCode, 32),
+        kind: stringValue(chosen.kind, 32),
+        label: stringValue(displayText(chosen.name), 128),
+        baseUrl,
+      },
+    };
+  }
   async function onRequest(event) {
     const requestId = event.detail?.requestId;
     if (typeof requestId !== 'string' || requestId.length > 96 || !/^shisui-[a-z0-9-]+$/.test(requestId)) return;
     const command = event.detail?.command || 'snapshot';
-    if (!['snapshot', 'prepare', 'restore'].includes(command)) return;
+    if (!['snapshot', 'prepare', 'restore', 'discover', 'caption'].includes(command)) return;
+    if (command === 'caption') {
+      const result = await readCaption();
+      dispatchEvent(new CustomEvent(RESPONSE_EVENT, {detail: {requestId, ...result}}));
+      return;
+    }
     let prepared = false;
     if (command === 'prepare') prepared = await prepareCaptions(event.detail?.language);
     else if (command === 'restore') restoreCaptions();
-    dispatchEvent(new CustomEvent(RESPONSE_EVENT, {detail: {requestId, prepared, ...snapshot()}}));
+    const shot = snapshot();
+    const found = command === 'discover' && !shot.track ? await discoverTracks() : null;
+    dispatchEvent(new CustomEvent(RESPONSE_EVENT, {detail: {requestId, prepared, ...shot, ...(found || {})}}));
   }
 
   function installNetworkObservers() {
@@ -201,8 +305,12 @@
       originalFetch = globalThis.fetch;
       if (typeof originalFetch === 'function') {
         wrappedFetch = function (input) {
-          try { noteTimedtext(typeof input === 'string' ? input : input?.url); } catch { /* Preserve page fetch behavior. */ }
-          return originalFetch.apply(this, arguments);
+          const pending = originalFetch.apply(this, arguments);
+          try {
+            const rawUrl = typeof input === 'string' ? input : input?.url;
+            if (safeCaptionUrl(rawUrl)) Promise.resolve(pending).then(response => { response.clone().text().then(text => rememberCaption(rawUrl, text)).catch(() => {}); }).catch(() => {});
+          } catch { /* Preserve page fetch behavior. */ }
+          return pending;
         };
         globalThis.fetch = wrappedFetch;
       }
@@ -216,7 +324,10 @@
         return originalXhrOpen.apply(this, arguments);
       };
       wrappedXhrSend = function () {
-        try { noteTimedtext(xhrUrls.get(this)); } catch { /* Preserve page XHR behavior. */ }
+        try {
+          const rawUrl = xhrUrls.get(this);
+          this.addEventListener('load', () => { try { rememberCaption(rawUrl, bodyFromXhr(this)); } catch { /* Preserve page XHR behavior. */ } });
+        } catch { /* Preserve page XHR behavior. */ }
         return originalXhrSend.apply(this, arguments);
       };
       prototype.open = wrappedXhrOpen;
@@ -234,6 +345,7 @@
     if (xhrPrototype && wrappedXhrOpen && xhrPrototype.open === wrappedXhrOpen) xhrPrototype.open = originalXhrOpen;
     if (xhrPrototype && wrappedXhrSend && xhrPrototype.send === wrappedXhrSend) xhrPrototype.send = originalXhrSend;
     capturedTrack = null;
+    cachedCaption = null;
     delete globalThis[GLOBAL_NAME];
   }
 

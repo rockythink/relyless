@@ -9,7 +9,7 @@ import {normalizeRulePacks} from './rule-pack.js';
 import {classifyLocal,embedLocal,countTokensLocal,nanoStatus,nanoAssist} from './local-classifier.js';
 import {assistanceProgress,translationProgress,normalizeTranslationProgress,conversationProgress} from './assistance-stream.mjs';
 import {SOURCE_DATA_INSTRUCTIONS,SUPPORT_POLICY_VERSION,SUPPORT_INSTRUCTIONS,SUPPORT_SCHEMA,ASSISTANCE_INSTRUCTIONS,assistanceSchema,normalizeSupportItems,prepareSupportItems,inspectSupportResponse,requestSupportWithCorrection,SUPPORT_CORRECTION_INSTRUCTIONS,normalizeSupportResult,normalizeAssistanceCommand,normalizeAssistanceRequest,normalizeAssistanceResult,normalizePreparationContext,EMERGENCY_SCHEMA,EMERGENCY_INSTRUCTIONS,normalizeEmergencyItems,normalizeEmergencyResult,PAGE_TRANSLATION_INSTRUCTIONS,normalizePageTranslationItems,inspectPageTranslationResult,normalizePageTranslationResult,CONVERSATION_INSTRUCTIONS,conversationSchema,normalizeConversationRequest,normalizeConversationResult} from './gloss.mjs';
-import {AUTO_SCRIPT_ID,ALL_HOSTS,VIDEO_SUPPORT_ENABLED,pageOrigin,sitePattern,validateAutomation,validateVideo,resolveAutomation,registrationMatches,requiredPermissionOrigins,dismissKeywordOrigin} from './activation.js';
+import {AUTO_SCRIPT_ID,CAPTION_SCRIPT_ID,ALL_HOSTS,VIDEO_HOSTS,VIDEO_SUPPORT_ENABLED,pageOrigin,sitePattern,validateAutomation,validateVideo,resolveAutomation,registrationMatches,requiredPermissionOrigins,dismissKeywordOrigin,youtubeTimedtextUrl} from './activation.js';
 import {createDiagnostics} from './diagnostic-service.js';
 import {createConversationStore} from './conversation-store.js';
 import {collectConversationMemory} from './conversation-memory.js';
@@ -208,7 +208,7 @@ function publicState(state,trusted) {
     assistanceMode:source.assistanceMode,rememberSupport:source.rememberSupport,
     helpLanguage:source.helpLanguage,lookupKey:source.lookupKey,lookupDisplay:source.lookupDisplay,hintDisplay:source.hintDisplay,keyboardNav:source.keyboardNav,
     readingStyle:globalThis.ShisuiReadingStyle.normalize(source.readingStyle),domain:source.domain,
-    video:{fontSize:source.video.fontSize,theme:source.video.theme},
+    video:{fontSize:source.video.fontSize,theme:source.video.theme,bilingual:source.video.bilingual===true},
     readingHistory:readingHistory.publicConfig(),
   };
   return {settings,providerConfigured,providerError,...(trusted ? {subscription:isSubscriptionKind(source.providerKind)?subscriptionStatus(nativeKind(source)):subscriptionStatus('chatgpt'),dataProblem} : {})};
@@ -739,8 +739,7 @@ async function sentenceGroupsBatch(message,sender){
   const guard=async()=>{const [latest,current,currentMode]=await Promise.all([load(),readingSource(sender),chrome.storage.session.get(modeKey).then(value=>value[modeKey])]);if(latest.settings.assistanceMode==='on-demand'&&message.explicit!==true||generation!==providerGeneration||state.supportDataGeneration!==latest.supportDataGeneration||current.sourceHash!==source.sourceHash||!current.active||await tabPaused(source.tabId)||!currentMode?.enabled||currentMode.page!==source.sourceHash||currentMode.generation!==modeGeneration)throw staleWork();if(message.explicit!==true)await requireAutomaticReading(current);};
   // 解构默认不判卷（频次高）；开启后按策略先选路，缓存键随之切换到实际服务。
   {const route=await chooseRoute('sentenceGroups',summarizeRequest('sentenceGroups',{text:items.map(item=>item.sentence).join('\n').slice(0,900)}),{settings:state.settings,guard,automatic:message.explicit!==true,trace:diagnostics.trace(message),incognito:source.incognito});
-   if(route.kind==='api'&&route.service)state={...state,settings:{...state.settings,providerKind:'api',activeApiServiceId:route.service.id}};
-   else if(route.kind==='subscription')state={...state,settings:{...state.settings,providerKind:'chatgpt'}};}
+   state={...state,settings:applySubscriptionRoute(state.settings,route)};}
   const service=state.settings.providerKind==='api'?activeApiProvider(state.settings):state.settings.subscriptionModel;
   if(!configured(state.settings))throw new Error('请先连接服务；原文保持不变。');if(state.settings.providerKind==='api')await requireApiPermission(service);
   await sentenceGroupCacheReady;
@@ -868,8 +867,7 @@ async function translateItems(items,settings,trace,{scope,onProgress,origin,sour
   if(!configured(settings))throw new Error('请先连接服务。');
   // 整页与选段翻译都是高价值路径：先判卷再选路，升级路切换到指定服务后再走原链路。
   const route=await chooseRoute(scope==='page'?'emergency':'passage',summarizeRequest(scope,{text:items.map(item=>item.text).join('\n').slice(0,900)}),{settings,guard,incognito});
-  if(route.kind==='api'&&route.service)settings={...settings,providerKind:'api',activeApiServiceId:route.service.id};
-  else if(route.kind==='subscription')settings={...settings,providerKind:'chatgpt'};
+  settings=applySubscriptionRoute(settings,route);
   const service=settings.providerKind==='api'?activeApiProvider(settings):settings.subscriptionModel;
   if(settings.providerKind==='api')await requireApiPermission(service);
   const instructions=scope==='page'?PAGE_TRANSLATION_INSTRUCTIONS:EMERGENCY_INSTRUCTIONS;
@@ -898,6 +896,30 @@ async function translateItems(items,settings,trace,{scope,onProgress,origin,sour
   await Promise.all(keys.map(async key=>{if(outcomes.has(key))return;const operation=translationInFlight.get(key);if(!operation)throw new Error('翻译结果已过期，请重试。');backgroundGuards.get(operation).add(guard);const result=await operation;await guard();if(!result.has(key))throw new Error('翻译服务未返回完整结果。');outcomes.set(key,result.get(key));}));
   if(scope==='passage')return {...normalizeEmergencyResult({items:items.map((item,index)=>({id:item.id,translation:outcomes.get(keys[index])?.translation}))},items),...(cacheHits?{cacheHits}:{})};
   return {...normalizePageTranslationResult({items:items.flatMap((item,index)=>outcomes.get(keys[index])?.translation!==undefined?[{id:item.id,translation:outcomes.get(keys[index]).translation}]:[]),errors:items.flatMap((item,index)=>outcomes.get(keys[index])?.error?[{id:item.id,code:outcomes.get(keys[index]).error}]:[])},items),...(cacheHits?{cacheHits}:{})};
+}
+async function videoCueTranslate(message,sender){
+  if(!VIDEO_SUPPORT_ENABLED)throw new Error('视频字幕功能暂未开放。');
+  const source=await readingSource(sender);
+  if(!source.active||await tabPaused(source.tabId))throw new Error('请在当前页面打开双语字幕。');
+  const items=normalizePageTranslationItems(message.items),state=await load();
+  if(state.settings.video.bilingual!==true)throw new Error('双语字幕已关闭。');
+  const generation=providerGeneration;
+  // 请求开始时双语必须开着。途中关掉只停止新任务，不把已经发出的这一批判失败。
+  const guard=async()=>{const [latest,page]=await Promise.all([load(),readingSource(sender)]);if(generation!==providerGeneration||state.supportDataGeneration!==latest.supportDataGeneration||page.sourceHash!==source.sourceHash||!page.active||await tabPaused(source.tabId))throw staleWork();};
+  return translateItems(items,state.settings,diagnostics.trace(message),{scope:'page',incognito:source.incognito,origin:new URL(source.url).origin,sourceHash:source.sourceHash,guard});
+}
+async function youtubeCaptionFetch(message,sender){
+  if(!VIDEO_SUPPORT_ENABLED)throw new Error('视频字幕功能暂未开放。');
+  if(!Number.isInteger(sender.tab?.id)||sender.frameId!==0)throw new Error('字幕只能由当前网页主框架读取。');
+  const {url:page}=await tabPage(sender.tab.id,sender.url);
+  if(page.protocol!=='https:'||!['www.youtube.com','m.youtube.com'].includes(page.hostname))throw new Error('字幕只从 YouTube 读取。');
+  const target=youtubeTimedtextUrl(message?.url);
+  const response=await fetch(target,{credentials:'include',redirect:'follow'});
+  youtubeTimedtextUrl(response.url);
+  if(!response.ok)throw new Error('字幕时间轴暂时读不到。');
+  const text=await response.text();
+  if(!text||text.length>1500000||text.trimStart().startsWith('<'))throw new Error('字幕时间轴暂时读不到。');
+  return {text};
 }
 async function emergencyTranslate(message,sender) {
   const source=await readingSource(sender),armed=await emergencySession(source.tabId);
@@ -1074,6 +1096,12 @@ async function clearModelUsage() {
   return work;
 }
 function routingSettingsOf(settings) { return normalizeRouting(settings?.routing || {}, DEFAULT_SETTINGS.routing); }
+// 主路由是订阅时保持 Google、Grok 或 ChatGPT。只有从 API 升到订阅，才改走 ChatGPT。
+function applySubscriptionRoute(settings, route) {
+  if (route?.kind === 'api' && route.service) return {...settings, providerKind: 'api', activeApiServiceId: route.service.id};
+  if (route?.kind === 'subscription' && !isSubscriptionKind(settings.providerKind)) return {...settings, providerKind: 'chatgpt'};
+  return settings;
+}
 async function routingVersion(settings, judge) {
   const routing = routingSettingsOf(settings);
   const judgeIdentity = judge ? [judge.providerId, judge.baseUrl, judge.model, await hashValue(judge.apiKey || '')] : null;
@@ -1513,10 +1541,15 @@ async function reconcileAutoScript(settings) {
   const candidates = registrationMatches(settings.automation);
   const permitted = await Promise.all(candidates.map(pattern => chrome.permissions.contains({origins:[pattern]})));
   const matches = candidates.filter((_pattern,index) => permitted[index]);
+  const videoMatches = VIDEO_SUPPORT_ENABLED && settings.automation.videoSites ? VIDEO_HOSTS.filter(pattern => matches.includes(pattern)) : [];
   const registrations = await chrome.scripting.getRegisteredContentScripts();
-  const obsolete = registrations.filter(item => item.id === AUTO_SCRIPT_ID || item.id.startsWith('ss-auto-start-')).map(item => item.id);
+  const obsolete = registrations.filter(item => item.id === AUTO_SCRIPT_ID || item.id === CAPTION_SCRIPT_ID || item.id.startsWith('ss-auto-start-')).map(item => item.id);
   if (obsolete.length) await chrome.scripting.unregisterContentScripts({ids:obsolete});
-  if (matches.length) await chrome.scripting.registerContentScripts([{id:AUTO_SCRIPT_ID,matches,js:['auto-start.js'],runAt:'document_start',allFrames:false,persistAcrossSessions:true}]);
+  const scripts = [];
+  if (matches.length) scripts.push({id:AUTO_SCRIPT_ID,matches,js:['auto-start.js'],runAt:'document_start',allFrames:false,persistAcrossSessions:true});
+  // 页面一打开就挂上字幕桥，才能截到播放器自己的 timedtext 正文。权限关掉后这里会卸掉。
+  if (videoMatches.length) scripts.push({id:CAPTION_SCRIPT_ID,matches:videoMatches,js:['youtube-captions-bridge.js'],world:'MAIN',runAt:'document_start',allFrames:false,persistAcrossSessions:true});
+  if (scripts.length) await chrome.scripting.registerContentScripts(scripts);
 }
 
 const PAGE_UI_FILES=['design.js',...(VIDEO_SUPPORT_ENABLED?['vendor/youtube-caption-json3.js','video-subtitles.js']:[]),'content/kernel.js','content/reader.js','content/paragraph-copy.js','content/conversation-card.js','content/review.js','reading-style.js','content.js'];
@@ -1705,7 +1738,7 @@ async function handle(message,sender) {
   if(message.type==='PAGE_TASK_STATUS')return pageTaskStatus(message,sender);
   await dataReady;if(!['MEMORY_CLEAR','HISTORY_CLEAR'].includes(message.type))assertDataAvailable();if(futureSchema&&HISTORY_MUTATIONS.has(message.type))throw new Error('不支持的数据版本，请更新扩展');
   const trusted=Boolean(sender.url?.startsWith(chrome.runtime.getURL('')));
-  const contentAllowed=['HISTORY_BEGIN','HISTORY_TICK','HISTORY_COMMIT','HISTORY_ANNOTATION','DIAGNOSTICS_RENDER','STATE_GET','RESOLVE_DOMAIN','ANALYZE','SUPPORT_BATCH','SENTENCE_GROUPS_GET','SENTENCE_GROUPS_SET','SENTENCE_GROUPS_BATCH','ASSIST','ASSIST_PREVIEW','ASSIST_COMMIT','ENCOUNTER','INTERACT','YOUTUBE_CAPTIONS_BRIDGE','OPEN_OPTIONS','AUTO_BOOTSTRAP_CHECK','PAGE_ACTIVITY_SET','VIDEO_SETTINGS_PATCH','PREPARED_SUPPORT','PREPARED_ASSIST','PASSAGE_TRANSLATE','READER_TRANSLATION_ESTIMATE','READER_TRANSLATION_BEGIN', 'EMERGENCY_TRANSLATE', 'EMERGENCY_CANCEL_REQUEST', 'EMERGENCY_END','LANGUAGE_PROFILE','CONVERSATION_ASK','CONVERSATION_STOP','CONVERSATION_HISTORY','CONVERSATION_DELETE','REVIEW_DUE','REVIEW_FEEDBACK','ROUTING_STATS']
+  const contentAllowed=['HISTORY_BEGIN','HISTORY_TICK','HISTORY_COMMIT','HISTORY_ANNOTATION','DIAGNOSTICS_RENDER','STATE_GET','RESOLVE_DOMAIN','ANALYZE','SUPPORT_BATCH','SENTENCE_GROUPS_GET','SENTENCE_GROUPS_SET','SENTENCE_GROUPS_BATCH','ASSIST','ASSIST_PREVIEW','ASSIST_COMMIT','ENCOUNTER','INTERACT','YOUTUBE_CAPTIONS_BRIDGE','YOUTUBE_CAPTION_FETCH','OPEN_OPTIONS','AUTO_BOOTSTRAP_CHECK','PAGE_ACTIVITY_SET','VIDEO_SETTINGS_PATCH','VIDEO_CUE_TRANSLATE','PREPARED_SUPPORT','PREPARED_ASSIST','PASSAGE_TRANSLATE','READER_TRANSLATION_ESTIMATE','READER_TRANSLATION_BEGIN', 'EMERGENCY_TRANSLATE', 'EMERGENCY_CANCEL_REQUEST', 'EMERGENCY_END','LANGUAGE_PROFILE','CONVERSATION_ASK','CONVERSATION_STOP','CONVERSATION_HISTORY','CONVERSATION_DELETE','REVIEW_DUE','REVIEW_FEEDBACK','ROUTING_STATS']
   if(!trusted&&!contentAllowed.includes(message.type)&&message.type!=='WORD_PREFERENCE_SET')throw new Error('此操作不能从网页执行。');
   switch(message.type){
     case 'HISTORY_GET':return readingHistory.snapshot({days:message.days,search:message.search,domain:message.domain,type:message.eventType||'',cursor:message.cursor,limit:Number.isSafeInteger(message.limit)&&message.limit>0?message.limit:300});
@@ -1751,6 +1784,7 @@ async function handle(message,sender) {
     case 'PAGE_ACTIVITY_SET':if(!Number.isInteger(sender.tab?.id)||sender.frameId!==0||typeof message.enabled!=='boolean')throw new Error('无效的页面活动状态。');await setTabPaused(sender.tab.id,!message.enabled);return{paused:!message.enabled};
     case 'VIDEO_SETTINGS_PATCH':{if(!trusted&&(!Number.isInteger(sender.tab?.id)||sender.frameId!==0))throw new Error('视频设置只能由网页主框架更新。');const video=await mutate(state=>{const next=validateVideo(message.patch,state.settings.video);state.settings={...state.settings,video:next};return next;},false,false);await broadcastVideoSettings(video);return{video};}
     case 'YOUTUBE_CAPTIONS_BRIDGE':{if(!VIDEO_SUPPORT_ENABLED)throw new Error('视频字幕功能暂未开放。');if(!Number.isInteger(sender.tab?.id)||sender.frameId!==0)throw new Error('字幕桥只能由当前网页主框架启用。');const {url}=await tabPage(sender.tab.id,sender.url);if(url.protocol!=='https:'||!['www.youtube.com','m.youtube.com'].includes(url.hostname))throw new Error('字幕桥仅适用于 YouTube。');await chrome.scripting.executeScript({target:{tabId:sender.tab.id,frameIds:[0]},world:'MAIN',files:['youtube-captions-bridge.js']});return{};}
+    case 'YOUTUBE_CAPTION_FETCH':return youtubeCaptionFetch(message,sender);
     case 'STATE_GET':return {...publicState(await load(false),trusted),emergencyActive:Number.isInteger(sender.tab?.id)&&Boolean(await emergencySession(sender.tab.id))};
     case 'SUBSCRIPTION_STATUS':return refreshSubscription(isSubscriptionKind(message.kind)?message.kind:nativeKind((await load(false)).settings));
     case 'SUBSCRIPTION_LOGIN':return loginSubscription(isSubscriptionKind(message.kind)?message.kind:nativeKind((await load(false)).settings));
@@ -1792,6 +1826,7 @@ async function handle(message,sender) {
     case 'READER_TRANSLATION_BEGIN':{const source=await readingSource(sender);if(!source.active||typeof message.confirmed!=='boolean')throw new Error('当前网页不可翻译。');injectedEmergencyPages.set(source.tabId,source.url);return emergencyBegin({tabId:source.tabId,url:source.url,confirmed:message.confirmed});}
     case 'EMERGENCY_BEGIN':if(!trusted)throw new Error('仅扩展界面可确认紧急翻译。');return emergencyBegin(message,sender);
     case 'EMERGENCY_ESTIMATE':{if(!trusted)throw new Error('仅扩展界面可确认紧急翻译。');if(!Number.isInteger(message.tabId))throw new Error('无效的预估请求。');return emergencyUsageEstimate(message.tabId,(await load(false)).settings,message.chars);}
+    case 'VIDEO_CUE_TRANSLATE':return videoCueTranslate(message,sender);
     case 'PASSAGE_TRANSLATE':return passageTranslate(message,sender);
     case 'EMERGENCY_TRANSLATE':return emergencyTranslate(message,sender);
     case 'EMERGENCY_CANCEL_REQUEST':return emergencyCancelRequest(message,sender);
