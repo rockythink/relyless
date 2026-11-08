@@ -621,6 +621,10 @@ details.history-event { padding: 0; }
 .popup-primary .site-auto-panel { border-top: 1px solid var(--line); padding-block: var(--space-2); }
 .popup-primary:has(#toggle-page:checked) .site-auto-panel { border-top-color: var(--accent-line); }
 .site-auto-panel .popup-control-title { font-weight: var(--weight-regular); }
+/* Translation confirm/progress must still fit the 600px popup: drop the card's margins and inset. */
+.popup-shell:has(:is(#emergency-confirm, #emergency-progress):not([hidden])) .popup-primary { margin: 0; border: 0; border-radius: 0; background: var(--surface); }
+.popup-shell:has(:is(#emergency-confirm, #emergency-progress):not([hidden])) .popup-primary .popup-switch-panel { padding-inline: var(--space-4); }
+.popup-shell:has(:is(#emergency-confirm, #emergency-progress):not([hidden])) .popup-primary .activation-panel .popup-control-title { font-size: var(--type-control); }
 #site-auto-note:empty { display: none; }
 .popup-setup { display: grid; gap: var(--space-2); margin: var(--space-3) var(--space-4); padding: var(--space-4); border: 1px solid var(--accent-line); border-radius: var(--radius-panel); background: var(--accent-soft); }
 .popup-setup h2 { font-size: var(--type-body); font-weight: var(--weight-semibold); }
