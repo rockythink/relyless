@@ -17,18 +17,17 @@
 <div id="search-results" class="search-results" hidden></div>
 </div>
 <nav aria-label="设置导航">
+<a href="#service" data-section="service"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 3v5m8-5v5M6 8h12v3a6 6 0 0 1-12 0V8Zm6 9v4"></path></svg><span>模型服务</span><small id="nav-service-status" class="nav-status" hidden>未连接</small></a>
 <p class="nav-group-label">阅读</p>
 <a href="#assistance" data-section="assistance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 8h8M8 12h8M8 16h5"></path></svg><span>阅读偏好</span></a>
 <a href="#appearance" data-section="appearance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 5h16M8 5v14m-3 0h6M15 11h5m-2-2v10m-2 0h4"></path></svg><span>显示与解构</span></a>
-<a href="#personalization" data-section="personalization"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2m4 0h10M14 4v6M6 14v6"></path></svg><span>提示偏好</span></a>
 <a href="#sites" data-section="sites"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a18 18 0 0 1 0 18 18 18 0 0 1 0-18Z"></path></svg><span>网站规则</span></a>
-<p class="nav-group-label">AI 与识别</p>
-<a href="#service" data-section="service"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 3v5m8-5v5M6 8h12v3a6 6 0 0 1-12 0V8Zm6 9v4"></path></svg><span>模型服务</span></a>
-<a href="#advanced" data-section="advanced"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 14h3l2-7 4 12 2-5h5"></path><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"></path></svg><span>领域识别</span></a>
-<p class="nav-group-label">数据</p>
+<p class="nav-group-label">我的阅读</p>
 <a href="#history" data-section="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 5h16v14H4zM8 2v6m8-6v6M4 10h16"></path><path d="M8 14h3m2 0h3"></path></svg><span>阅读记录</span></a>
+<a href="#personalization" data-section="personalization"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2m4 0h10M14 4v6M6 14v6"></path></svg><span>提示偏好</span></a>
+<p class="nav-group-label">更多</p>
 <a href="#privacy" data-section="privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m12 3 8 3v5c0 5-8 10-8 10S4 16 4 11V6l8-3Z"></path><path d="m8 12 3 3 5-6"></path></svg><span>数据与隐私</span></a>
-<p class="nav-group-label">帮助</p>
+<a href="#advanced" data-section="advanced"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 14h3l2-7 4 12 2-5h5"></path><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"></path></svg><span>高级与诊断</span></a>
 <a href="#guide" data-section="guide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 5v15M12 5C9 3 5 3 3 4v15c3-1 6-1 9 1 3-2 6-2 9-1V4c-2-1-6-1-9 1Z"></path></svg><span>使用说明</span></a>
 <a href="#about" data-section="about"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6"></path></svg><span>关于作者</span></a>
 </nav></aside>
@@ -62,6 +61,7 @@
 </label>
 </div>
 </fieldset>
+        <div class="pair-grid">
         <label class="field setting-select">
 <span>查词按键</span>
 <select id="lookup-key">
@@ -92,9 +92,17 @@
 <option>Y</option>
 <option>Z</option>
 </select>
-<small>按住所选字母并单击可见英文词语；正文、链接及页面控件文字可主动查词，普通点击仍保持网页原有操作。输入区、编辑内容及代码块不触发。</small>
+<small>按住这个字母再单击英文单词即可查词；普通点击不受影响。</small>
 </label>
-        <div class="pair-grid">
+        <label class="field setting-select">
+<span>解释语言</span>
+<select id="help-language">
+<option value="zh">中文</option>
+<option value="en">简明英文</option>
+</select>
+<small>用于词义和语境；本句翻译仍为中文。</small>
+</label>
+        </div>
         <fieldset>
 <legend>查词显示方式</legend>
 <div class="choice-cards two">
@@ -115,6 +123,11 @@
 </div>
 <p class="field-help">沿用查词按键 + 单击；词语显示方式不影响选段翻译。</p>
 </fieldset>
+      </div>
+      <details class="preference-block disclosure-block">
+<summary><span>更多阅读选项</span><small>行内提示、划词动作、键盘导航、PDF、默认领域</small></summary>
+<div class="disclosure-content form-stack">
+        <div class="pair-grid">
         <fieldset>
 <legend>行内提示显示</legend>
 <div class="choice-cards two">
@@ -134,36 +147,6 @@
 </label>
 </div>
 <p class="field-help">回忆遮罩让你先试着自己想起词义，再核对提示。</p>
-</fieldset>
-        <fieldset>
-<legend>键盘导航</legend>
-<div class="adaptive-setting">
-<div>
-<b>键盘导航标记</b>
-<p>按 [ 或 ] 在页面标记之间跳转；跳转后再按查词键打开解释。默认关闭，避免与站点快捷键冲突。</p>
-</div>
-<label class="switch">
-<input id="keyboard-nav" type="checkbox">
-<span aria-hidden="true">
-</span>
-<span class="sr-only">键盘导航标记</span>
-</label>
-</div>
-</fieldset>
-        <fieldset>
-<legend>PDF 阅读</legend>
-<div class="adaptive-setting">
-<div>
-<b>在 RelyLess 阅读器中打开 PDF</b>
-<p>默认使用浏览器自带查看器。开启后点击 .pdf 链接进入自带阅读器，支持点词解释、选段与整页翻译，译文只在你明确请求时发送给模型；不开本项时也可在 .pdf 链接上右键「在 RelyLess 阅读器打开」临时使用。网址加 #relyless-native 可单次回退原生查看器。</p>
-</div>
-<label class="switch">
-<input id="pdf-reader" type="checkbox">
-<span aria-hidden="true">
-</span>
-<span class="sr-only">在 RelyLess 阅读器中打开 PDF</span>
-</label>
-</div>
 </fieldset>
         <fieldset>
 <legend>划词动作打开方式</legend>
@@ -199,38 +182,40 @@
 </label>
 </fieldset>
         </div>
-        <div class="pair-grid">
+        <div class="adaptive-setting">
+<div>
+<b>键盘导航标记</b>
+<p>按 [ 或 ] 在页面标记之间跳转；跳转后再按查词键打开解释。默认关闭，避免与站点快捷键冲突。</p>
+</div>
+<label class="switch">
+<input id="keyboard-nav" type="checkbox">
+<span aria-hidden="true">
+</span>
+<span class="sr-only">键盘导航标记</span>
+</label>
+</div>
+
+        <div class="adaptive-setting">
+<div>
+<b>在 RelyLess 阅读器中打开 PDF</b>
+<p>开启后点击 .pdf 链接进入内置阅读器，支持查词和翻译。也可以在 .pdf 链接上右键临时打开。</p>
+</div>
+<label class="switch">
+<input id="pdf-reader" type="checkbox">
+<span aria-hidden="true">
+</span>
+<span class="sr-only">在 RelyLess 阅读器中打开 PDF</span>
+</label>
+</div>
+
         <label class="field setting-select">
 <span>默认领域</span>
 <select id="reading-domain">
 </select>
 <small>自动识别时，优先使用站点规则，再在本地判断。</small>
 </label>
-        <label class="field setting-select">
-<span>解释语言</span>
-<select id="help-language">
-<option value="zh">中文</option>
-<option value="en">简明英文</option>
-</select>
-<small>用于词义和语境；本句翻译仍为中文。</small>
-</label>
-        </div>
-      </div>
-      
-      
-      
-
-      
-
-      
-
-      
-    <nav class="related-settings" aria-label="相关设置">
-<a href="#appearance">调整显示与解构</a>
-<a href="#sites">管理网站规则</a>
-<a href="#terms">管理固定术语</a>
-<a href="#guide">阅读使用说明</a>
-</nav>
+</div>
+</details>
 </section>
 
 <section id="appearance" class="settings-section" aria-labelledby="appearance-heading" hidden="">
@@ -538,12 +523,23 @@
 <h3>尚未添加网站</h3>
 <p>也可在扩展弹窗中授权当前网站。</p>
 </div>
-          <div class="adaptive-setting">
+          <div class="adaptive-setting" data-video-feature hidden>
 <div>
-<b>文档类网站提示</b>
-<p>打开弹窗时，如果当前网站的域名片段命中下列关键词，会提示可为此网站开启自动辅助。</p>
+<b>视频网站入口</b>
+<p>单独授权 YouTube 后显示“这句”和“原文”入口；展开、滚动与播放不会自动处理整段字幕。</p>
 </div>
+<label class="switch">
+<input id="automation-video-sites" type="checkbox">
+<span aria-hidden="true">
+</span>
+<span class="sr-only">视频网站入口</span>
+</label>
 </div>
+        </div>
+<details class="preference-block disclosure-block">
+<summary>文档类网站提示</summary>
+<div class="disclosure-content form-stack">
+          <p class="field-help">打开弹窗时，如果当前网站的域名片段命中下列关键词，会提示可为此网站开启自动辅助。</p>
           <form id="keyword-hints-form" class="automation-site-form">
 <label class="field">
 <span>提示关键词</span>
@@ -571,9 +567,14 @@
           <div id="keyword-hints-dismissed-empty" class="empty-state compact-empty" hidden="">
 <h3>没有忽略提示的网站。</h3>
 </div>
+</div>
+</details>
+<details class="preference-block disclosure-block">
+<summary>站点规则包（JSON）</summary>
+<div class="disclosure-content form-stack">
           <form id="rule-pack-form" class="automation-site-form">
 <label class="field">
-<span>站点规则包（JSON）</span>
+<span>规则内容</span>
 <textarea id="rule-pack-json" rows="8" required="" spellcheck="false" autocomplete="off" placeholder='{"version":1,"id":"my-sites","rules":[{"id":"docs","hosts":["docs.example.com"],"exclude":[".promo",".sidebar"],"root":"main","lang":"en"}]}'>
 </textarea>
 <small>按站点补充排除区域、正文根或声明 lang 为 en；字段与容量都受限制，校验失败会逐条列出原因。</small>
@@ -588,19 +589,8 @@
 <h3>尚未导入规则包</h3>
 <p>规则包只影响你指定的站点，不会改变其他网站的扫描方式。</p>
 </div>
-          <div class="adaptive-setting" data-video-feature hidden>
-<div>
-<b>视频网站入口</b>
-<p>单独授权 YouTube 后显示“这句”和“原文”入口；展开、滚动与播放不会自动处理整段字幕。</p>
 </div>
-<label class="switch">
-<input id="automation-video-sites" type="checkbox">
-<span aria-hidden="true">
-</span>
-<span class="sr-only">视频网站入口</span>
-</label>
-</div>
-        </div>
+</details>
 <details class="preference-block disclosure-block">
 <summary>网站领域规则</summary>
 <div class="disclosure-content form-stack">
@@ -810,7 +800,7 @@
 <section id="service" class="settings-section" aria-labelledby="service-heading" hidden="">
       <div class="section-intro">
 <h2 id="service-heading" class="sr-only">模型服务</h2>
-<p>连接一个模型服务即可使用。API 调用可能由服务商收费。</p>
+<p>选一个模型服务来完成查词和翻译。API 调用由服务商按你的账户计费。</p>
 </div>
       <!-- 兼容保留底层服务单选民态：由目录工作区代为用户选择，核心逻辑与既有保存链路不变 -->
       <fieldset class="provider-picker" hidden="" aria-hidden="true">
@@ -884,15 +874,48 @@
 <span class="catalog-active-badge" id="catalog-hero-active-badge" hidden="">当前默认</span>
 <button type="button" class="catalog-set-default-btn" id="catalog-hero-set-default" hidden="">设为默认使用</button>
 <a id="catalog-hero-website" class="service-website-link" href="#" target="_blank" rel="noopener noreferrer" hidden="">
-<span>获取密钥 / 官方说明</span>
+<span>官方网站</span>
 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 3h7v7M21 3 10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/></svg>
 </a>
 </div>
 <p id="catalog-hero-desc" class="catalog-hero-desc"></p>
 </div>
 </div>
+<button type="button" id="catalog-back-to-start" class="service-back" hidden="">换一种方式</button>
 </div>
             <div class="detail-content-body">
+<div id="service-ready" class="service-ready" role="status" hidden="">
+<b>连接好了，可以开始读</b>
+<ol>
+<li>打开一篇英文文章，点工具栏的 RelyLess 图标（可能收在拼图按钮里），打开「阅读辅助」。</li>
+<li>遇到生词，按住 <kbd data-lookup-key>D</kbd> 再单击单词。</li>
+</ol>
+</div>
+<div id="service-start" class="service-start" hidden="">
+<div class="service-start-head">
+<h2 id="service-start-title" tabindex="-1">连接一个模型就能开始</h2>
+<p>查词、句子解构和翻译都由你选的模型完成。RelyLess 不提供模型额度，费用由服务商按你的账户结算。</p>
+</div>
+<section class="service-start-main" aria-labelledby="service-start-key">
+<h3 id="service-start-key">用 API Key 连接</h3>
+<p>最快的方式，不用安装任何东西。选一家服务商，把 Key 粘贴进来。</p>
+<div class="service-start-choices">
+<button type="button" class="service-start-choice" data-start-service="deepseek"><img src="../icons/providers/deepseek.svg" alt="" width="24" height="24"><strong>DeepSeek</strong><small>按量付费，创建 Key 后需先充值</small></button>
+<button type="button" class="service-start-choice" data-start-service="google"><img src="../icons/providers/google.svg" alt="" width="24" height="24"><strong>Gemini</strong><small>用 Google 账号创建 Key</small></button>
+<button type="button" class="service-start-choice" data-start-service="openrouter"><img src="../icons/providers/openrouter.svg" alt="" width="24" height="24"><strong>OpenRouter</strong><small>一个 Key 用多家模型，需先充值</small></button>
+</div>
+<p class="field-help">其他服务商都在左侧目录里。</p>
+</section>
+<div class="service-start-row">
+<div><b>用已有订阅</b><p>用 ChatGPT、Grok 或 Google AI 订阅，需要在电脑上运行一条安装命令。</p></div>
+<div class="service-start-links"><button type="button" data-start-service="chatgpt">ChatGPT</button><button type="button" data-start-service="grok">Grok</button><button type="button" data-start-service="antigravity">Google</button></div>
+</div>
+<div class="service-start-row">
+<div><b>在本机运行</b><p>内容不离开你的电脑。Gemini Nano 只做简短查词；Ollama 需要先自己安装。</p></div>
+<div class="service-start-links"><button type="button" data-start-service="local">本机模型</button><button type="button" data-start-service="ollama">Ollama</button></div>
+</div>
+<p class="field-help">暂时不想连接？在网页上打开扩展，「专注阅读」不需要模型。</p>
+</div>
       <div id="subscription-panel" class="provider-panel">
 <div class="paper-card subscription-card">
 <div class="subscription-summary">
@@ -933,13 +956,19 @@
 </div>
 </div>
 <details id="connector-install" class="installation-note">
-<summary>安装或修复本机连接器</summary>
-<p>ChatGPT / Grok 只需安装 Node.js 20+，无需 CLI；Google 仍需官方 Antigravity CLI（agy）。在项目根目录运行：</p>
+<summary>安装本机连接器</summary>
+<p>浏览器不能直接使用订阅账号，需要一个只在你电脑上运行的小程序来转接。</p>
+<ol class="setup-steps">
+<li><span id="connector-prereq">安装 Node.js 20 或更高版本</span>（<a href="https://nodejs.org" target="_blank" rel="noopener noreferrer">下载 Node.js</a>）</li>
+<li>下载 <a href="https://github.com/rockythink/relyless/releases/latest" target="_blank" rel="noopener noreferrer">RelyLess 最新发布包</a>并解压，放在之后不会移动的位置。</li>
+<li>在解压后的文件夹里打开终端，运行：
 <div class="copy-command">
 <code id="install-command">
 </code>
 <button id="copy-install-command" type="button">复制</button>
-</div>
+</div></li>
+<li>回到这里，点上方的「刷新账户与模型」。还是未连接的话，重新加载扩展后再刷新。</li>
+</ol>
 <p id="connector-login-help">ChatGPT 通过官方 Sign in with ChatGPT（OAuth）授权；首次从旧连接器切换需重新登录，之后更新保留本机 SIWC 登录。令牌仅由本机连接器保管，不进入浏览器。连接失效时重新运行安装命令并刷新。</p>
 </details>
 </div>
@@ -967,7 +996,7 @@
 </div>
       <div id="api-panel" class="provider-panel" hidden="">
         <div class="paper-card form-stack api-service-card">
-          <div class="service-selection">
+          <div class="service-selection saved-service-only">
 <label class="field">
 <span>已保存的 API 服务</span>
 <select id="api-service-select">
@@ -975,14 +1004,13 @@
 </label>
 <button id="new-api-service" type="button">新增服务</button>
 </div>
-          <p class="field-help">各服务的密钥和地址相互隔离；切换服务不会覆盖未选中的配置。</p>
-          <div class="provider-actions">
+          <div class="provider-actions saved-service-only">
 <button id="test-provider" type="button">测试当前服务</button>
 </div>
 <details id="api-editor" class="service-editor">
 <summary>编辑服务配置</summary>
 <form id="provider-form" class="form-stack">
-            <div class="form-grid">
+            <div class="form-grid provider-identity">
 <div class="field">
 <label id="provider-label" for="provider-trigger">服务商</label>
 <div class="provider-select">
@@ -1006,41 +1034,40 @@
 <input id="provider-name" maxlength="60" required="" autocomplete="off">
 </label>
 </div>
+            <div id="provider-url-slot"></div>
             <label class="field">
-<span>API Key <a id="provider-key-link" class="field-link" href="#" target="_blank" rel="noreferrer" hidden="">获取密钥</a>
+<span>API Key <a id="provider-key-link" class="field-link" href="#" target="_blank" rel="noreferrer" hidden="">获取 API Key</a>
 </span>
-<textarea id="provider-keys" rows="3" autocomplete="off" spellcheck="false" placeholder="每行一个密钥；保存后多个密钥按权重轮询，失败自动切换">
+<textarea id="provider-keys" rows="2" autocomplete="off" spellcheck="false">
 </textarea>
 <small id="key-state">
 </small>
 </label>
-            <button id="check-all-keys" class="secondary-button narrow" type="button">逐项检查密钥</button>
+            <button id="check-all-keys" class="secondary-button narrow" type="button" hidden="">逐项检查密钥</button>
             <div id="provider-fields" class="form-grid provider-fields">
 </div>
-            <div class="model-field">
-<label class="field">
+            <label class="field model-field">
 <span>模型</span>
 <div class="model-picker">
-<select id="provider-model-list" aria-label="可用模型">
-<option value="">获取后选择</option>
+<input id="provider-model" required="" autocomplete="off" spellcheck="false" aria-label="模型 ID">
+<button id="list-provider-models" type="button">获取可用模型</button>
+</div>
+<select id="provider-model-list" aria-label="可用模型" hidden="">
+<option value="">选择模型</option>
 </select>
-<button id="list-provider-models" type="button">获取模型</button>
-</div>
-<small id="provider-model-note">也可直接填写模型 ID。</small>
+<small id="provider-model-note">
+</small>
 </label>
-<label class="field">
-<span>模型 ID</span>
-<input id="provider-model" required="" autocomplete="off" spellcheck="false">
-</label>
-</div>
             <details class="inline-disclosure">
 <summary>高级设置</summary>
-<div class="disclosure-content">
-<label class="field">
+<div id="provider-advanced-body" class="disclosure-content form-stack">
+<label class="field" id="provider-url-field">
 <span>Base URL</span>
 <input id="provider-url" type="url" required="" spellcheck="false">
 <small>仅 HTTPS；localhost 可使用 HTTP。更换域名不会带入旧密钥。</small>
 </label>
+<div id="provider-advanced-fields" class="form-grid provider-fields">
+</div>
 <label class="field">
 <span>失败后切换到</span>
 <select id="provider-fallback"><option value="">不切换</option></select>
@@ -1048,12 +1075,12 @@
 </label>
 </div>
 </details>
+            <p id="provider-permission-note" class="field-help" hidden="">保存时 Chrome 会询问是否允许访问这个服务的地址，允许后请求才能发出。</p>
             <div class="provider-actions">
-<button class="primary-action narrow" type="submit">保存并使用</button>
-<button id="cancel-api-service" type="button" hidden="">取消新增</button>
+<button class="primary-action narrow" type="submit">保存并测试</button>
+<button id="cancel-api-service" type="button" hidden="">取消</button>
 </div>
-            
-          <details class="inline-disclosure">
+          <details class="inline-disclosure saved-service-only">
 <summary>移除服务或密钥</summary>
 <div class="provider-actions">
 <button id="disconnect-provider" class="danger-button" type="button">清除此服务密钥</button>
@@ -1070,10 +1097,28 @@
           </section>
         </div>
       </div>
-      <div class="paper-card form-stack" id="routing-card">
+      <details class="preference-block disclosure-block service-secondary" id="usage-card">
+<summary>用量与预算</summary>
+<div class="disclosure-content form-stack">
+<p class="field-help">仅服务商上报的 token 是实际计数；≈ 为粗略估计：本机 MiniLM 分词器与服务模型不同，未预热或文本过长时按完整载荷字符数估算（约 4 字符/个）。输入估计不包含服务指令，不能用于精确计费。仅保存聚合计数。</p>
+        <fieldset class="history-period" aria-label="用量范围"><legend class="sr-only">用量范围</legend><label><input type="radio" name="usage-days" value="1"><span>今日</span></label><label><input type="radio" name="usage-days" value="7" checked=""><span>近 7 天</span></label><label><input type="radio" name="usage-days" value="30"><span>近 30 天</span></label><label><input type="radio" name="usage-days" value="0"><span>累计</span></label></fieldset>
+        <div id="usage-list" class="usage-list"></div>
+        <p id="usage-empty" class="empty-state" hidden="">范围内暂无用量记录。</p>
+        <p id="usage-total" class="field-help"></p>
+        <label class="field usage-budget">
+<span>月度 token 预算</span>
+<input id="usage-budget" type="number" min="0" step="1000" inputmode="numeric" placeholder="0">
+<small>整页翻译预计超出此额度时会先二次确认；0 = 不限制。token 数为累计近似值。</small>
+</label>
+        <div class="data-actions"><button id="usage-clear" class="danger-button" type="button">清空用量统计</button><span id="usage-result" class="inline-message" aria-live="polite"></span></div>
+</div>
+</details>
+      <details class="preference-block disclosure-block service-secondary" id="routing-card">
+<summary>模型路由（实验）</summary>
+<div class="disclosure-content form-stack">
 <div class="adaptive-setting">
 <div>
-<b>模型路由（实验）</b>
+<b>启用模型路由</b>
 <p>开启后，目标词句或上下文等请求摘要（最多 2,000 字符）会先发送到「领域识别 → Jev 判定」设置的接口，可能是 Requesty。判定使用同一份密钥；普通窗口会在本机按内容缓存判断结果，无痕窗口不留此缓存。判卷失败或目标不可用时自动走原服务。</p>
 </div>
 <label class="switch">
@@ -1154,22 +1199,10 @@
           <p class="field-help" id="routing-stats">尚未启用。</p>
 </div>
 </div>
-      <div class="paper-card" id="usage-card">
-        <div class="adaptive-setting"><div><b>模型用量</b><p>仅服务商上报的 token 是实际计数；≈ 为粗略估计：本机 MiniLM 分词器与服务模型不同，未预热或文本过长时按完整载荷字符数估算（约 4 字符/个）。输入估计不包含服务指令，不能用于精确计费。仅保存聚合计数。</p></div></div>
-        <fieldset class="history-period" aria-label="用量范围"><legend class="sr-only">用量范围</legend><label><input type="radio" name="usage-days" value="1"><span>今日</span></label><label><input type="radio" name="usage-days" value="7" checked=""><span>近 7 天</span></label><label><input type="radio" name="usage-days" value="30"><span>近 30 天</span></label><label><input type="radio" name="usage-days" value="0"><span>累计</span></label></fieldset>
-        <div id="usage-list" class="usage-list"></div>
-        <p id="usage-empty" class="empty-state" hidden="">范围内暂无用量记录。</p>
-        <p id="usage-total" class="field-help"></p>
-        <label class="field usage-budget">
-<span>月度 token 预算</span>
-<input id="usage-budget" type="number" min="0" step="1000" inputmode="numeric" placeholder="0">
-<small>整页翻译预计超出此额度时会先二次确认；0 = 不限制。token 数为累计近似值。</small>
-</label>
-        <div class="data-actions"><button id="usage-clear" class="danger-button" type="button">清空用量统计</button><span id="usage-result" class="inline-message" aria-live="polite"></span></div>
-      </div>
-      <details class="paper-card settings-disclosure">
-<summary>高级：并发与排队</summary>
-<div class="form-stack">
+</details>
+      <details class="preference-block disclosure-block service-secondary">
+<summary>并发与排队</summary>
+<div class="disclosure-content form-stack">
         <label class="field setting-select">
 <span>并发请求数</span>
 <select id="request-concurrency">
@@ -1361,7 +1394,7 @@
     <span class="guide-eyebrow">RELYLESS · 阅读指南</span>
     <h3>词义卡住，看注释。长句绕住，看解构。</h3>
     <p><strong>注释</strong>帮你理解一个词在这里是什么意思；<strong>阅读解构</strong>帮你看清一句话里谁在做什么、哪些部分是补充。两者可以配合，也可以只开需要的一个。目标是接着读原文，而不是把页面换成中文。</p>
-    <p>第一次使用：先到 <a href="#service">模型服务</a> 连接订阅服务或 API 并测试连接。自备 API 可一行填写一个密钥并逐项检查；只用一个密钥也兼容。再打开普通 HTTP 或 HTTPS 英文文章，点击扩展图标，在弹窗中打开「阅读辅助」或「阅读解构」开关。浏览器内部页和扩展页无法开启阅读辅助，弹窗会显示使用说明入口。需要的网站可在 <a href="#sites">网站规则</a> 设置自动开启。</p>
+    <p>第一次使用：先到 <a href="#service">模型服务</a> 选一种连接方式，用 API Key 时保存就会自动测试连接。再打开普通 HTTP 或 HTTPS 英文文章，点击扩展图标，在弹窗中打开「阅读辅助」或「阅读解构」开关。浏览器内部页和扩展页无法开启阅读辅助，弹窗会显示使用说明入口。需要的网站可在 <a href="#sites">网站规则</a> 设置自动开启。</p>
     <p>只想先看原文：在普通 HTTP 或 HTTPS 文章的弹窗底部点「专注阅读」，无需连接模型或开启本页辅助。扩展在本页本地提取正文快照，暂时隔离网页布局；无法可靠识别时不会改动原页。按住查词键单击正文英文词可主动求助，不会开启自动提示；需要模型时服务不可用会显示错误。原页已有双语译文会暂停并保留，退出后可继续。原页与专注阅读共用词档案及会话帮助缓存；同词同语境可复用，语境不同仍需核对当前词义，不会自动贴出所有历史释义。顶部的「翻译本页」会先显示用量估算，确认后只翻译读到附近的快照正文；也可调整字号、栏宽、行距和明暗主题，点「退出专注阅读」或按 Escape 返回原页。媒体及尚未加载的图片请回原页查看。</p>
   </article>
 

@@ -167,6 +167,7 @@ function dispatchSettings(settings){
   if(!fallback)throw new Error('本机模型只覆盖简短查词提示；请在设置中配置 API 或订阅服务以使用此功能。');
   return fallback;
 }
+function notConfiguredError(){return Object.assign(new Error('还没有连接模型。连接后就能查词和翻译，只需设置一次。'),{code:'NOT_CONFIGURED'});}
 function configured(settings) {
   if(settings.providerKind==='local'){if(nanoAvailability==='unknown')probeNano();return nanoAvailability!=='unavailable'&&nanoAvailability!=='unsupported'||localFallbackSettings(settings)!==null;}
   const provider=activeApiProvider(settings);return isSubscriptionKind(settings.providerKind) ? subscriptionStatus(nativeKind(settings)).authenticated : apiServiceReady(provider);
@@ -653,7 +654,7 @@ async function supportBatch(message,sender){
   for(let i=0;i<tasks.length;i++){const cached=supportCache.get(keys[i]);if(cached&&cached.policy===SUPPORT_POLICY_VERSION&&Date.now()-cached.at<7*86400000)decisions.set(tasks[i].id,cached.decision);else missing.push({item:tasks[i],key:keys[i]});}
   if(missing.length){
     if(state.settings.providerKind==='local')dispatchSettings(state.settings);
-    if(!configured(state.settings))throw new Error('请先连接服务；原文保持不变。');
+    if(!configured(state.settings))throw notConfiguredError();
     const fresh=[],claimed=new Set();
     for(const entry of missing)if(!supportInFlight.has(entry.key)&&!claimed.has(entry.key)){claimed.add(entry.key);fresh.push(entry);}
     if(fresh.length){
@@ -742,7 +743,7 @@ async function sentenceGroupsBatch(message,sender){
    if(route.kind==='api'&&route.service)state={...state,settings:{...state.settings,providerKind:'api',activeApiServiceId:route.service.id}};
    else if(route.kind==='subscription')state={...state,settings:{...state.settings,providerKind:'chatgpt'}};}
   const service=state.settings.providerKind==='api'?activeApiProvider(state.settings):state.settings.subscriptionModel;
-  if(!configured(state.settings))throw new Error('请先连接服务；原文保持不变。');if(state.settings.providerKind==='api')await requireApiPermission(service);
+  if(!configured(state.settings))throw notConfiguredError();if(state.settings.providerKind==='api')await requireApiPermission(service);
   await sentenceGroupCacheReady;
   const serviceKey=await hashValue(JSON.stringify([state.settings.providerKind,service])),keys=await Promise.all(items.map(item=>hashValue(JSON.stringify([SENTENCE_GROUPS_POLICY_VERSION,serviceKey,item.sentence])))),groupsByKey=new Map();
   // A late explicit caller may join an already-aborted automatic flight. Re-adopt once,
@@ -865,7 +866,7 @@ async function emergencyBegin(message,sender){
 async function translateItems(items,settings,trace,{scope,onProgress,origin,sourceHash,incognito=false,guard=async()=>{}}) {
   if(!['page','passage'].includes(scope))throw new Error('无效的翻译范围。');
   settings=dispatchSettings(settings);
-  if(!configured(settings))throw new Error('请先连接服务。');
+  if(!configured(settings))throw notConfiguredError();
   // 整页与选段翻译都是高价值路径：先判卷再选路，升级路切换到指定服务后再走原链路。
   const route=await chooseRoute(scope==='page'?'emergency':'passage',summarizeRequest(scope,{text:items.map(item=>item.text).join('\n').slice(0,900)}),{settings,guard,incognito});
   if(route.kind==='api'&&route.service)settings={...settings,providerKind:'api',activeApiServiceId:route.service.id};
@@ -1150,7 +1151,7 @@ async function conversationAsk(message,sender){
   const source=await readingSource(sender);let state=await load();
   // 本地记忆先收集再随请求一起过校验：内容有界，且只作为数据发送。
   const command=normalizeConversationRequest({...message,memory:source.incognito?[]:collectConversationMemory(state,{text:message.text,domain:message.domain})});
-  if(!configured(state.settings))throw new Error('请先配置可用的翻译或帮助服务。');
+  if(!configured(state.settings))throw notConfiguredError();
   if(state.settings.providerKind==='local')state={...state,settings:dispatchSettings(state.settings)};
   if(isSubscriptionKind(state.settings.providerKind)){
     const kind=nativeKind(state.settings),status=subscriptionStatus(kind);
@@ -1247,7 +1248,7 @@ const operation=previous.catch(()=>{}).then(async()=>{
   if(recordIntent&&command.detail==='brief'&&!source.incognito)await mutate(async current=>{if(canRemember(current)&&command.wordId&&command.senseKey){const canonical=resolveCanonicalTerm(command.text,command.domain,current.words),word=current.words.find(v=>v.id===command.wordId&&v.id===wordId(canonical,command.domain)&&v.domain===command.domain&&v.term===canonical);if(word){const updated=cancelSuppression(word,command.senseKey,source.pageKey);await saveRecord(current,updated);}}},false).catch(()=>{});
   try{
     let result,support=null,sourceName='provider',nanoUsed=false;
-    if(!configured(state.settings)){const reference=command.level==='rescue'&&command.kind!=='passage'?localReferenceFor(command.text,command.domain,state.settings):null;if(!reference)throw new Error('请先连接服务。');result={level:'rescue',translation:reference.translation};sourceName='local-reference';}
+    if(!configured(state.settings)){const reference=command.level==='rescue'&&command.kind!=='passage'?localReferenceFor(command.text,command.domain,state.settings):null;if(!reference)throw notConfiguredError();result={level:'rescue',translation:reference.translation};sourceName='local-reference';}
     else{
       await supportCacheReady;
       const request=normalizeAssistanceRequest(command),model=state.settings.providerKind==='api'?activeApiProvider(state.settings):state.settings.providerKind==='local'?'gemini-nano':state.settings.subscriptionModel,serviceKey=await hashValue(JSON.stringify([state.settings.providerKind,model]));if(state.settings.providerKind==='api')await requireApiPermission(model);
@@ -1799,14 +1800,14 @@ async function handle(message,sender) {
     case 'ASSIST':return assist(message,sender);
     case 'ASSIST_COMMIT':return assistCommit(message,sender);
     case 'PROVIDER_TEST':{
-      const state=await load();if(state.settings.providerKind==='local'){const status=await nanoStatus();nanoAvailability=status?.availability||'unavailable';if(nanoAvailability==='available')return{hint:'本机模型已就绪'};if(nanoAvailability==='downloadable'||nanoAvailability==='downloading')return{hint:'本机模型待下载：请在「本机模型」卡片点击下载'};throw new Error(nanoAvailability==='unsupported'?'此浏览器不支持本机模型。':'本机模型在此设备上不可用。');}if(!configured(state.settings))throw new Error('请先连接服务。');const request={text:'index',context:'The database query uses an index.',domain:'data',kind:'word',level:'hint',detail:'full'};let raw;if(isSubscriptionKind(state.settings.providerKind))raw=await providerOperation(()=>assistSubscription(request,state.settings.subscriptionModel,diagnostics.trace(message)?.traceId,undefined,undefined,nativeKind(state.settings)),diagnostics.trace(message),state.settings.subscriptionModel,nativeKind(state.settings),JSON.stringify(request).length);else{raw=(await apiRequest(activeApiProvider(state.settings), request, ASSISTANCE_INSTRUCTIONS, assistanceSchema(request),{trace:diagnostics.trace(message)})).result;}return{hint:normalizeAssistanceResult(raw,request).hint};
+      const state=await load();if(state.settings.providerKind==='local'){const status=await nanoStatus();nanoAvailability=status?.availability||'unavailable';if(nanoAvailability==='available')return{hint:'本机模型已就绪'};if(nanoAvailability==='downloadable'||nanoAvailability==='downloading')return{hint:'本机模型待下载：请在「本机模型」卡片点击下载'};throw new Error(nanoAvailability==='unsupported'?'此浏览器不支持本机模型。':'本机模型在此设备上不可用。');}if(!configured(state.settings))throw notConfiguredError();const request={text:'index',context:'The database query uses an index.',domain:'data',kind:'word',level:'hint',detail:'full'};let raw;if(isSubscriptionKind(state.settings.providerKind))raw=await providerOperation(()=>assistSubscription(request,state.settings.subscriptionModel,diagnostics.trace(message)?.traceId,undefined,undefined,nativeKind(state.settings)),diagnostics.trace(message),state.settings.subscriptionModel,nativeKind(state.settings),JSON.stringify(request).length);else{raw=(await apiRequest(activeApiProvider(state.settings), request, ASSISTANCE_INSTRUCTIONS, assistanceSchema(request),{trace:diagnostics.trace(message)})).result;}return{hint:normalizeAssistanceResult(raw,request).hint};
     }
     case 'ENCOUNTER':return encounterOffered(message,sender);
     case 'INTERACT':return interactOffered(message,sender);
     case 'READING_DATA_EXPORT':return readingExport();
     case 'MEMORY_CLEAR':return clearReadingData('memory');
     case 'CACHE_CLEAR':await clearProviderState();await clearResultCaches();await clearSupportSessions();return {cleared:true};
-    case 'OPEN_OPTIONS':await chrome.runtime.openOptionsPage();return{};
+    case 'OPEN_OPTIONS':if(message.section==='service')await openServiceSettings();else await chrome.runtime.openOptionsPage();return{};
     default:throw new Error('未知请求。');
   }
 }
@@ -1849,7 +1850,15 @@ function registerContextMenus() {
   return menuRegistration;
 }
 
+async function openServiceSettings(){
+  // 没有 tabs 权限时 tabs.query 按 URL 查不到自己的页面，getContexts 才能找到已打开的设置页。
+  const url=chrome.runtime.getURL('ui/options.html#service'),base=chrome.runtime.getURL('ui/options.html');
+  const open=(await chrome.runtime.getContexts({contextTypes:['TAB']})).filter(context=>context.documentUrl===base||context.documentUrl?.startsWith(base+'#')).at(-1);
+  if(open){await chrome.tabs.update(open.tabId,{url,active:true});await chrome.windows.update(open.windowId,{focused:true});}
+  else await chrome.tabs.create({url});
+}
 chrome.runtime.onInstalled.addListener(registerContextMenus);
+chrome.runtime.onInstalled.addListener(({reason})=>{if(reason==='install')void openServiceSettings().catch(error=>console.error('打开模型服务设置失败',error));});
 chrome.runtime.onStartup.addListener(registerContextMenus);
 void registerContextMenus();
 async function forgetTabAutomation(tabId) {

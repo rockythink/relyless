@@ -143,7 +143,7 @@ test('settings search filters navigation, lists deep matches, and navigates on c
   results[0].click();
   await new Promise(r=>setTimeout(r,20));
   expect(document.getElementById('service').hidden).toBe(false);
-  expect(document.querySelector('#service .settings-disclosure').open).toBe(true);
+  expect(document.getElementById('request-concurrency').closest('details').open).toBe(true);
   expect(document.activeElement.textContent).toContain('并发');
   expect(input.value).toBe('');
   input.value='绝不可能匹配xyz';

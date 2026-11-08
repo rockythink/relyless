@@ -4,7 +4,7 @@
  * 交互层只编排既有面板（订阅面板 / API 面板与表单），不持有服务状态本身。
  */
 
-import {API_PROVIDERS, JUDGMENT_PROTOCOLS} from '../api-providers.mjs';
+import {API_PROVIDERS, JUDGMENT_PROTOCOLS, serviceSetupNeeded} from '../api-providers.mjs';
 import {providerIconUrl} from './provider-icons.js';
 
 export const CATALOG_CATEGORIES = [
@@ -27,7 +27,7 @@ const SUBSCRIPTION_TEMPLATES = [
 // 目录元数据：分类、简介与官方密钥页。未列出的服务商归入自定义，不影响使用。
 const PROVIDER_CATALOG_META = {
   openai: {category: 'popular', desc: 'GPT 系列官方 API 接口', website: 'https://platform.openai.com/api-keys'},
-  deepseek: {category: 'popular', desc: '深度求索大模型，高性价比的阅读理解与解构', website: 'https://platform.deepseek.com'},
+  deepseek: {category: 'popular', desc: '深度求索大模型，高性价比的阅读理解与解构', website: 'https://platform.deepseek.com/api_keys'},
   google: {category: 'popular', desc: 'Gemini 系列官方接口，高吞吐低延迟', website: 'https://aistudio.google.com/app/apikey'},
   anthropic: {category: 'popular', desc: 'Claude 系列官方 API 接口', website: 'https://console.anthropic.com/settings/keys'},
   xai: {category: 'popular', desc: 'xAI 官方 Grok API 接口', website: 'https://console.x.ai'},
@@ -84,6 +84,7 @@ export function iconUrlFor(iconName) {
 }
 
 const SUBSCRIPTION_IDS = new Set(SUBSCRIPTION_TEMPLATES.map(item => item.id));
+const CUSTOM_PROVIDER_IDS = new Set(['openai-compatible', 'open-responses']);
 
 class ServiceCatalogController {
   constructor() {
@@ -106,6 +107,12 @@ class ServiceCatalogController {
     this.docLink = document.querySelector('#catalog-hero-website');
     this.heroDesc = document.querySelector('#catalog-hero-desc');
     this.countEl = document.querySelector('#catalog-service-count');
+    this.startPanel = document.querySelector('#service-start');
+    this.backBtn = document.querySelector('#catalog-back-to-start');
+    document.querySelectorAll('[data-start-service]').forEach(button => {
+      button.addEventListener('click', () => this.selectService(button.dataset.startService));
+    });
+    this.backBtn?.addEventListener('click', () => this.returnToStart());
 
     this.searchInput?.addEventListener('input', () => {
       this.searchQuery = this.searchInput.value.trim().toLowerCase();
@@ -121,6 +128,20 @@ class ServiceCatalogController {
 
   isSubscriptionKey(key) { return SUBSCRIPTION_IDS.has(key); }
 
+  setupNeeded() { return serviceSetupNeeded(globalThis.optionsState); }
+
+  renderStartPanel() {
+    if (this.startPanel) this.startPanel.hidden = this.selectedKey !== '' || !this.setupNeeded();
+  }
+
+  returnToStart() {
+    if (typeof globalThis.optionsDiscardProviderDraft === 'function' && !globalThis.optionsDiscardProviderDraft()) return;
+    globalThis.optionsSetDraftServiceId?.(null);
+    this.userSelected = false;
+    this.sync();
+    document.querySelector('#service-start-title')?.focus();
+  }
+
   renderRailList() {
     this.init();
     if (!this.railList) return;
@@ -128,6 +149,7 @@ class ServiceCatalogController {
     const currentKind = settings.providerKind || 'chatgpt';
     const activeServiceId = settings.activeApiServiceId || '';
     const savedServices = settings.apiServices || [];
+    const setup = this.setupNeeded();
 
     // 用户自建服务合并进目录：与内置模板同名出现多次，或不在模板中时单列一条。
     const allItems = [...CATALOG_TEMPLATES];
@@ -212,7 +234,7 @@ class ServiceCatalogController {
 
         const status = document.createElement('div');
         status.className = 'service-status-col';
-        if (isDefault) {
+        if (isDefault && !setup) {
           const badge = document.createElement('span');
           badge.className = 'service-badge is-default';
           badge.textContent = '默认';
@@ -244,6 +266,7 @@ class ServiceCatalogController {
     this.railList?.querySelectorAll('.service-item').forEach(element => {
       element.classList.toggle('is-selected', element.dataset.serviceKey === key);
     });
+    this.renderStartPanel();
 
     const settings = this.getCurrentState();
     const savedServices = settings.apiServices || [];
@@ -320,6 +343,7 @@ class ServiceCatalogController {
     }
     const editor = document.querySelector('#api-editor');
     if (editor) editor.open = true;
+    document.querySelector(CUSTOM_PROVIDER_IDS.has(providerId) ? '#provider-url' : '#provider-keys')?.focus();
   }
 
   syncHeroDetail() {
@@ -340,19 +364,25 @@ class ServiceCatalogController {
     if (this.heroDesc) this.heroDesc.textContent = item.desc || '';
     if (this.heroIcon) this.heroIcon.src = iconUrlFor(item.icon);
 
-    const isDefault = this.isSubscriptionKey(key)
+    const setup = this.setupNeeded();
+    const isDefault = !setup && (this.isSubscriptionKey(key)
       ? currentKind === key
       : key.startsWith('saved:')
         ? currentKind === 'api' && activeServiceId === key.slice('saved:'.length)
-        : currentKind === 'api' && savedServices.find(service => service.id === activeServiceId)?.providerId === key;
+        : currentKind === 'api' && savedServices.find(service => service.id === activeServiceId)?.providerId === key);
+    // 还没登录的订阅、还没保存的服务商，设为默认没有意义。
+    const canBeDefault = this.isSubscriptionKey(key)
+      ? key === 'local' || globalThis.optionsSubscriptionAuthenticated?.(key) !== false
+      : key.startsWith('saved:') || savedServices.some(service => service.providerId === key);
 
     if (this.heroBadge) this.heroBadge.hidden = !isDefault;
-    if (this.setDefaultBtn) this.setDefaultBtn.hidden = isDefault;
+    if (this.setDefaultBtn) this.setDefaultBtn.hidden = isDefault || !canBeDefault;
+    if (this.backBtn) this.backBtn.hidden = !setup;
     if (this.docLink) {
-      if (item.website) {
-        this.docLink.href = item.website;
-        this.docLink.hidden = false;
-      } else this.docLink.hidden = true;
+      // API 服务的密钥入口紧贴输入框，头部只给订阅和免密钥服务放官网。
+      const showLink = Boolean(item.website) && (this.isSubscriptionKey(key) || item.keyOptional === true);
+      this.docLink.hidden = !showLink;
+      if (showLink) this.docLink.href = item.website;
     }
     if (this.isSubscriptionKey(key) && key !== 'local') globalThis.optionsRenderSubscription?.();
   }
@@ -395,16 +425,7 @@ class ServiceCatalogController {
       }
       this.userSelected = false;
       this.sync();
-      return;
     }
-
-    // 未保存过的服务商：提示先保存，再设为默认。
-    const result = document.querySelector('#provider-result');
-    if (result) {
-      result.textContent = '请先填写接口信息并点击「保存并使用」，即可设为当前服务。';
-      result.hidden = false;
-    }
-    document.querySelector('#provider-keys')?.focus();
   }
 
   triggerNewCustomService() {
@@ -413,7 +434,6 @@ class ServiceCatalogController {
     this.selectedKey = 'openai-compatible';
     this.startDraftProvider('openai-compatible');
     this.renderRailList();
-    document.querySelector('#provider-trigger')?.focus();
   }
 
   sync() {
@@ -423,7 +443,8 @@ class ServiceCatalogController {
     const activeServiceId = settings.activeApiServiceId || '';
     const savedServices = settings.apiServices || [];
 
-    if (!this.userSelected || !this.selectedKey) {
+    if (this.setupNeeded() && !this.userSelected) this.selectedKey = '';
+    else if (!this.userSelected || !this.selectedKey) {
       if (currentKind !== 'api') this.selectedKey = currentKind;
       else if (activeServiceId) {
         const active = savedServices.find(service => service.id === activeServiceId);
@@ -431,6 +452,7 @@ class ServiceCatalogController {
       } else this.selectedKey = savedServices.length ? (savedServices[0].providerId || `saved:${savedServices[0].id}`) : 'openai-compatible';
     }
     this.renderRailList();
+    this.renderStartPanel();
     // 初始同步也要落到正确的面板（目录点击之外的路径不会经过 selectService）。
     const subscriptionPanel = document.querySelector('#subscription-panel');
     const apiPanel = document.querySelector('#api-panel');

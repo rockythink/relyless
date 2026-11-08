@@ -55,6 +55,12 @@ const providersById = new Map(API_PROVIDERS.map(provider => [provider.id,provide
 // apiServices 保存、回落与升级目标都必须排除这些服务商（正确入口是领域识别的判定接入字段）。
 export const JUDGMENT_PROTOCOLS = ['jev','systemone'];
 
+// 首次使用：没有可用模型、没存过 API 服务、也没装连接器。配置过但失效的服务走修复提示。
+export function serviceSetupNeeded(state) {
+  const settings=state?.settings;
+  return Boolean(settings&&state.providerConfigured===false&&settings.providerKind==='chatgpt'&&!settings.apiServices?.length&&!state.subscription?.connected);
+}
+
 export function getApiProvider(id) {
   return providersById.get(id) || null;
 }

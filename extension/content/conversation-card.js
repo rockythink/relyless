@@ -12,12 +12,12 @@
     kernel.readingScope() === scope && kernel.state.generation === generation &&
     (!kernel.state.reader || kernel.inReadingSurface(view.target.block || view.target.anchor?.startContainer));
   async function openConversation(view) {
-    if (view.convoSessionId || !kernel.state.enabled) return;
+    if (view.needsModel || view.convoSessionId || !kernel.state.enabled) return;
     const scope = kernel.readingScope(), generation = kernel.state.generation;
     if (!currentView(view, scope, generation)) return;
     const seed = view.target.context || view.target.text;
     const sessionId = await kernel.sha256([location.origin, view.target.text, seed.slice(0, 400)].join(String.fromCharCode(0)));
-    if (!currentView(view, scope, generation)) return;
+    if (view.needsModel || !currentView(view, scope, generation)) return;
     view.convoSessionId = sessionId;
     view.convo.hidden = false;
     let turns = [];

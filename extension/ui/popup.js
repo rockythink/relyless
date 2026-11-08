@@ -1,8 +1,10 @@
 import {request, errorText, upsertSiteEntry} from '../shared.js';
+import {serviceSetupNeeded} from '../api-providers.mjs';
 
 const popupEls={status:document.querySelector('#page-status'),hostname:document.querySelector('#site-hostname'),siteAuto:document.querySelector('#site-auto'),siteAutoNote:document.querySelector('#site-auto-note'),siteHintDismiss:document.querySelector('#site-hint-dismiss'),siteAutoError:document.querySelector('#site-auto-error'),toggle:document.querySelector('#toggle-page'),pageNote:document.querySelector('#page-note'),actionError:document.querySelector('#action-error'),readerToggle:document.querySelector('#toggle-reader'),readerNote:document.querySelector('#reader-note'),readerError:document.querySelector('#reader-error'),sentenceGroups:document.querySelector('#sentence-groups'),sentenceGroupsNote:document.querySelector('#sentence-groups-note'),sentenceGroupsError:document.querySelector('#sentence-groups-error'),options:document.querySelector('#open-options'),serviceWarning:document.querySelector('#service-warning'),serviceWarningCopy:document.querySelector('#service-warning-copy'),repairService:document.querySelector('#repair-service'),emergencyEstimate:document.querySelector('#emergency-estimate'),emergencyBudget:document.querySelector('#emergency-budget')};
 popupEls.sentenceSelection=document.querySelector('#sentence-selection');
 popupEls.sentenceSelectionOption=document.querySelector('#sentence-selection-option');
+popupEls.setupCard=document.querySelector('#setup-card');popupEls.setupConnect=document.querySelector('#setup-connect');
 const popupUnsupported=document.querySelector('#unsupported-page');
 const popupPageControls=document.querySelector('#page-controls');
 for(const name of ['panel','open','confirm','confirm-title','start','cancel','progress','progress-copy','counts','phase','actions','stop','resume','retry','clear','result','status']){
@@ -55,16 +57,18 @@ function popupEmergencySnapshot(value={}){
 }
 function popupEmergencyPhaseText(){
   if(!popupSupported())return '当前页不可用；请在普通网页中使用。';
-  if(!popupState?.providerConfigured)return '连接辅助服务后才能翻译本页。';
+  if(!popupState?.providerConfigured)return '连接模型后才能翻译本页。';
   if(popupEmergency.phase==='translating')return '正在翻译读到附近的正文。';
   if(popupEmergency.phase==='waiting')return '当前附近已处理，继续阅读时再翻译。';
   if(popupEmergency.phase==='complete')return '已处理所有已识别段落，英文仍保留。';
   if(popupEmergency.phase==='partial')return '部分段落未译完，可重试失败段落。';
   if(popupEmergency.phase==='stopped')return '已停止发送新请求，现有译文仍保留。';
   if(popupEmergency.phase==='error')return popupEmergency.error||'翻译已停止，可确认后继续。';
-  return '保留英文，按阅读位置翻译附近正文。';
+  return '保留英文 · 按阅读位置翻译';
 }
 function popupRender(){
+  const setup=serviceSetupNeeded(popupState);
+  popupEls.setupCard.hidden=!setup;
   popupEls.hostname.textContent=popupHostname();
   const lookupKey=typeof popupState?.settings?.lookupKey==='string'&&/^[A-Z]$/.test(popupState.settings.lookupKey)?popupState.settings.lookupKey:'D';
   for(const copy of popupLookupKeyCopies)copy.textContent=lookupKey;
@@ -82,19 +86,19 @@ function popupRender(){
   else if(allSites&&popupAutomation?.siteRule===false)popupEls.siteAutoNote.textContent='全部网站已开启；当前网站已排除。';
   else if(allSites)popupEls.siteAutoNote.textContent='全部网站已开启；关闭可排除当前网站。';
   else if(!configured&&popupAutomation?.keywordHint){popupEls.siteAutoNote.textContent=`域名含“${popupAutomation.keywordHint}”，像是文档类网站；开启后以后打开会自动辅助。`;popupEls.siteHintDismiss.hidden=false;}
-  else popupEls.siteAutoNote.textContent=configured?'下次打开此网站会自动辅助。':'有限上下文用于准备；支持记录只在本机。';
+  else popupEls.siteAutoNote.textContent=configured?'下次打开此网站会自动辅助。':'';
   popupEls.siteHintDismiss.disabled=popupBusy;
   popupEls.toggle.disabled=popupBusy||!supported;popupEls.toggle.checked=popupEnabled;
   popupEls.readerToggle.disabled=popupBusy||!supported;popupEls.readerToggle.textContent=popupReaderActive?'退出专注':'专注阅读';popupEls.readerNote.textContent=popupReaderActive?'退出后返回原网页':'本地快照 · 不保存文章';
   popupEls.status.classList.toggle('active',popupEnabled);
-  if(popupEnabled){popupSetLive(popupEls.status,'本页已开启');popupEls.pageNote.textContent=popupState?.settings?.assistanceMode==='on-demand'?'按需模式：仅响应主动求助。':'保留英文，按阅读位置提供少量支撑。';}
-  else{popupSetLive(popupEls.status,popupAutomation?.paused?'本页已暂停':'等待开启');popupEls.pageNote.textContent='仅作用于本页，不更改网站自动开启规则。';}
-  const serviceProblem=popupState?.providerError||(['chatgpt','grok','antigravity'].includes(popupState?.settings?.providerKind)?popupState?.subscription?.error:'')||(!popupState?.providerConfigured?'辅助服务尚未连接。':'');
-  popupEls.serviceWarning.hidden=!serviceProblem;
+  if(popupEnabled){popupSetLive(popupEls.status,'本页已开启');popupEls.pageNote.textContent=!popupState?.providerConfigured?'模型暂时不可用，不会出现新提示。':popupState?.settings?.assistanceMode==='on-demand'?'按需模式：仅响应主动求助。':'保留英文，按阅读位置提供少量支撑。';}
+  else{popupSetLive(popupEls.status,popupAutomation?.paused?'本页已暂停':'等待开启');popupEls.pageNote.textContent='只作用于当前页面。';}
+  const serviceProblem=popupState?.providerError||(['chatgpt','grok','antigravity'].includes(popupState?.settings?.providerKind)?popupState?.subscription?.error:'')||(!popupState?.providerConfigured?'还没有连接模型。':'');
+  popupEls.serviceWarning.hidden=!serviceProblem||setup;
   popupEls.serviceWarningCopy.textContent=serviceProblem||'';
   popupEls.sentenceGroups.checked=Boolean(popupSentenceGroupsLoaded&&popupSentenceGroups.enabled);
   popupEls.sentenceGroups.disabled=popupBusy||!supported||!popupSentenceGroupsLoaded||Boolean(!popupSentenceGroups.enabled&&!popupState?.providerConfigured);
-  if(!popupState?.providerConfigured)popupSetLive(popupEls.sentenceGroupsNote,popupSentenceGroups.enabled?'服务未就绪，阅读解构已停止；仍可关闭本页阅读解构。':'连接辅助服务后才能开启阅读解构。');
+  if(!popupState?.providerConfigured)popupSetLive(popupEls.sentenceGroupsNote,popupSentenceGroups.enabled?'服务未就绪，阅读解构已停止；仍可关闭本页阅读解构。':'连接模型后才能开启阅读解构。');
   else if(popupSentenceGroups.status==='queued')popupSetLive(popupEls.sentenceGroupsNote,'正在准备分析当前可见正文。');
   else if(popupSentenceGroups.status==='analyzing')popupSetLive(popupEls.sentenceGroupsNote,'正在分析当前可见正文；滚动后只分析新出现的句子。');
   else if(popupSentenceGroups.status==='error')popupSetLive(popupEls.sentenceGroupsNote,'阅读解构出错，可在扩展中关闭后重新开启。');
@@ -255,7 +259,7 @@ async function popupEmergencyAction(type){
   }catch(error){popupEls.emergencyResult.classList.add('error');popupShowError(popupEls.emergencyResult,error);}
   finally{popupBusy=false;popupRender();popupFocusEmergency();}
 }
-function popupOpenOptions(section=''){if(!section){chrome.runtime.openOptionsPage();return;}const url=chrome.runtime.getURL('ui/options.html#'+section);chrome.tabs.query({url:chrome.runtime.getURL('ui/options.html*')},tabs=>{const tab=tabs.at(-1);if(tab?.id){chrome.tabs.update(tab.id,{url,active:true});chrome.windows.update(tab.windowId,{focused:true});}else chrome.tabs.create({url});});}
+function popupOpenOptions(section=''){if(!section){chrome.runtime.openOptionsPage();return;}void request('OPEN_OPTIONS',{section}).catch(error=>popupShowError(popupEls.actionError,error));}
 async function popupInit(){
   try{
     [popupTab]=await chrome.tabs.query({active:true,currentWindow:true});
@@ -273,7 +277,7 @@ async function popupWatchPage(){
   catch{/* 轮询为尽力而为，失败下一秒重试，不写入界面 */}
   finally{setTimeout(()=>void popupWatchPage(),1000);}
 }
-popupEls.toggle.addEventListener('change',()=>void popupTogglePage());popupEls.readerToggle.addEventListener('click',()=>void popupToggleReader());popupEls.siteAuto.addEventListener('change',()=>void popupToggleSite());popupEls.siteHintDismiss.addEventListener('click',()=>void popupDismissSiteHint());popupEls.sentenceGroups.addEventListener('change',()=>void popupToggleSentenceGroups());popupEls.options.addEventListener('click',()=>popupOpenOptions());popupEls.repairService.addEventListener('click',()=>popupOpenOptions('service'));popupEls.emergencyOpen.addEventListener('click',()=>popupEmergencyPrompt(true));popupEls.emergencyCancel.addEventListener('click',()=>popupEmergencyPrompt(false));popupEls.emergencyStart.addEventListener('click',()=>void popupEmergencyStart());popupEls.emergencyStop.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_STOP'));popupEls.emergencyResume.addEventListener('click',()=>void popupEmergencyStart(true));popupEls.emergencyRetry.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_RETRY'));popupEls.emergencyClear.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_END'));
+popupEls.toggle.addEventListener('change',()=>void popupTogglePage());popupEls.readerToggle.addEventListener('click',()=>void popupToggleReader());popupEls.siteAuto.addEventListener('change',()=>void popupToggleSite());popupEls.siteHintDismiss.addEventListener('click',()=>void popupDismissSiteHint());popupEls.sentenceGroups.addEventListener('change',()=>void popupToggleSentenceGroups());popupEls.options.addEventListener('click',()=>popupOpenOptions());popupEls.repairService.addEventListener('click',()=>popupOpenOptions('service'));popupEls.setupConnect.addEventListener('click',()=>popupOpenOptions('service'));popupEls.emergencyOpen.addEventListener('click',()=>popupEmergencyPrompt(true));popupEls.emergencyCancel.addEventListener('click',()=>popupEmergencyPrompt(false));popupEls.emergencyStart.addEventListener('click',()=>void popupEmergencyStart());popupEls.emergencyStop.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_STOP'));popupEls.emergencyResume.addEventListener('click',()=>void popupEmergencyStart(true));popupEls.emergencyRetry.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_RETRY'));popupEls.emergencyClear.addEventListener('click',()=>void popupEmergencyAction('SS_EMERGENCY_END'));
 popupEls.sentenceSelection.addEventListener('change',()=>void popupToggleSentenceSelection());
 popupEls.emergencyConfirm.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();popupEmergencyPrompt(false);}});
 chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local'||!changes.settings)return;void Promise.all([request('STATE_GET'),request('AUTOMATION_GET',{tabId:popupTab?.id}).catch(()=>null)]).then(([state,automation])=>{popupState=state;if(automation)popupAutomation=automation;popupRender();}).catch(()=>{});});

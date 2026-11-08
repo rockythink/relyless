@@ -59,7 +59,7 @@
       if (!isAlive()) return reject(new Error('扩展连接已失效，请从扩展按钮重新开启；无需重新登录。'));
       try { runtime.sendMessage({type,...payload},response => {
         if (runtime.lastError) reject(new Error(runtime.lastError.message));
-        else if (!response?.ok) {const error=new Error((response?.error||'插件连接已断开，请重试。')+(response?.traceId?' [诊断 '+response.traceId+']':''));error.code=response?.code;error.traceId=response?.traceId;reject(error);}
+        else if (!response?.ok) {const error=new Error((response?.error||'插件连接已断开，请重试。')+(response?.traceId&&response?.code!=='NOT_CONFIGURED'?' [诊断 '+response.traceId+']':''));error.code=response?.code;error.traceId=response?.traceId;reject(error);}
         else {if(response.traceId&&response.data&&typeof response.data==='object')resultDiagnostics.set(response.data,response.traceId);resolve(response.data);}
       }); } catch(error) { reject(error); }
     });
@@ -243,7 +243,7 @@
     if(!sentenceGroups.enabled||!state.enabled||state.emergency){removeStructureControl();return;}
     if(state.settings.assistanceMode==='on-demand'){setTaskStatus('structure',null);updateStructureCard();return;}
     const paused=state.paused||document.visibilityState!=='visible',busy=sentenceGroups.status==='analyzing'||sentenceGroups.status==='queued';
-    const error=Boolean(sentenceGroups.error)||!state.providerConfigured,copy=sentenceGroups.error?'阅读解构未完成 · '+sentenceGroups.error:!state.providerConfigured?'请先连接服务，再开启阅读解构':!paused&&busy?'正在解构正文':null;
+    const error=Boolean(sentenceGroups.error)||!state.providerConfigured,copy=sentenceGroups.error?'阅读解构未完成 · '+sentenceGroups.error:!state.providerConfigured?'连接模型后才能开启阅读解构':!paused&&busy?'正在解构正文':null;
     setTaskStatus('structure',copy,{error,busy:busy&&!paused});updateStructureCard();
   }
   function applySentenceDensity(density){if(!['coarse','medium','fine'].includes(density))throw new Error('无效的解构粒度。');sentenceGroups.density=density;renderSentenceGroups();return status();}
@@ -347,7 +347,7 @@
   async function setSentenceGroups(enabled){
     if(typeof enabled!=='boolean')throw new Error('无效的阅读解构设置。');
     if(enabled){const mode=await request('SENTENCE_GROUPS_GET');sentenceGroups.density=mode.density||'medium';sentenceGroups.lineStyle=mode.lineStyle||'solid';sentenceGroups.mark=globalThis.ShisuiDesign.sentenceMarkMode?.(mode.mark)||'underline';if(!state.providerConfigured){const snapshot=await request('STATE_GET');state.settings=snapshot.settings;state.providerConfigured=Boolean(snapshot.providerConfigured);}}
-    if(enabled&&!state.providerConfigured){sentenceGroups.enabled=false;stopSentenceGroups(true);throw new Error('辅助服务尚未连接，无法开启阅读解构。');}
+    if(enabled&&!state.providerConfigured){sentenceGroups.enabled=false;stopSentenceGroups(true);throw new Error('还没有连接模型，无法开启阅读解构。');}
     sentenceGroups.enabled=enabled;if(!enabled){stopSentenceGroups(true);return status();}
     sentenceGroups.generation++;sentenceGroups.status=automatic()?'queued':'idle';sentenceGroups.error='';updateStructureControl();scheduleSentenceRender();scheduleSentenceScan(0);return status();
   }
@@ -975,7 +975,7 @@
     view.knownWordId=()=>view.support?.wordId||view.target.support?.wordId||view.target.prepared?.wordId||view.target.requestedRecord?.target?.wordId||''
     view.known=cardButton(card,'我已认识',()=>void setWordKnown(view.knownWordId(),view.target.text,view.known));view.known.className='known-action';view.known.hidden=!view.knownWordId();
     view.retry=cardButton(card,'重试',()=>{if(view.retries<2){view.retries++;void assist(view,view.level,true,view.detail);}});view.retry.hidden=true;
-    view.repair=cardButton(card,'连接或修复服务',()=>void request('OPEN_OPTIONS'));view.repair.hidden=true;
+    view.repair=cardButton(card,'连接或修复服务',()=>void request('OPEN_OPTIONS',{section:'service'}));view.repair.hidden=true;
     cardButton(card,'收起',closeCard).className='dismiss';
     const more=document.createElement('details'),summary=document.createElement('summary');summary.textContent='更多';more.append(summary);card.append(more);
     const convo=document.createElement('div');convo.className='conversation';convo.hidden=true;
@@ -1087,6 +1087,8 @@
     const mapping=textMap(block);let anchor=rangeFor(mapping,0,Math.min(mapping.text.length,200));if(!anchor){anchor=document.createRange();anchor.selectNodeContents(block);anchorRect||=block.getBoundingClientRect();}
     return {text:anchor.toString(),context:'',kind:'passage',block,sourceText:mapping.text,anchor,anchorRect,generation:state.generation};
   }
+  // 没连接模型不是一次失败：不报错、不给重试和追问，只留下去连接的入口。
+  function showNeedsModel(view){view.needsModel=true;view.explanation.replaceChildren();view.answer.classList.remove('error');view.answer.setAttribute('aria-busy','false');view.answer.textContent='还没有连接模型。连接后就能查词和翻译，只需设置一次。';view.sentence.hidden=true;view.rescue.hidden=true;view.known.hidden=true;view.retry.hidden=true;view.wrong.closest('details').hidden=true;view.convo.hidden=true;view.repair.textContent='连接模型';view.repair.hidden=false;positionCard(view);}
   function showLocalFeedback(target,message,{busy=false,showSource=true}={}){
     const view=renderHelpCard(target,message);view.answer.classList.toggle('error',!busy);view.answer.setAttribute('aria-busy',String(busy));view.sentence.hidden=true;view.rescue.hidden=true;view.known.hidden=true;view.wrong.closest('details').hidden=true;
     if(!showSource)view.card.querySelector('.source-heading').hidden=true;
@@ -1119,7 +1121,7 @@
       if(!current())return;stored.support=support;record.target.manualSupport=support;
       if(support){Object.assign(record.target,support);state.assisted.add(identity(support));syncRecordPresentation(record);}
       if(lookup.taskRequestId===requestId)setTaskStatus('lookup',null);closeCard();
-    }catch(error){reportResult(received,current()?'error':'cancelled');if(current()&&lookup.taskRequestId===requestId){const message=error.message||'查词失败，请重试。';view.answer.textContent=message;view.answer.classList.add('error');view.answer.setAttribute('aria-busy','false');view.note.textContent=confirmed?'已确认词注保留。':'';view.retry.hidden=false;view.retry.onclick=()=>{if(state.card===view&&surface===readingScope()&&validTarget(target))void assistInline(target,level);};positionCard(view);setTaskStatus('lookup',message,{error:true});}}
+    }catch(error){reportResult(received,current()?'error':'cancelled');if(current()&&lookup.taskRequestId===requestId&&error.code==='NOT_CONFIGURED')showNeedsModel(view);else if(current()&&lookup.taskRequestId===requestId){const message=error.message||'查词失败，请重试。';view.answer.textContent=message;view.answer.classList.add('error');view.answer.setAttribute('aria-busy','false');view.note.textContent=confirmed?'已确认词注保留。':'';view.retry.hidden=false;view.retry.onclick=()=>{if(state.card===view&&surface===readingScope()&&validTarget(target))void assistInline(target,level);};positionCard(view);setTaskStatus('lookup',message,{error:true});}}
     finally{if(!current()&&lookup.taskRequestId===requestId)setTaskStatus('lookup',null);if(state.card===view&&(surface!==readingScope()||!validTarget(target)))closeCard();if(record.inlineRequestId===requestId)record.inlineRequestId=null;}
   }
   async function assist(view,level,bypassCache=false,detail='brief'){
@@ -1184,7 +1186,7 @@
       if(record&&view.support){Object.assign(record.target,view.support);syncRecordPresentation(record);}
       if(cardCurrent()&&view.knownWordId())view.known.hidden=false;
       if(detail==='brief'&&confirmed&&prepared){if(cardCurrent())view.refreshPreparedOnClose=true;else void refreshPreparedNow().catch(()=>{});}if(detail==='brief'&&view.pendingDetails&&cardCurrent()&&view.sentence.open)void expandDetails(view);
-    }catch(error){reportResult(receivedResult,'error');fullFinished=true;if(cardCurrent()){setTaskStatus('lookup',error.message||'获取帮助失败，请重试。',{error:true});view.assistFinished=true;if(view.hasUnconfirmedProgress)restoreProgressBackup(view);if(!view.confirmedDisplayed)view.sentenceTranslation.textContent='未能获取本句翻译，请重试。';if(view.confirmedDisplayed||view.referenceDisplayed)view.note.textContent=[view.note.textContent,error.message,view.confirmedDisplayed?'已确认内容保留；可重新请求解释。':'旧参考义保留，尚未按当前语境确认。'].filter(Boolean).join(' ');else{view.explanation.replaceChildren();view.answer.textContent=error.message;view.answer.classList.add('error');}view.retry.textContent=prepared?'重新请求解释':'重试';view.retry.hidden=view.retries>=2;view.repair.hidden=false;positionCard(view);}}
+    }catch(error){reportResult(receivedResult,'error');fullFinished=true;if(cardCurrent()&&error.code==='NOT_CONFIGURED'){view.assistFinished=true;showNeedsModel(view);}else if(cardCurrent()){setTaskStatus('lookup',error.message||'获取帮助失败，请重试。',{error:true});view.assistFinished=true;if(view.hasUnconfirmedProgress)restoreProgressBackup(view);if(!view.confirmedDisplayed)view.sentenceTranslation.textContent='未能获取本句翻译，请重试。';if(view.confirmedDisplayed||view.referenceDisplayed)view.note.textContent=[view.note.textContent,error.message,view.confirmedDisplayed?'已确认内容保留；可重新请求解释。':'旧参考义保留，尚未按当前语境确认。'].filter(Boolean).join(' ');else{view.explanation.replaceChildren();view.answer.textContent=error.message;view.answer.classList.add('error');}view.retry.textContent=prepared?'重新请求解释':'重试';view.retry.hidden=view.retries>=2;view.repair.hidden=false;positionCard(view);}}
   }
   function markRequestedTarget(target){
       if(target.sourceKey||target.explicitDisplay||target.kind==='passage')return;
@@ -1473,7 +1475,7 @@
         else{
           view.panel.style.setProperty('color','var(--danger)','important');
           const feedbackTarget={text:target.text,context:'',kind:'passage',block:target.block,sourceText:target.blocks[0].sourceText,anchor:target.range.cloneRange(),generation:target.generation};
-          feedbackTarget.onClose=()=>removePassagePanel(view.panel);const feedback=showLocalFeedback(feedbackTarget,message,{showSource:false});feedback.passageErrorPanel=view.panel;feedback.retry.hidden=false;feedback.retry.onclick=()=>{if(!validPassageTarget(target))return;closeCard();void translatePassage(target);};
+          feedbackTarget.onClose=()=>removePassagePanel(view.panel);const feedback=showLocalFeedback(feedbackTarget,message,{showSource:false});feedback.passageErrorPanel=view.panel;feedback.retry.hidden=false;feedback.retry.onclick=()=>{if(!validPassageTarget(target))return;closeCard();void translatePassage(target);};if(error.code==='NOT_CONFIGURED')showNeedsModel(feedback);
         }
       }else removePassagePanel(view.panel);
     }

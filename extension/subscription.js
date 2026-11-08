@@ -66,8 +66,8 @@ function createConnector({host,label,cliName,loginHosts}) {
       const reason = chrome.runtime.lastError?.message || '';
       const missing = /not found|not registered|forbidden/i.test(reason);
       disconnect(current,new Error(missing
-        ? `未找到或未授权本地 ${label} 连接器。请按安装说明安装，然后点击“刷新连接”。`
-        : `本地 ${label} 连接器已断开。请确认 Node.js${cliName ? ` 和 ${cliName}` : ''} 可用，再点击“刷新连接”。`));
+        ? `未找到或未授权本地 ${label} 连接器。请按下方步骤安装，然后点击“刷新账户与模型”。`
+        : `本地 ${label} 连接器已断开。请确认 Node.js${cliName ? ` 和 ${cliName}` : ''} 可用，再点击“刷新账户与模型”。`));
     });
     current.onMessage.addListener(message => {
       if (state.port !== current) return;

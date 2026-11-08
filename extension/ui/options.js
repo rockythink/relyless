@@ -1,8 +1,8 @@
 import {DOMAINS, request, activeApiProvider, errorText, setResult, parseOrigin, downloadJson, upsertSiteEntry} from '../shared.js';
 import {parseRulePack} from '../rule-pack.js';
-import {API_PROVIDERS, getApiProvider, apiProviderBaseUrl, apiProviderDefaultModel, apiProviderDefaultModels, normalizeApiService, apiServiceOrigins, JUDGMENT_PROTOCOLS} from '../api-providers.mjs';
+import {API_PROVIDERS, getApiProvider, apiProviderBaseUrl, apiProviderDefaultModel, apiProviderDefaultModels, normalizeApiService, apiServiceOrigins, JUDGMENT_PROTOCOLS, serviceSetupNeeded} from '../api-providers.mjs';
 import {createProviderPicker} from './provider-picker.js';
-import {serviceCatalog} from './options-service-catalog.js';
+import {serviceCatalog, CATALOG_TEMPLATES} from './options-service-catalog.js';
 import {VIDEO_SUPPORT_ENABLED} from '../activation.js';
 import {isSubscriptionKind,nativeKind} from '../subscription.js';
 
@@ -12,11 +12,11 @@ const optionsSourceLabels = {personalized:'个性化倾向',manual:'当前页手
 const diagnosticOperationLabels = {SENTENCE_GROUPS_BATCH:'阅读解构',HISTORY_SUMMARY:'阅读摘要',PERSONALIZATION_ANALYZE:'个性化分析',ASSIST_COMMIT:'帮助记录提交',ASSIST:'阅读辅助',SUPPORT_BATCH:'批量辅助',PASSAGE_TRANSLATE:'选段翻译',EMERGENCY_TRANSLATE:'整页翻译',RESOLVE_DOMAIN:'领域识别',PROVIDER_TEST:'服务测试',CONNECTION:'连接器通信',ANALYZE:'本机分析',PREPARED_ASSIST:'预备辅助',PREPARED_SUPPORT:'预备解释'};
 const diagnosticStageLabels = {request:'请求',provider:'服务',first_content:'首段内容',validation:'校验',render:'呈现',connection:'连接',rpc:'通信',stderr:'连接器错误'};
 const diagnosticStatusLabels = {start:'开始',ok:'完成',error:'失败',cancelled:'已取消'};
-const diagnosticCodeLabels = {STARTUP_FAILED:'连接器启动失败',RPC_TIMEOUT:'连接器通信超时',TURN_FAILED:'模型处理失败',UNKNOWN:'其他异常',OK:'处理完成',LOCAL_RESULT:'使用本机结果',CACHE_HIT:'使用本机缓存',TIMEOUT:'请求超时',NETWORK:'网络错误',AUTH:'服务认证失败',RATE_LIMIT:'请求过于频繁',MODEL_INVALID:'模型不可用',OUTPUT_LIMIT:'输出达到长度上限',PROVIDER_ERROR:'服务生成失败',INVALID_RESPONSE:'服务响应无效',INCOMPATIBLE_REQUEST:'请求参数不兼容',SCHEMA_UNSUPPORTED:'不支持严格结构化输出',THINKING_REQUIRED:'模型无法关闭思考',HTTP:'服务请求失败',JSON_INVALID:'响应解析失败',OUTPUT_INVALID:'响应格式无效',BATCH_SHAPE:'批次格式无效',BATCH_COUNT:'批次数量不符',ITEM_FIELDS:'结果字段无效',ITEM_ID:'结果标识无效',ITEM_DUPLICATE:'结果重复',TRANSLATION_TYPE:'译文类型无效',TRANSLATION_EMPTY:'译文为空',TRANSLATION_WHITESPACE:'译文含首尾空白',TRANSLATION_LENGTH:'译文长度异常',TRANSLATION_NO_HAN:'译文不含汉字',STALE:'请求状态已过期',CANCELLED:'请求已取消',NOT_READY:'服务尚未准备',DISCONNECTED:'连接器已断开',NATIVE_START:'连接器已启动',NATIVE_EXIT:'连接器已退出',NATIVE_RPC:'连接器通信失败',NATIVE_STDERR:'连接器报告错误',STDERR_AUTH:'连接器认证失败',STDERR_RATE_LIMIT:'连接器请求过频',STDERR_TIMEOUT:'连接器处理超时',STDERR_UNKNOWN:'连接器未知错误',STORAGE_ERROR:'本机存储失败',RENDER_INVALID:'呈现数据无效',NOT_DISPLAYED:'结果未能呈现',INTERRUPTED:'请求意外中断',SLOW_REQUEST:'请求耗时较长',REPEATED_FAILURE:'同类请求多次失败',FAILOVER:'服务故障转移',LOCAL_FALLBACK:'本机模型回落'};
+const diagnosticCodeLabels = {STARTUP_FAILED:'连接器启动失败',RPC_TIMEOUT:'连接器通信超时',TURN_FAILED:'模型处理失败',UNKNOWN:'其他异常',OK:'处理完成',LOCAL_RESULT:'使用本机结果',CACHE_HIT:'使用本机缓存',TIMEOUT:'请求超时',NETWORK:'网络错误',AUTH:'服务认证失败',RATE_LIMIT:'请求过于频繁',MODEL_INVALID:'模型不可用',OUTPUT_LIMIT:'输出达到长度上限',PROVIDER_ERROR:'服务生成失败',INVALID_RESPONSE:'服务响应无效',INCOMPATIBLE_REQUEST:'请求参数不兼容',SCHEMA_UNSUPPORTED:'不支持严格结构化输出',THINKING_REQUIRED:'模型无法关闭思考',HTTP:'服务请求失败',JSON_INVALID:'响应解析失败',OUTPUT_INVALID:'响应格式无效',BATCH_SHAPE:'批次格式无效',BATCH_COUNT:'批次数量不符',ITEM_FIELDS:'结果字段无效',ITEM_ID:'结果标识无效',ITEM_DUPLICATE:'结果重复',TRANSLATION_TYPE:'译文类型无效',TRANSLATION_EMPTY:'译文为空',TRANSLATION_WHITESPACE:'译文含首尾空白',TRANSLATION_LENGTH:'译文长度异常',TRANSLATION_NO_HAN:'译文不含汉字',STALE:'请求状态已过期',CANCELLED:'请求已取消',NOT_READY:'服务尚未准备',NOT_CONFIGURED:'模型未连接',DISCONNECTED:'连接器已断开',NATIVE_START:'连接器已启动',NATIVE_EXIT:'连接器已退出',NATIVE_RPC:'连接器通信失败',NATIVE_STDERR:'连接器报告错误',STDERR_AUTH:'连接器认证失败',STDERR_RATE_LIMIT:'连接器请求过频',STDERR_TIMEOUT:'连接器处理超时',STDERR_UNKNOWN:'连接器未知错误',STORAGE_ERROR:'本机存储失败',RENDER_INVALID:'呈现数据无效',NOT_DISPLAYED:'结果未能呈现',INTERRUPTED:'请求意外中断',SLOW_REQUEST:'请求耗时较长',REPEATED_FAILURE:'同类请求多次失败',FAILOVER:'服务故障转移',LOCAL_FALLBACK:'本机模型回落'};
 const optionsIds = ['section-title','save-state','global-error','reading-domain','lookup-key','passage-delay','passage-delay-field','automation-all-sites','automation-video-sites','automation-site-form','automation-site-origin','automation-result','automation-site-list','automation-site-empty','keyword-hints-badge','keyword-hints-form','keyword-hints-keywords','keyword-hints-result','keyword-hints-dismissed-list','keyword-hints-dismissed-empty','rule-pack-form','rule-pack-json','rule-pack-result','rule-pack-list','rule-pack-empty','routing-enabled','routing-fields','routing-premium','routing-confidence','routing-ttl','routing-stats','request-concurrency','settings-search','search-results','video-font-size','video-theme','detection-chatgpt','detection-api','detection-subscription-model','detection-model-note','detection-use-translation-api','detection-api-model','detection-api-fields','detection-api-url','detection-api-key','detection-key-state','clear-detection-key','detection-jev','detection-jev-provider','detection-jev-provider-note','detection-jev-model','detection-jev-url','detection-jev-key','detection-jev-key-state','clear-detection-jev-key','save-recognition','domain-test-text','run-domain-test','domain-test-result','domain-rule-form','rule-host','rule-path','rule-domain','rule-subdomains','domain-rule-result','domain-rule-list','domain-rule-empty','term-form','term-source','term-translation','term-domain','term-list','term-empty','subscription-panel','api-panel','subscription-dot','subscription-state','subscription-detail','refresh-subscription','subscription-account','subscription-email','subscription-plan','subscription-model','subscription-model-note','login-subscription','cancel-subscription','logout-subscription','test-subscription','subscription-result','install-command','copy-install-command','provider-form','provider-url','provider-model','provider-keys','key-state','check-all-keys','test-provider','disconnect-provider','provider-result','remember-support','keyboard-nav','pdf-reader','export-data','clear-memory','data-result','usage-list','usage-empty','usage-total','usage-clear','usage-result','open-extension-manager','help-language','api-service-select','new-api-service','provider-name','delete-api-service','cancel-api-service', 'reading-style-preview', 'reset-reading-style', 'diagnostics-storage-error','diagnostics-enabled','diagnostics-recording-note','diagnostics-native-dot','diagnostics-native-state','diagnostics-native-note','diagnostics-requests','diagnostics-failures','diagnostics-slow','diagnostics-pending','diagnostics-updated','diagnostics-issues','diagnostics-issues-empty','diagnostics-events','diagnostics-events-empty','export-diagnostics','clear-diagnostics','diagnostics-result']
 const optionsEls = Object.fromEntries(optionsIds.map(id => [id.replace(/-([a-z])/g,(_match,char)=>char.toUpperCase()),document.querySelector(`#${id}`)]));
 optionsEls.dataProblem = document.querySelector('#data-problem');
-Object.assign(optionsEls,Object.fromEntries(['provider-id','provider-key-link','provider-fields','provider-model-list','provider-model-note','list-provider-models','provider-fallback','usage-budget','nano-dot','nano-state','nano-detail','nano-download','nano-refresh','nano-result','nano-progress'].map(id=>[id.replace(/-([a-z])/g,(_match,char)=>char.toUpperCase()),document.querySelector('#'+id)])));
+Object.assign(optionsEls,Object.fromEntries(['provider-id','provider-key-link','provider-fields','provider-model-list','provider-model-note','list-provider-models','provider-fallback','usage-budget','nano-dot','nano-state','nano-detail','nano-download','nano-refresh','nano-result','nano-progress','provider-advanced-fields','provider-advanced-body','provider-url-field','provider-url-slot','provider-permission-note','service-ready','nav-service-status','connector-prereq'].map(id=>[id.replace(/-([a-z])/g,(_match,char)=>char.toUpperCase()),document.querySelector('#'+id)])));
 Object.assign(optionsEls,Object.fromEntries(['persist-translation-cache','clear-translation-cache','translation-cache-result'].map(id=>[id.replace(/-([a-z])/g,(_match,char)=>char.toUpperCase()),document.querySelector('#'+id)])));
 const optionsMissing = Object.entries(optionsEls).filter(([, element]) => !element).map(([key]) => key);
 if (optionsMissing.length) throw new Error('设置页缺少元素：' + optionsMissing.join(', '));
@@ -33,6 +33,8 @@ const optionsSentenceAllSites=document.querySelector('#sentence-groups-all-sites
 const optionsSentencePreview=document.querySelector('#sentence-structure-preview');
 const optionsSentencePreviewSource=document.querySelector('#sentence-preview-source');
 const ALL_HOSTS=['http://*/*','https://*/*'];
+const OPTIONS_CUSTOM_PROVIDERS=new Set(['openai-compatible','open-responses']);
+const optionsOpenedBare=!location.hash.slice(1);
 const optionsStructureHighlightNames=new Set();
 const optionsReadingLayers = ['original','annotation','translation'];
 const optionsReadingControls = Object.fromEntries(optionsReadingLayers.map(layer => [layer,{
@@ -53,6 +55,7 @@ let optionsAutomation = null;
 let optionsModels = [];
 let optionsProviderDirty = false;let optionsDraftServiceId=null;let optionsDisplayedServiceId=null;
 let optionsProviderModels=[];
+let optionsAwaitingFirstConnection=false;
 const optionsDraftPermissionPatterns=new Set();
 let optionsDetectionDirty = false;
 let optionsSubscriptionBusy = false;
@@ -237,6 +240,7 @@ function optionsRenderSubscription(){
   compatibility.textContent=kind==='grok'?'兼容直连：复用官方 Grok CLI 公开 OAuth 客户端 ID，不是 RelyLess 的官方注册；第三方使用不获保证，可能失效。请求以 RelyLess 标识；X-XAI-Token-Auth: xai-grok-cli 仅表示兼容凭证方案，不冒充 CLI。不自动改用付费 API Key。':'注意：Antigravity FAQ 限制第三方工具使用。现有 Google 通道与配置保持不变，不自动迁移。';
   optionsEls.loginSubscription.setAttribute('aria-describedby',kind==='chatgpt'?'connector-login-help':'subscription-compatibility-note');
   optionsEls.installCommand.textContent=`node connector/install.mjs --extension-id ${chrome.runtime.id} --backend ${kind}`;
+  optionsEls.connectorPrereq.textContent=kind==='antigravity'?'安装 Node.js 20 或更高版本，以及官方 Antigravity CLI（agy）':'安装 Node.js 20 或更高版本';
   document.getElementById('connector-login-help').textContent=kind==='chatgpt'?'ChatGPT 通过官方 Sign in with ChatGPT（OAuth）授权；首次从旧连接器切换需重新登录，之后更新保留本机 SIWC 登录。令牌仅由本机连接器保管，不进入浏览器。连接失效时重新运行安装命令并刷新。':kind==='grok'?'安装后使用设备码重新登录，不导入或删除旧 Grok CLI 凭证；后续更新保留本机直连登录。无需安装或运行 CLI，令牌只由本机连接器保管，不进入浏览器。连接失效时重新运行安装命令并刷新。':'Google 仍使用官方 Antigravity CLI（agy）。首次使用前在终端运行 agy，按提示用 Google 账号（Google AI Pro / Ultra 订阅）完成登录，再回扩展刷新。现有配置与登录数据保留；Antigravity FAQ 限制第三方工具使用。';
   const install=document.getElementById('connector-install');
   if(install.dataset.connected!==String(connected)){install.open=!connected;install.dataset.connected=String(connected);}
@@ -262,11 +266,14 @@ function optionsDiscardProviderDraft(){
   if(!optionsEls.providerKeys.value.trim()){optionsProviderDirty=false;return true;}
   return confirm('表单有未保存的更改。确定放弃这些更改吗？');
 }
-function optionsProviderOptions(){return Object.fromEntries([...optionsEls.providerFields.querySelectorAll('[data-provider-option]')].map(input=>[input.dataset.providerOption,input.value.trim()]));}
+function optionsProviderOptions(){return Object.fromEntries([...optionsEls.providerForm.querySelectorAll('[data-provider-option]')].map(input=>[input.dataset.providerOption,input.value.trim()]));}
 function optionsRenderProviderFields(meta,values={}){
-  optionsEls.providerFields.replaceChildren();
-  for(const field of meta.fields||[]){const label=document.createElement('label');label.className='field';const title=document.createElement('span');title.textContent=field.label;let input;if(field.type==='select'){input=document.createElement('select');for(const choice of field.options||[])input.append(new Option(choice.label,choice.value));}else{input=document.createElement('input');input.type='text';input.autocomplete='off';input.spellcheck=false;if(field.placeholder)input.placeholder=field.placeholder;}input.dataset.providerOption=field.key;input.value=values[field.key]??field.defaultValue??'';input.required=true;input.addEventListener('input',()=>{optionsProviderDirty=true;if(meta.id==='azure'&&(field.key==='resourceName'||field.key==='apiMode'))optionsEls.providerUrl.value=apiProviderBaseUrl(meta.id,optionsProviderOptions());});input.addEventListener('change',()=>{optionsProviderDirty=true;if(meta.id==='azure'||meta.id==='bedrock'||meta.id==='stepfun')optionsEls.providerUrl.value=apiProviderBaseUrl(meta.id,optionsProviderOptions());if(meta.id==='stepfun'&&field.key==='plan'){const model=optionsEls.providerModel.value.trim();if(!model||apiProviderDefaultModels('stepfun').has(model))optionsEls.providerModel.value=apiProviderDefaultModel('stepfun',optionsProviderOptions());}});label.append(title,input);if(field.hint){const hint=document.createElement('small');hint.textContent=field.hint;label.append(hint);}optionsEls.providerFields.append(label);}
+  optionsEls.providerFields.replaceChildren();optionsEls.providerAdvancedFields.replaceChildren();
+  for(const field of meta.fields||[]){const label=document.createElement('label');label.className='field';const title=document.createElement('span');title.textContent=field.label;let input;if(field.type==='select'){input=document.createElement('select');for(const choice of field.options||[])input.append(new Option(choice.label,choice.value));}else{input=document.createElement('input');input.type='text';input.autocomplete='off';input.spellcheck=false;if(field.placeholder)input.placeholder=field.placeholder;}input.dataset.providerOption=field.key;input.value=values[field.key]??field.defaultValue??'';input.required=true;input.addEventListener('input',()=>{optionsProviderDirty=true;if(meta.id==='azure'&&(field.key==='resourceName'||field.key==='apiMode'))optionsEls.providerUrl.value=apiProviderBaseUrl(meta.id,optionsProviderOptions());});input.addEventListener('change',()=>{optionsProviderDirty=true;if(meta.id==='azure'||meta.id==='bedrock'||meta.id==='stepfun')optionsEls.providerUrl.value=apiProviderBaseUrl(meta.id,optionsProviderOptions());if(meta.id==='stepfun'&&field.key==='plan'){const model=optionsEls.providerModel.value.trim();if(!model||apiProviderDefaultModels('stepfun').has(model))optionsEls.providerModel.value=apiProviderDefaultModel('stepfun',optionsProviderOptions());}});label.append(title,input);if(field.hint){const hint=document.createElement('small');hint.textContent=field.hint;label.append(hint);}(field.key==='thinking'?optionsEls.providerAdvancedFields:optionsEls.providerFields).append(label);}
 }
+function optionsProviderDefaultUrl(id,options){return OPTIONS_CUSTOM_PROVIDERS.has(id)?'':apiProviderBaseUrl(id,options);}
+// 内置服务商的地址是固定的，放在高级设置；自定义服务必须自己填，放在主表单。
+function optionsPlaceProviderUrl(){const custom=OPTIONS_CUSTOM_PROVIDERS.has(optionsEls.providerId.value),target=custom?optionsEls.providerUrlSlot:optionsEls.providerAdvancedBody;if(optionsEls.providerUrlField.parentElement!==target)target.prepend(optionsEls.providerUrlField);optionsEls.providerUrl.placeholder=custom?'https://api.your-provider.com/v1':'';}
 function optionsRenderProvider(selectedServiceId = null){
   if(selectedServiceId!==null)optionsDisplayedServiceId=selectedServiceId;
   const kind=optionsProviderKind(),radio=document.querySelector('input[name="provider-kind"][value="'+kind+'"]');if(radio)radio.checked=true;
@@ -289,7 +296,7 @@ function optionsRenderProvider(selectedServiceId = null){
     optionsEls.providerId.value=meta.id;
     optionsRenderProviderFields(meta,provider?.options||{});
     optionsEls.providerName.value=provider?.name||meta.name;
-    optionsEls.providerUrl.value=provider?.baseUrl||apiProviderBaseUrl(meta.id,provider?.options||{});
+    optionsEls.providerUrl.value=provider?.baseUrl||optionsProviderDefaultUrl(meta.id,provider?.options||{});
     optionsEls.providerModel.value=provider?.model||apiProviderDefaultModel(meta.id,provider?.options||{});
     optionsEls.providerKeys.value=(provider?.apiKeys||[]).join('\n');
     optionsEls.providerFallback.value=provider?.fallbackServiceId||'';
@@ -297,19 +304,29 @@ function optionsRenderProvider(selectedServiceId = null){
   }
   optionsProviderPicker.sync();
   const meta=getApiProvider(optionsEls.providerId.value),hasKey=Boolean(provider?.apiKey||(provider?.apiKeys&&provider.apiKeys.length));
-  optionsEls.providerKeyLink.hidden=!meta?.apiKeyUrl;
-  optionsEls.providerKeyLink.href=meta?.apiKeyUrl||'#';
+  const keyUrl=meta?.apiKeyUrl||(meta?.keyOptional?'':CATALOG_TEMPLATES.find(item=>item.id===meta?.id)?.website)||'';
+  optionsEls.providerKeyLink.hidden=!keyUrl;
+  optionsEls.providerKeyLink.href=keyUrl||'#';
+  optionsPlaceProviderUrl();
   const keyCount=(provider?.apiKeys||[]).length;
-  optionsEls.providerKeys.placeholder=meta?.keyOptional?'可选；本地服务可不填密钥':('每行一个密钥，最多 8 个'+(hasKey?'；当前已保存 '+keyCount+' 个':''));
-  optionsEls.keyState.textContent=meta?.keyOptional?'本地服务可不填密钥；填写后也只用于此服务。':keyCount>1?'已保存 '+keyCount+' 个密钥；请求按权重轮询，失败自动切换，约 1 分钟后恢复。':hasKey?'密钥保存在本机；更换服务商或域名不会带入。':'密钥只用于此服务，不会复制到其他服务。';
+  optionsEls.providerKeys.placeholder=meta?.keyOptional?'可选；本地服务可不填密钥':('粘贴 API Key；有多个时每行一个'+(hasKey?'，当前已保存 '+keyCount+' 个':''));
+  optionsEls.keyState.textContent=meta?.keyOptional?'本地服务可不填密钥；填写后也只用于此服务。':keyCount>1?'已保存 '+keyCount+' 个密钥；请求按权重轮询，失败自动切换，约 1 分钟后恢复。':hasKey?'密钥保存在本机；更换服务商或域名不会带入。':'只保存在这台电脑的浏览器里，请求时直接发给这个服务。';
   if(displayed&&JUDGMENT_PROTOCOLS.includes(getApiProvider(displayed.providerId)?.protocol))optionsEls.keyState.textContent='旧判定连接不能用于翻译；请在高级设置 → 领域识别重新配置判定密钥，再删除此旧连接。';
-  optionsEls.providerModelList.replaceChildren(new Option(optionsProviderModels.length?'选择已获取的模型':'获取后选择',''),...optionsProviderModels.map(model=>new Option(model.name||model.id,model.id)));
-  optionsEls.providerModelNote.textContent=optionsProviderModels.length?'已获取 '+optionsProviderModels.length+' 个模型；仍可手动填写模型 ID。':'也可直接填写模型 ID。';
+  optionsEls.providerModelList.hidden=!optionsProviderModels.length;optionsEls.providerModelList.replaceChildren(new Option('选择模型',''),...optionsProviderModels.map(model=>new Option(model.name||model.id,model.id)));
+  optionsEls.providerModelNote.textContent=optionsProviderModels.length?'已获取 '+optionsProviderModels.length+' 个模型；仍可手动填写模型 ID。':(meta?.defaultModel?'已填好常用模型，一般不用改。':'填写服务商提供的模型 ID；填好 Key 后也可以获取列表。');
   optionsEls.testProvider.disabled=!isActiveDisplayed||!displayed?.apiKey||Boolean(optionsDraftServiceId)||optionsProviderDirty;
   optionsEls.checkAllKeys.disabled=!isActiveDisplayed||!displayed?.apiKeys?.length||Boolean(optionsDraftServiceId)||optionsProviderDirty;
+  optionsEls.checkAllKeys.hidden=keyCount<2;
   optionsEls.disconnectProvider.disabled=!displayed?.apiKey||Boolean(optionsDraftServiceId);
   optionsEls.deleteApiService.disabled=!displayed||Boolean(optionsDraftServiceId);
-  optionsEls.cancelApiService.hidden=!optionsDraftServiceId;
+  optionsEls.cancelApiService.hidden=!optionsDraftServiceId||serviceSetupNeeded(optionsState);
+  // 新建时只留填写和保存；已保存服务的切换、测试和移除在保存后才有意义。
+  const isDraft=Boolean(optionsDraftServiceId);
+  optionsEls.apiPanel.classList.toggle('is-draft',isDraft);
+  for(const element of document.querySelectorAll('.saved-service-only'))element.hidden=isDraft||!services.length;
+  document.querySelector('.service-selection').hidden=isDraft||services.length<2;
+  document.querySelector('.provider-identity').hidden=isDraft&&!OPTIONS_CUSTOM_PROVIDERS.has(optionsEls.providerId.value);
+  optionsEls.providerPermissionNote.hidden=!isDraft;
   optionsEls.newApiService.disabled=services.length>=20;
   const editor=document.getElementById('api-editor');
   if(!active||optionsDraftServiceId)editor.open=true;
@@ -361,6 +378,8 @@ function optionsRenderAppearance(){
 function optionsSelectAppearance(view){optionsAppearanceView=view;optionsRenderAppearance();}
 function optionsRenderPassageAction(){const action=optionsState.settings.passageAction||{open:'click',delay:600};for(const input of optionsPassageOpenInputs)input.checked=input.value===action.open;optionsEls.passageDelayField.hidden=action.open!=='hover';optionsEls.passageDelay.value=String(action.delay);}
 function optionsRenderAll(){
+  optionsEls.navServiceStatus.hidden=optionsState.providerConfigured!==false;
+  for(const element of document.querySelectorAll('.service-secondary'))element.hidden=serviceSetupNeeded(optionsState);
   optionsEls.readingDomain.value=optionsState.settings.domain||'auto';
   optionsRenderLookupKey();
   for(const input of optionsLookupDisplayInputs)input.checked=input.value===(optionsState.settings.lookupDisplay||'card');
@@ -413,7 +432,8 @@ function optionsCredentialPatterns(settings){const patterns=new Set();for(const 
 async function optionsRemoveUnusedPermissions(before,after){if(after.automation?.allSites||after.automation?.sentenceGroupsAllSites)return;const needed=optionsCredentialPatterns(after);for(const pattern of optionsCredentialPatterns(before))if(!needed.has(pattern))await chrome.permissions.remove({origins:[pattern]});}
 async function optionsEnsurePermission(pattern,needed){if(!needed)return false;const had=await chrome.permissions.contains({origins:[pattern]});const granted=had||await chrome.permissions.request({origins:[pattern]});if(!granted)throw new Error('未获得该服务域名的访问权限，配置尚未保存。');return !had;}
 function optionsCurrentProviderService({allowEmptyModel=false}={}){
-  const before=optionsState.settings,current=optionsDraftServiceId?null:(optionsState.settings.apiServices?.find(s=>s.id===optionsDisplayedServiceId)||activeApiProvider(before)),providerId=optionsEls.providerId.value,options=optionsProviderOptions(),baseUrl=optionsEls.providerUrl.value.trim()||apiProviderBaseUrl(providerId,options),pattern=optionsOriginPattern(baseUrl),sameCredentialScope=(current?.providerId||'openai-compatible')===providerId&&optionsOriginPattern(current?.baseUrl)===pattern;
+  const before=optionsState.settings,current=optionsDraftServiceId?null:(optionsState.settings.apiServices?.find(s=>s.id===optionsDisplayedServiceId)||activeApiProvider(before)),providerId=optionsEls.providerId.value,options=optionsProviderOptions(),baseUrl=optionsEls.providerUrl.value.trim()||optionsProviderDefaultUrl(providerId,options),pattern=optionsOriginPattern(baseUrl),sameCredentialScope=(current?.providerId||'openai-compatible')===providerId&&optionsOriginPattern(current?.baseUrl)===pattern;
+  if(!baseUrl)throw new Error('请填写 Base URL。');
   const draftKeys=[...new Set(optionsEls.providerKeys.value.split('\n').map(line=>line.trim()).filter(Boolean))].slice(0,8);
   const priorKeys=sameCredentialScope?(current?.apiKeys||[]):[];
   const keptKeys=draftKeys.length?draftKeys:priorKeys;
@@ -422,8 +442,15 @@ function optionsCurrentProviderService({allowEmptyModel=false}={}){
 }
 async function optionsCleanupDraftPermissions(){for(const pattern of optionsDraftPermissionPatterns){if(!optionsCredentialPatterns(optionsState.settings).has(pattern))await chrome.permissions.remove({origins:[pattern]}).catch(()=>{});}optionsDraftPermissionPatterns.clear();}
 async function optionsListProviderModels(){setResult(optionsEls.providerResult,'正在获取模型…');optionsEls.listProviderModels.disabled=true;let service,pattern,granted=false;try{service=optionsCurrentProviderService({allowEmptyModel:true});pattern=apiServiceOrigins(service)[0]+'/*';granted=await optionsEnsurePermission(pattern,true);if(granted)optionsDraftPermissionPatterns.add(pattern);const result=await request('API_MODELS_LIST',{service});optionsProviderModels=Array.isArray(result.models)?result.models.filter(model=>model&&typeof model.id==='string'):[];optionsRenderProvider();setResult(optionsEls.providerResult,optionsProviderModels.length?'已获取模型。可从列表选择，或继续手动填写 ID。':'服务商返回了空模型列表，请手动填写模型 ID。');}catch(error){if(granted){optionsDraftPermissionPatterns.delete(pattern);await chrome.permissions.remove({origins:[pattern]}).catch(()=>{});}setResult(optionsEls.providerResult,'无法获取模型：'+errorText(error)+' 仍可手动填写模型 ID。',true);}finally{optionsEls.listProviderModels.disabled=false;}}
+// 保存后立刻用公开样例测一次，让用户当场知道这个 Key 能不能用。
+async function optionsVerifySavedService(){
+  setResult(optionsEls.providerResult,'已保存，正在测试连接…');
+  try{const result=await request('PROVIDER_TEST');setResult(optionsEls.providerResult,`连接成功。测试结果：${result.hint}`);optionsEls.serviceReady.hidden=!optionsAwaitingFirstConnection;optionsAwaitingFirstConnection=false;}
+  catch(error){document.getElementById('api-editor').open=true;setResult(optionsEls.providerResult,`已保存，但连接测试没通过：${errorText(error)}`,true);}
+  finally{optionsRenderProvider();}
+}
 async function optionsSaveProvider(event){
-  event.preventDefault();setResult(optionsEls.providerResult,'');let service,pattern,granted=false;const before=structuredClone(optionsState.settings),current=optionsDraftServiceId?null:(optionsState.settings.apiServices?.find(s=>s.id===optionsDisplayedServiceId)||activeApiProvider(before));
+  event.preventDefault();setResult(optionsEls.providerResult,'');optionsEls.serviceReady.hidden=true;let service,pattern,granted=false;optionsAwaitingFirstConnection||=serviceSetupNeeded(optionsState);const before=structuredClone(optionsState.settings),current=optionsDraftServiceId?null:(optionsState.settings.apiServices?.find(s=>s.id===optionsDisplayedServiceId)||activeApiProvider(before));
   try{
     service=optionsCurrentProviderService();
     pattern=apiServiceOrigins(service)[0]+'/*';
@@ -445,7 +472,7 @@ async function optionsSaveProvider(event){
     }
     optionsRenderProvider();
     document.getElementById('api-editor').open=false;
-    setResult(optionsEls.providerResult,'已保存；其他服务配置保持不变。');
+    await optionsVerifySavedService();
   }
   catch(error){
     if(granted&&!optionsCredentialPatterns(optionsState.settings).has(pattern))await chrome.permissions.remove({origins:[pattern]}).catch(()=>{});
@@ -482,12 +509,18 @@ async function optionsSubscriptionAction(type){
   catch(error){if(optionsSubscriptionKind()===kind)setResult(optionsEls.subscriptionResult,errorText(error),true);}
   finally{optionsSubscriptionBusy=false;optionsRenderSubscription();}
 }
+// 还没有可用服务时，完成登录就等于选定这个订阅；已有可用服务时仍由「设为默认使用」决定。
+async function optionsAdoptSubscription(kind){
+  if(optionsState.providerConfigured)return;
+  if(kind!==optionsProviderKind()&&!await optionsSavePatch({providerKind:kind},'已切换至 '+optionsSubscriptionLabel(kind)+' 订阅'))return;
+  optionsEls.serviceReady.hidden=false;
+}
 chrome.runtime.onMessage.addListener((message,sender)=>{
   if(sender.id!==chrome.runtime.id||message?.type!=='SUBSCRIPTION_UPDATED'||!isSubscriptionKind(message.kind)||!message.subscription)return;
   const previous=optionsSubscriptionStatuses.get(message.kind);optionsSubscriptionStatuses.set(message.kind,message.subscription);
   if(!optionsState)return;
-  if(message.kind===optionsSubscriptionKind())optionsRenderSubscription();
-  if(message.subscription.authenticated&&!previous?.authenticated)void optionsLoadModels(false,message.kind);
+  if(message.kind===optionsSubscriptionKind()){optionsRenderSubscription();serviceCatalog.syncHeroDetail();}
+  if(message.subscription.authenticated&&!previous?.authenticated){void optionsLoadModels(false,message.kind);void optionsAdoptSubscription(message.kind);}
 });
 async function optionsExportData(){setResult(optionsEls.dataResult,'正在导出…');try{const payload=await request('READING_DATA_EXPORT');downloadJson(payload,`relyless-support-data-${new Date().toISOString().slice(0,10)}.json`);setResult(optionsEls.dataResult,'本机支持数据已导出。');}catch(error){setResult(optionsEls.dataResult,errorText(error),true);}}
 function optionsDiagnosticNumber(value){return Number.isFinite(value)&&value>=0?String(value):'—';}
@@ -530,7 +563,7 @@ optionsEls.cancelApiService.addEventListener('click',async()=>{if(!optionsDiscar
 optionsEls.apiServiceSelect.addEventListener('change',async()=>{const id=optionsEls.apiServiceSelect.value;if(!optionsDiscardProviderDraft()){optionsEls.apiServiceSelect.value=optionsDisplayedServiceId||optionsState.settings.activeApiServiceId||'';return;}const service=optionsState.settings.apiServices.find(item=>item.id===id);if(!service)return;try{await optionsCleanupDraftPermissions();await optionsEnsurePermission(optionsOriginPattern(service.baseUrl),true);optionsDraftServiceId=null;optionsDisplayedServiceId=id;optionsProviderDirty=false;optionsProviderModels=[];await optionsSavePatch({providerKind:'api',activeApiServiceId:id},'已切换到 '+service.name);if(serviceCatalog){serviceCatalog.userSelected=false;serviceCatalog.selectedKey=service.providerId||`saved:${service.id}`;serviceCatalog.sync();}optionsRenderProvider();}catch(error){optionsShowError(error);optionsRenderProvider();}});
 optionsEls.deleteApiService.addEventListener('click',async()=>{const services=optionsState.settings.apiServices||[];const target=services.find(s=>s.id===optionsDisplayedServiceId)||activeApiProvider(optionsState.settings);if(!target)return;const before=structuredClone(optionsState.settings),apiServices=before.apiServices.filter(service=>service.id!==target.id),next=apiServices[0];if(!confirm('删除“'+target.name+'”及其密钥？'+(next?'当前服务将切换到“'+next.name+'”。':'将不再使用任何 API 服务。')+'其他服务配置不会删除。'))return;const activeApiServiceId=optionsState.settings.activeApiServiceId===target.id?(next?.id||''):optionsState.settings.activeApiServiceId;if(await optionsSavePatch({apiServices,activeApiServiceId},'服务已删除')){optionsDisplayedServiceId=next?.id||null;optionsProviderDirty=false;await optionsRemoveUnusedPermissions(before,optionsState.settings);if(serviceCatalog){serviceCatalog.userSelected=false;serviceCatalog.sync();}optionsRenderProvider();}});
 optionsEls.providerName.addEventListener('input',()=>{optionsProviderDirty=true;});
-optionsEls.providerId.addEventListener('change',async()=>{if(!optionsDiscardProviderDraft()){optionsProviderDirty=false;optionsRenderProvider();return;}await optionsCleanupDraftPermissions();const meta=getApiProvider(optionsEls.providerId.value);optionsRenderProviderFields(meta);optionsEls.providerName.value=meta.name;optionsEls.providerUrl.value=apiProviderBaseUrl(meta.id,optionsProviderOptions());optionsEls.providerModel.value=apiProviderDefaultModel(meta.id,optionsProviderOptions());optionsEls.providerKeys.value='';optionsProviderModels=[];optionsProviderDirty=false;optionsRenderProvider();setResult(optionsEls.providerResult,'服务商已更改；密钥不会从原服务带入。');});
+optionsEls.providerId.addEventListener('change',async()=>{if(!optionsDiscardProviderDraft()){optionsProviderDirty=false;optionsRenderProvider();return;}await optionsCleanupDraftPermissions();const meta=getApiProvider(optionsEls.providerId.value);optionsRenderProviderFields(meta);optionsEls.providerName.value=meta.name;optionsEls.providerUrl.value=optionsProviderDefaultUrl(meta.id,optionsProviderOptions());optionsEls.providerModel.value=apiProviderDefaultModel(meta.id,optionsProviderOptions());optionsEls.providerKeys.value='';optionsProviderModels=[];optionsProviderDirty=false;optionsRenderProvider();setResult(optionsEls.providerResult,'服务商已更改；密钥不会从原服务带入。');});
 
 const optionsSearchIndex={};
 let optionsSearchReady=false,optionsSearchHits=[];
@@ -682,7 +715,7 @@ optionsEls.nanoDownload?.addEventListener('click',()=>{
 });
 void optionsRenderNano();
 
-optionsEls.providerForm.addEventListener('submit',optionsSaveProvider);[optionsEls.providerUrl,optionsEls.providerModel,optionsEls.providerKeys].forEach(input=>input.addEventListener('input',()=>{optionsProviderDirty=true;optionsProviderModels=[];setResult(optionsEls.providerResult,'表单有尚未保存的更改；测试只使用已保存配置。');}));optionsEls.providerModelList.addEventListener('change',()=>{if(!optionsEls.providerModelList.value)return;optionsEls.providerModel.value=optionsEls.providerModelList.value;optionsProviderDirty=true;setResult(optionsEls.providerResult,'已选择模型；保存后生效。');});optionsEls.listProviderModels.addEventListener('click',()=>void optionsListProviderModels());optionsEls.testProvider.addEventListener('click',()=>void optionsTestProvider(optionsEls.providerResult));
+optionsEls.providerForm.addEventListener('submit',optionsSaveProvider);[optionsEls.providerUrl,optionsEls.providerModel,optionsEls.providerKeys].forEach(input=>input.addEventListener('input',()=>{optionsProviderDirty=true;optionsProviderModels=[];if(!optionsDraftServiceId)setResult(optionsEls.providerResult,'表单有尚未保存的更改；测试只使用已保存配置。');}));optionsEls.providerModelList.addEventListener('change',()=>{if(!optionsEls.providerModelList.value)return;optionsEls.providerModel.value=optionsEls.providerModelList.value;optionsProviderDirty=true;setResult(optionsEls.providerResult,'已选择模型；保存后生效。');});optionsEls.listProviderModels.addEventListener('click',()=>void optionsListProviderModels());optionsEls.testProvider.addEventListener('click',()=>void optionsTestProvider(optionsEls.providerResult));
 async function optionsCheckAllKeys(){
   const current=activeApiProvider(optionsState.settings);
   const keys=(current?.apiKeys||[]);
@@ -716,6 +749,7 @@ chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local')return;i
 window.addEventListener('pagehide',()=>{void optionsCleanupDraftPermissions();});
 
 globalThis.optionsRenderSubscription=optionsRenderSubscription;
+globalThis.optionsSubscriptionAuthenticated=kind=>Boolean(optionsSubscriptionStatuses.get(kind)?.authenticated);
 globalThis.optionsSelectSubscription=()=>{const kind=optionsSubscriptionKind();setResult(optionsEls.subscriptionResult,'');optionsRenderSubscription();if(!optionsSubscriptionStatuses.has(kind))void optionsRefreshSubscription();};
 globalThis.optionsDiscardProviderDraft = optionsDiscardProviderDraft;
 globalThis.optionsSavePatch = optionsSavePatch;
@@ -740,11 +774,11 @@ globalThis.optionsStartDraftProvider = providerId => {
   optionsEls.providerId.value = meta.id;
   optionsRenderProviderFields(meta);
   optionsEls.providerName.value = meta.name;
-  optionsEls.providerUrl.value = apiProviderBaseUrl(meta.id, optionsProviderOptions());
+  optionsEls.providerUrl.value = optionsProviderDefaultUrl(meta.id, optionsProviderOptions());
   optionsEls.providerModel.value = apiProviderDefaultModel(meta.id, optionsProviderOptions());
   optionsEls.providerKeys.value = '';
   optionsRenderProvider();
-  setResult(optionsEls.providerResult, '请填写此服务的 API Key；保存后生效。');
+  setResult(optionsEls.providerResult, '');
 };
 
 async function optionsConsumePendingTerm(value){
@@ -759,5 +793,5 @@ chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&changes
 
 document.querySelectorAll('input[name="usage-days"]').forEach(input=>input.addEventListener('change',()=>{optionsUsageDays=Number(input.value);void optionsRefreshUsage();}));
 optionsEls.usageClear.addEventListener('click',async()=>{if(!confirm('清空模型用量统计？只删除用量计数，不影响服务配置与阅读数据。'))return;try{await request('USAGE_CLEAR');setResult(optionsEls.usageResult,'用量统计已清空');await optionsRefreshUsage();}catch(error){setResult(optionsEls.usageResult,errorText(error),true);}});
-async function optionsInit(){optionsFillDomains(optionsEls.readingDomain,true);optionsFillDomains(optionsEls.ruleDomain,false);optionsFillDomains(optionsEls.termDomain,false);optionsEls.installCommand.textContent=`node connector/install.mjs --extension-id ${chrome.runtime.id}`;optionsNavigate();try{const densityData=await chrome.storage.local.get(['sentenceGroupsDensity','sentenceGroupsLineStyle','sentenceGroupsMark']);optionsSentenceDensity=['coarse','medium','fine'].includes(densityData.sentenceGroupsDensity)?densityData.sentenceGroupsDensity:'medium';optionsSentenceLineStyle=['solid','dashed','dotted','wavy'].includes(densityData.sentenceGroupsLineStyle)?densityData.sentenceGroupsLineStyle:'solid';optionsSentenceMark=globalThis.ShisuiDesign.sentenceMarkMode(densityData.sentenceGroupsMark);await optionsSyncState();if(!['diagnostics','history','personalization'].includes(optionsCurrentSection))await optionsRefreshSubscription();const pending=(await chrome.storage.local.get('pendingTerm')).pendingTerm;if(pending)await optionsConsumePendingTerm(pending);}catch(error){optionsShowError(error);}}
+async function optionsInit(){optionsFillDomains(optionsEls.readingDomain,true);optionsFillDomains(optionsEls.ruleDomain,false);optionsFillDomains(optionsEls.termDomain,false);optionsEls.installCommand.textContent=`node connector/install.mjs --extension-id ${chrome.runtime.id}`;optionsNavigate();try{const densityData=await chrome.storage.local.get(['sentenceGroupsDensity','sentenceGroupsLineStyle','sentenceGroupsMark']);optionsSentenceDensity=['coarse','medium','fine'].includes(densityData.sentenceGroupsDensity)?densityData.sentenceGroupsDensity:'medium';optionsSentenceLineStyle=['solid','dashed','dotted','wavy'].includes(densityData.sentenceGroupsLineStyle)?densityData.sentenceGroupsLineStyle:'solid';optionsSentenceMark=globalThis.ShisuiDesign.sentenceMarkMode(densityData.sentenceGroupsMark);await optionsSyncState();if(optionsOpenedBare&&serviceSetupNeeded(optionsState)){history.replaceState(null,'','#service');optionsNavigate();}if(!['diagnostics','history','personalization'].includes(optionsCurrentSection))await optionsRefreshSubscription();const pending=(await chrome.storage.local.get('pendingTerm')).pendingTerm;if(pending)await optionsConsumePendingTerm(pending);}catch(error){optionsShowError(error);}}
 void optionsInit();

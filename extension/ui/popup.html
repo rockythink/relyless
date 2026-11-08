@@ -3,14 +3,22 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RelyLess</title><script src="../design.js" data-shisui-page></script><link rel="stylesheet" href="ui.css"><link rel="icon" type="image/png" href="../icons/icon-32.png"></head>
 <body class="popup-body"><main class="popup-shell" aria-labelledby="brand-title">
 <header class="popup-header"><div class="brand-lockup"><img class="brand-icon" src="../icons/relyless.svg" width="28" height="28" alt=""><h1 id="brand-title">RelyLess</h1></div><button id="open-options" class="icon-text-button header-settings" type="button">设置</button></header>
+<section id="setup-card" class="popup-setup" aria-labelledby="setup-title" hidden><h2 id="setup-title">还差一步：连接模型</h2><p>查词、句子解构和翻译都由你选的模型完成，只需设置一次。</p><button id="setup-connect" class="primary-action" type="button">连接模型</button></section>
 <section id="unsupported-page" class="unsupported-page" aria-labelledby="unsupported-title" hidden><h2 id="unsupported-title">此页暂不支持</h2><p>请打开普通 HTTP 或 HTTPS 网页后再使用阅读辅助。浏览器内部页面与扩展页面无法开启。</p><a id="unsupported-guide" href="options.html#guide" target="_blank" rel="noopener">查看使用说明</a></section>
 <div id="page-controls" hidden>
 <div class="page-context"><span id="site-hostname">当前标签页</span><span id="page-status" class="status-chip" aria-live="polite">正在检查</span></div>
+<section id="service-warning" class="notice" aria-labelledby="service-warning-title" hidden><h2 id="service-warning-title">模型暂时不可用</h2><button id="repair-service" class="icon-text-button" type="button" aria-label="打开模型服务设置">去修复</button><p id="service-warning-copy" class="popup-feedback"></p></section>
+<div class="popup-primary">
 <section class="popup-switch-panel activation-panel" aria-labelledby="activation-title">
-  <label class="popup-switch-copy" for="toggle-page"><span id="activation-title" class="popup-control-title">阅读辅助</span><span id="page-note">仅作用于本页，不更改网站自动开启规则。</span><span id="action-error" class="inline-message error popup-feedback" role="alert" hidden></span></label>
+  <label class="popup-switch-copy" for="toggle-page"><span id="activation-title" class="popup-control-title">阅读辅助</span><span id="page-note">只作用于当前页面。</span><span id="action-error" class="inline-message error popup-feedback" role="alert" hidden></span></label>
   <div class="switch"><input id="toggle-page" type="checkbox" disabled aria-labelledby="activation-title" aria-describedby="page-note action-error"><span aria-hidden="true"></span></div>
-
 </section>
+<section class="popup-switch-panel site-auto-panel" aria-labelledby="site-auto-title">
+  <label class="popup-switch-copy" for="site-auto"><span id="site-auto-title" class="popup-control-title">此网站以后自动开启</span><span id="site-auto-note" class="popup-feedback"></span><span id="site-auto-error" class="inline-message error popup-feedback" role="alert" hidden></span></label>
+  <div class="switch"><input id="site-auto" type="checkbox" disabled aria-labelledby="site-auto-title" aria-describedby="site-auto-note site-auto-error"><span aria-hidden="true"></span></div>
+  <button id="site-hint-dismiss" class="icon-text-button" type="button" hidden>不再提示此网站</button>
+</section>
+</div>
 <section class="popup-switch-panel sentence-groups-panel" aria-labelledby="sentence-groups-title">
   <label class="popup-switch-copy" for="sentence-groups"><span id="sentence-groups-title" class="popup-control-title">阅读解构</span><span id="sentence-structure-key">标出句子主干 · 产生额外模型用量</span><span id="sentence-groups-error" class="inline-message error popup-feedback" role="alert" hidden></span></label>
   <div class="switch"><input id="sentence-groups" type="checkbox" disabled aria-labelledby="sentence-groups-title" aria-describedby="sentence-groups-note sentence-structure-key sentence-groups-error"><span aria-hidden="true"></span></div>
@@ -19,19 +27,12 @@
     <label class="check-row" for="sentence-selection"><input id="sentence-selection" type="checkbox" disabled aria-describedby="sentence-selection-note sentence-groups-error"><span>划选语法配色<small id="sentence-selection-note">仅本页 · 刷新后恢复默认</small></span></label>
   </div>
 </section>
-<section class="popup-switch-panel site-auto-panel" aria-labelledby="site-auto-title">
-  <label class="popup-switch-copy" for="site-auto"><span id="site-auto-title" class="popup-control-title">此网站以后自动开启</span><span id="site-auto-note" class="popup-feedback">有限上下文用于准备；支持记录只在本机。</span><span id="site-auto-error" class="inline-message error popup-feedback" role="alert" hidden></span></label>
-  <div class="switch"><input id="site-auto" type="checkbox" disabled aria-labelledby="site-auto-title" aria-describedby="site-auto-note site-auto-error"><span aria-hidden="true"></span></div>
-  <button id="site-hint-dismiss" class="icon-text-button" type="button" hidden>不再提示此网站</button>
-
-</section>
-<section id="service-warning" class="notice" aria-labelledby="service-warning-title" hidden><h2 id="service-warning-title">服务未就绪</h2><button id="repair-service" class="icon-text-button" type="button" aria-label="打开模型服务设置">服务设置</button><p id="service-warning-copy" class="popup-feedback">连接服务后才能生成英文线索和局部中文说明。</p></section>
 <section id="task-status-panel" class="task-status-panel" aria-labelledby="task-status-title" hidden><h2 id="task-status-title">当前任务</h2><ul id="task-status-list" aria-live="polite" aria-atomic="true"></ul></section>
 <footer id="emergency-panel" class="popup-actions" aria-labelledby="emergency-title" tabindex="-1">
   <h2 id="emergency-title" class="sr-only">本页阅读操作</h2>
   <div class="page-action-buttons">
     <div><button id="toggle-reader" type="button" aria-describedby="reader-note reader-error" disabled>专注阅读</button><p id="reader-note">本地快照 · 不保存文章</p><p id="reader-error" class="inline-message error popup-feedback" role="alert" tabindex="-1" hidden></p></div>
-    <div><button id="emergency-open" type="button" aria-describedby="emergency-status" disabled>全文翻译</button><p id="emergency-status" class="popup-feedback" aria-live="polite">保留英文 · 按阅读位置翻译</p><p id="emergency-result" class="inline-message popup-feedback" role="status" aria-live="polite" hidden></p></div>
+    <div id="emergency-entry"><button id="emergency-open" type="button" aria-describedby="emergency-status" disabled>全文翻译</button><p id="emergency-status" class="popup-feedback" aria-live="polite">保留英文 · 按阅读位置翻译</p><p id="emergency-result" class="inline-message popup-feedback" role="status" aria-live="polite" hidden></p></div>
   </div>
 
   <div id="emergency-confirm" class="emergency-confirm" role="group" aria-labelledby="emergency-confirm-title" hidden>
