@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+
+User-agent: Baiduspider
+Allow: /
+
+Sitemap: https://relyless.elazer.wang/sitemap.xml

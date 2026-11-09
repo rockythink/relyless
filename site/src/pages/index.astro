@@ -2,7 +2,27 @@
 import Base from '../layouts/Base.astro';
 import Gloss from '../components/Gloss.astro';
 import contributors from '../contributors.json';
-import { storeUrl, repoUrl, releasesUrl } from '../site.js';
+import { authorUrl, releasesUrl, repoUrl, storeUrl, version } from '../site.js';
+
+const description = 'RelyLess 是面向中文读者的英语阅读浏览器扩展：保留原文，只在你卡住的地方标出少量词注和句子主干，需要时再翻译。开源、本地优先、使用你自己的模型服务。';
+// 扩展本身免费。Offer 需要货币单位，不表示另外标价。
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'RelyLess',
+  description,
+  url: new URL('/', Astro.site).href,
+  image: new URL('/og.jpg', Astro.site).href,
+  screenshot: new URL('/screens/01-hints-popup.webp', Astro.site).href,
+  applicationCategory: 'BrowserApplication',
+  operatingSystem: 'Chrome, Microsoft Edge',
+  softwareVersion: version,
+  installUrl: storeUrl,
+  isAccessibleForFree: true,
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+  license: 'https://www.mozilla.org/MPL/2.0/',
+  author: { '@type': 'Person', name: 'Elazer', url: authorUrl },
+};
 
 // 帮助由少到多：先读原文，卡住时再一级一级加。
 const ladder = [
@@ -14,7 +34,7 @@ const ladder = [
   { name: '全文双语', note: '确实读不动时，确认后按阅读位置翻译附近正文。英文保留，中文跟在每段后面。', demo: 'bilingual' },
 ];
 ---
-<Base title="RelyLess · 保留真实英文，卡住时才给一点线索" description="RelyLess 是面向中文读者的英语阅读浏览器扩展：保留原文，只在你卡住的地方标出少量词注和句子主干，需要时再翻译。开源、本地优先、使用你自己的模型服务。">
+<Base title="RelyLess · 保留真实英文，卡住时才给一点线索" description={description} jsonLd={jsonLd}>
   <section class="hero">
     <div class="wrap">
       <p class="kicker">浏览器扩展 · 英语阅读</p>

@@ -3,10 +3,23 @@ import '@fontsource-variable/newsreader';
 import '../styles/global.css';
 import { version, storeUrl, repoUrl, releasesUrl, issuesUrl, authorUrl } from '../site.js';
 
-interface Props { title: string; description: string; lang?: 'zh-CN' | 'en'; }
-const { title, description, lang = 'zh-CN' } = Astro.props;
-const canonical = new URL(Astro.url.pathname, Astro.site);
+interface Props {
+  title: string;
+  description: string;
+  lang?: 'zh-CN' | 'en';
+  jsonLd?: Record<string, unknown>;
+}
+const { title, description, lang = 'zh-CN', jsonLd } = Astro.props;
+// build.format 为 file 时，构建期 pathname 带 .html。线上地址不带后缀，要和 sitemap 一致。
+function publicPathname(pathname) {
+  if (pathname.endsWith('/index.html')) return '/';
+  const withoutFile = pathname.endsWith('.html') ? pathname.slice(0, -'.html'.length) : pathname;
+  if (withoutFile.length > 1 && withoutFile.endsWith('/')) return withoutFile.slice(0, -1);
+  return withoutFile || '/';
+}
+const canonical = new URL(publicPathname(Astro.url.pathname), Astro.site);
 const og = new URL('/og.jpg', Astro.site);
+const sitemapUrl = new URL('/sitemap.xml', Astro.site);
 const zh = lang === 'zh-CN';
 ---
 <!doctype html>
@@ -17,6 +30,8 @@ const zh = lang === 'zh-CN';
     <title>{title}</title>
     <meta name="description" content={description} />
     <link rel="canonical" href={canonical} />
+    <link rel="sitemap" type="application/xml" href={sitemapUrl} />
+    {jsonLd && <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd).replace(/</g, '\\u003c')} />}
     <link rel="icon" href="/relyless.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
