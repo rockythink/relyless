@@ -1,6 +1,14 @@
 {
   "name": "relyless-site",
   "compatibility_date": "2026-10-01",
-  "assets": { "directory": "./dist", "not_found_handling": "404-page", "html_handling": "drop-trailing-slash" },
+  "main": "./worker.js",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    "html_handling": "drop-trailing-slash",
+    // 只让这三条进 Worker。其余地址仍由静态资源直接返回，未知地址保持 404。
+    "run_worker_first": ["/404", "/404/", "/404.html"]
+  },
   "routes": [{ "pattern": "relyless.elazer.wang", "custom_domain": true }]
 }
