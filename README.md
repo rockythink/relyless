@@ -277,6 +277,10 @@ npm run release:package
 - `tools/`：本地模型、词频、演示和发布包构建脚本。
 - `docs/`：项目设计资料。
 
+## 官网部署
+
+`site/` 是 Astro 静态站，部署为 Cloudflare Worker `relyless-site`。推送 `main` 且改动落在 `site/**` 时，GitHub Actions 自动构建并部署（`.github/workflows/deploy-website.yml`），使用仓库 Secrets `CLOUDFLARE_API_TOKEN` 与 `CLOUDFLARE_ACCOUNT_ID`；构建失败不会部署。
+
 ## 许可与第三方材料
 
 项目自有代码采用 [Mozilla Public License 2.0](LICENSE)。Copyright 2026 Elazer (rockythink)。
