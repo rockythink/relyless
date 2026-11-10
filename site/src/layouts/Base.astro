@@ -8,8 +8,11 @@ interface Props {
   description: string;
   lang?: 'zh-CN' | 'en';
   jsonLd?: Record<string, unknown>;
+  robots?: string;
+  // 404 不是一篇可收录的页面，不能把自身标成规范地址。
+  canonical?: boolean;
 }
-const { title, description, lang = 'zh-CN', jsonLd } = Astro.props;
+const { title, description, lang = 'zh-CN', jsonLd, robots, canonical: includeCanonical = true } = Astro.props;
 // build.format 为 file 时，构建期 pathname 带 .html。线上地址不带后缀，要和 sitemap 一致。
 function publicPathname(pathname) {
   if (pathname.endsWith('/index.html')) return '/';
@@ -29,7 +32,8 @@ const zh = lang === 'zh-CN';
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
-    <link rel="canonical" href={canonical} />
+    {robots && <meta name="robots" content={robots} />}
+    {includeCanonical && <link rel="canonical" href={canonical} />}
     <link rel="sitemap" type="application/xml" href={sitemapUrl} />
     {jsonLd && <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd).replace(/</g, '\\u003c')} />}
     <link rel="icon" href="/relyless.svg" type="image/svg+xml" />
@@ -40,7 +44,7 @@ const zh = lang === 'zh-CN';
     <meta property="og:type" content="website" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
-    <meta property="og:url" content={canonical} />
+    {includeCanonical && <meta property="og:url" content={canonical} />}
     <meta property="og:image" content={og} />
     <meta name="twitter:card" content="summary_large_image" />
   </head>

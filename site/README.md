@@ -28,3 +28,5 @@ npm run deploy     # 构建并用 wrangler 部署，需要已登录 Cloudflare
 - `@astrojs/sitemap` 在构建时根据 `site` 生成 `sitemap-index.xml` 和 `sitemap-0.xml`（页面很多时还会有后续分片）。构建结束会把唯一的分页文件复制为 `sitemap.xml`；若分片超过一个，则复制索引文件，保证 `robots.txt` 里的地址存在。
 - 首页沿用现有简介，另外输出 `SoftwareApplication` 结构化数据。其中的免费报价对应页面上的「免费开源」，浏览器范围对应常见问题里的 Chrome 与 Edge；不写评分或页面上没有的能力。
 - canonical 和 Open Graph 地址去掉构建文件名里的 `.html`，与 sitemap 中的线上路径一致。首页是 `https://relyless.elazer.wang/`。
+- 404 页输出 `noindex`，不输出 canonical 和 `og:url`。`@astrojs/sitemap` 不收录路径名为 404 的页面，构建时再排除 `/404` 与 `/404.html`。
+- 未知地址由 `not_found_handling: "404-page"` 以 HTTP 404 返回 `404.html`。`/404`、`/404/`、`/404.html` 能匹配到这份文件，静态资源会返回 200 或 307，所以 `worker.js` 只改这三条路径的状态码。
